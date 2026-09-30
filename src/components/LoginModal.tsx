@@ -13,7 +13,7 @@ import {
 import { UserAccount } from '../types';
 
 interface LoginModalProps {
-  onLogin: (username: string, password: string) => { success: boolean; error?: string };
+  onLogin: (username: string, password: string, rememberMe?: boolean) => { success: boolean; error?: string };
   onRegister: (data: {
     username: string;
     name: string;
@@ -33,9 +33,22 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const isInitialSetupNeeded = accounts.length === 0;
 
   // Login form state
-  const [username, setUsername] = useState('');
+  const [username, setUsername] = useState(() => {
+    try {
+      return localStorage.getItem('cargogo_last_username') || '';
+    } catch {
+      return '';
+    }
+  });
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(() => {
+    try {
+      return localStorage.getItem('cargogo_remember_me') !== 'false';
+    } catch {
+      return true;
+    }
+  });
 
   // Initial setup state (only seen once by the owner on blank system)
   const [setupName, setSetupName] = useState('Asliddin Nurdinov');
@@ -49,7 +62,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     e.preventDefault();
     setError(null);
 
-    const result = onLogin(username.trim().toLowerCase(), password.trim());
+    const result = onLogin(username.trim().toLowerCase(), password.trim(), rememberMe);
     if (!result.success) {
       setError(result.error || 'Login yoki parol notoʻgʻri!');
     }
@@ -158,6 +171,20 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               </div>
             </div>
 
+            <div className="flex items-center justify-between pt-0.5">
+              <label className="flex items-center gap-2 cursor-pointer select-none group">
+                <input
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={(e) => setRememberMe(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-700 bg-slate-800 text-amber-500 focus:ring-amber-500/20 focus:ring-offset-0 cursor-pointer accent-amber-500"
+                />
+                <span className="text-xs text-slate-300 group-hover:text-white transition-colors font-medium">
+                  Meni eslab qolish (ushbu telefonda)
+                </span>
+              </label>
+            </div>
+
             <button
               type="submit"
               className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/20 active:scale-98 transition-all flex items-center justify-center gap-2 pt-3"
@@ -165,6 +192,11 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               <span>TIZIMGA KIRISH</span>
               <ArrowRight className="w-4 h-4 stroke-[3]" />
             </button>
+
+            <div className="pt-2 text-center text-[11px] text-slate-500 flex items-center justify-center gap-1.5">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Har bir telefon faqat oʻz hisobida alohida ishlaydi</span>
+            </div>
           </form>
         )}
 

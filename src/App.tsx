@@ -238,8 +238,8 @@ export default function App() {
   };
 
   // Login handler
-  const handleLogin = (username: string, pass: string) => {
-    const res = storage.loginWithCredentials(username, pass);
+  const handleLogin = (username: string, pass: string, rememberMe?: boolean) => {
+    const res = storage.loginWithCredentials(username, pass, rememberMe ?? true);
     if (res.success) {
       setUser(storage.getUser());
     }

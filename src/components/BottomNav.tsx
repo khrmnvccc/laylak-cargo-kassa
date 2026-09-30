@@ -52,9 +52,33 @@ export const BottomNav: React.FC<BottomNavProps> = ({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-4">
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-white text-base">Barcha boʻlimlar</span>
-                <span className="text-xs text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full font-medium">Laylak Cargo</span>
+              <div className="flex items-center gap-2.5">
+                <div
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center font-black text-xs text-slate-950 flex-shrink-0 ${
+                    user.role === 'admin' ? 'bg-amber-400' : 'bg-blue-400'
+                  }`}
+                >
+                  {(user.name || user.username || 'U').charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-white text-sm">
+                      {user.name || user.username}
+                    </span>
+                    <span
+                      className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${
+                        user.role === 'admin'
+                          ? 'bg-amber-500/20 text-amber-300'
+                          : 'bg-blue-500/20 text-blue-300'
+                      }`}
+                    >
+                      {user.role === 'admin' ? 'Bosh Admin' : 'Kassir'}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-400 font-mono">
+                    @{user.username} (Ushbu telefon seansi)
+                  </div>
+                </div>
               </div>
               <button
                 onClick={() => setShowMoreMenu(false)}

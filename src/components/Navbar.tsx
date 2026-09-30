@@ -303,14 +303,44 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span>+ Yangi hisobot</span>
             </button>
 
-            {/* Logout / User */}
-            <button
-              onClick={onLogout}
-              className="p-2 rounded-xl bg-slate-800/60 hover:bg-rose-950/40 text-slate-400 hover:text-rose-400 border border-slate-700/60 hover:border-rose-500/30 transition-all active:scale-95"
-              title={`${user.name} - Chiqish`}
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
+            {/* Active User Account Badge with Quick Switch / Logout */}
+            <div className="flex items-center gap-1.5 pl-1">
+              <button
+                onClick={() => setActiveTab('settings')}
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-750 border border-slate-700/80 hover:border-amber-500/40 transition-all active:scale-95 text-left"
+                title={`${user.name || user.username} - Profil va sozlamalar`}
+              >
+                <div
+                  className={`w-6 h-6 rounded-lg flex items-center justify-center font-black text-[11px] text-slate-950 flex-shrink-0 ${
+                    user.role === 'admin' ? 'bg-amber-400' : 'bg-blue-400'
+                  }`}
+                >
+                  {(user.name || user.username || 'U').charAt(0).toUpperCase()}
+                </div>
+                <div className="hidden sm:block leading-tight max-w-[120px] truncate">
+                  <div className="text-xs font-bold text-white truncate">
+                    {user.name || user.username}
+                  </div>
+                  <div className="text-[10px] flex items-center gap-1">
+                    <span
+                      className={`font-bold ${
+                        user.role === 'admin' ? 'text-amber-400' : 'text-blue-400'
+                      }`}
+                    >
+                      {user.role === 'admin' ? 'Bosh Admin' : 'Kassir'}
+                    </span>
+                  </div>
+                </div>
+              </button>
+
+              <button
+                onClick={onLogout}
+                className="p-2 rounded-xl bg-slate-800/60 hover:bg-rose-950/40 text-slate-400 hover:text-rose-400 border border-slate-700/60 hover:border-rose-500/30 transition-all active:scale-95"
+                title={`Akkauntdan chiqish (@${user.username})`}
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
       </div>

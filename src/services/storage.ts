@@ -384,23 +384,54 @@ class StorageService {
         this.saveLogs();
       }
 
-      const storedUser = localStorage.getItem(STORAGE_KEYS.USER);
+      // Isolated per-device session management
+      const isRemember = localStorage.getItem('cargogo_remember_me') !== 'false';
+      let storedUser: string | null = null;
+      try {
+        if (isRemember) {
+          storedUser = localStorage.getItem(STORAGE_KEYS.USER);
+        }
+        if (!storedUser) {
+          storedUser = sessionStorage.getItem(STORAGE_KEYS.USER);
+        }
+      } catch {
+        storedUser = null;
+      }
+
       if (storedUser) {
-        this.user = JSON.parse(storedUser);
+        try {
+          this.user = JSON.parse(storedUser);
+        } catch {
+          this.user = {
+            username: '',
+            name: '',
+            role: 'kassir',
+            isLoggedIn: false,
+            loginTime: '',
+          };
+        }
       } else {
         this.user = {
           username: '',
           name: '',
-          role: 'admin',
+          role: 'kassir',
           isLoggedIn: false,
           loginTime: '',
         };
-        this.saveUser();
       }
 
-      // If there are no accounts registered yet, ensure login screen opens for registration
-      if (this.accounts.length === 0) {
-        this.user.isLoggedIn = false;
+      // If user is marked logged in, verify against loaded accounts
+      if (this.user.isLoggedIn && this.user.username) {
+        const found = this.accounts.find(
+          (a) => a.username.toLowerCase() === this.user.username.toLowerCase()
+        );
+        if (found) {
+          this.user.name = found.name;
+          this.user.role = found.role;
+        } else if (this.accounts.length > 0) {
+          // If the account was removed, invalidate this device's session
+          this.user.isLoggedIn = false;
+        }
       }
 
       // Start automatic background synchronization for cross-device updates
@@ -497,6 +528,21 @@ class StorageService {
       this.accounts = data.accounts;
       this.ensureDefaultAdminAccounts();
       this.saveAccountsOnly();
+
+      // If active session on this phone matches an account, keep its role and name updated
+      if (this.user.isLoggedIn && this.user.username) {
+        const matching = this.accounts.find(
+          (a) => a.username.toLowerCase() === this.user.username.toLowerCase()
+        );
+        if (matching) {
+          if (this.user.name !== matching.name || this.user.role !== matching.role) {
+            this.user.name = matching.name;
+            this.user.role = matching.role;
+            this.saveUser();
+          }
+        }
+      }
+
       hasChanges = true;
     }
 
@@ -840,10 +886,17 @@ class StorageService {
 
   public saveUser(): void {
     try {
-      localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(this.user));
+      const isRemember = localStorage.getItem('cargogo_remember_me') !== 'false';
+      if (isRemember) {
+        localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(this.user));
+        sessionStorage.removeItem(STORAGE_KEYS.USER);
+      } else {
+        sessionStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(this.user));
+        localStorage.removeItem(STORAGE_KEYS.USER);
+      }
       this.notifyListeners();
     } catch (err) {
-      console.warn('Failed saving user to localStorage', err);
+      console.warn('Failed saving user to storage', err);
     }
   }
 
@@ -1249,7 +1302,8 @@ class StorageService {
 
   public loginWithCredentials(
     username: string,
-    pass: string
+    pass: string,
+    rememberMe: boolean = true
   ): { success: boolean; error?: string; user?: UserSession } {
     const cleanUsername = username.trim().toLowerCase();
     const cleanPass = pass.trim();
@@ -1278,6 +1332,14 @@ class StorageService {
         isLoggedIn: true,
         loginTime: new Date().toISOString(),
       };
+
+      try {
+        localStorage.setItem('cargogo_last_username', found.username);
+        localStorage.setItem('cargogo_remember_me', rememberMe ? 'true' : 'false');
+      } catch (err) {
+        console.warn('Storage preference error:', err);
+      }
+
       this.saveUser();
 
       this.logAction(
@@ -1320,8 +1382,20 @@ class StorageService {
   }
 
   public logout(): void {
-    this.user.isLoggedIn = false;
-    this.saveUser();
+    this.user = {
+      username: '',
+      name: '',
+      role: 'kassir',
+      isLoggedIn: false,
+      loginTime: '',
+    };
+    try {
+      localStorage.removeItem(STORAGE_KEYS.USER);
+      sessionStorage.removeItem(STORAGE_KEYS.USER);
+    } catch (err) {
+      console.warn('Logout storage clear error:', err);
+    }
+    this.notifyListeners();
   }
 
   public updateAccount(
