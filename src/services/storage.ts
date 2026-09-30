@@ -8,6 +8,8 @@ import {
   ActivityLog,
 } from '../types';
 import { getDecadeInfo } from '../utils/formatters';
+import { db } from '../firebase';
+import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 
 const STORAGE_KEYS = {
   REPORTS: 'cargogo_reports_v2',
@@ -19,6 +21,25 @@ const STORAGE_KEYS = {
   LOGS: 'cargogo_logs_v2',
   THEME: 'cargogo_theme_v2',
 };
+
+export const INITIAL_ACCOUNTS: UserAccount[] = [
+  {
+    id: 'acc-admin-1',
+    username: 'asliddin',
+    name: 'Asliddin Nurdinov',
+    password: 'admin',
+    role: 'admin',
+    createdAt: '2026-09-01T00:00:00Z',
+  },
+  {
+    id: 'acc-admin-2',
+    username: 'admin',
+    name: 'Bosh Administrator',
+    password: 'admin',
+    role: 'admin',
+    createdAt: '2026-09-01T00:00:00Z',
+  },
+];
 
 // Initial realistic seed data matching user prompt specifications
 const INITIAL_REPORTS: ReportRecord[] = [
@@ -311,10 +332,17 @@ class StorageService {
 
       const storedAccounts = localStorage.getItem(STORAGE_KEYS.ACCOUNTS);
       if (storedAccounts) {
-        this.accounts = JSON.parse(storedAccounts);
+        try {
+          const parsed = JSON.parse(storedAccounts);
+          this.accounts = Array.isArray(parsed) && parsed.length > 0 ? parsed : [...INITIAL_ACCOUNTS];
+        } catch {
+          this.accounts = [...INITIAL_ACCOUNTS];
+        }
       } else {
-        this.accounts = [];
+        this.accounts = [...INITIAL_ACCOUNTS];
+        this.saveAccountsOnly();
       }
+      this.initFirestoreSync();
 
       const storedLogs = localStorage.getItem(STORAGE_KEYS.LOGS);
       if (storedLogs) {
@@ -442,12 +470,87 @@ class StorageService {
     this.saveExpenses();
   }
 
+  private initFirestoreSync(): void {
+    if (typeof window === 'undefined') return;
+    try {
+      const docRef = doc(db, 'app_data', 'main');
+      onSnapshot(docRef, (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          this.isServerConnected = true;
+          let hasChanges = false;
+
+          if (Array.isArray(data.reports) && data.reports.length > 0 && JSON.stringify(this.reports) !== JSON.stringify(data.reports)) {
+            this.reports = data.reports;
+            this.saveReportsOnly();
+            hasChanges = true;
+          }
+
+          if (Array.isArray(data.kassa) && data.kassa.length > 0 && JSON.stringify(this.kassa) !== JSON.stringify(data.kassa)) {
+            this.kassa = data.kassa;
+            this.saveKassaOnly();
+            hasChanges = true;
+          }
+
+          if (Array.isArray(data.expenses) && JSON.stringify(this.expenses) !== JSON.stringify(data.expenses)) {
+            this.expenses = data.expenses;
+            this.saveExpensesOnly();
+            hasChanges = true;
+          }
+
+          if (Array.isArray(data.accounts) && data.accounts.length > 0 && JSON.stringify(this.accounts) !== JSON.stringify(data.accounts)) {
+            this.accounts = data.accounts;
+            this.saveAccountsOnly();
+            hasChanges = true;
+          }
+
+          if (Array.isArray(data.logs) && JSON.stringify(this.logs) !== JSON.stringify(data.logs)) {
+            this.logs = data.logs;
+            this.saveLogsOnly();
+            hasChanges = true;
+          }
+
+          if (hasChanges) {
+            this.notifyListeners();
+          }
+        } else {
+          this.syncToFirestore();
+        }
+      }, (err) => {
+        console.warn('Firestore snapshot notice:', err);
+      });
+    } catch (e) {
+      console.warn('Firestore init notice:', e);
+    }
+  }
+
+  public async syncToFirestore(): Promise<boolean> {
+    try {
+      const docRef = doc(db, 'app_data', 'main');
+      const payload = {
+        reports: this.reports,
+        kassa: this.kassa,
+        expenses: this.expenses,
+        accounts: this.accounts,
+        logs: this.logs,
+        updatedAt: new Date().toISOString(),
+      };
+      await setDoc(docRef, payload, { merge: true });
+      this.isServerConnected = true;
+      return true;
+    } catch (err) {
+      console.warn('Firestore sync write notice:', err);
+      return false;
+    }
+  }
+
   // --- SAVE METHODS (LOCAL + SERVER SYNC) ---
   public triggerSync(): void {
     if (this.syncTimeout) clearTimeout(this.syncTimeout);
     this.syncTimeout = setTimeout(() => {
+      this.syncToFirestore();
       this.syncToServer();
-    }, 300);
+    }, 250);
   }
 
   public async syncToServer(): Promise<boolean> {
