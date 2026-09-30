@@ -96,6 +96,14 @@ export default function App() {
     } else {
       setSelectedDate(getTodayDateString());
     }
+
+    // Subscribe to multi-device live server sync events
+    const unsubscribe = storage.subscribe(() => {
+      refreshData();
+    });
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   // Role guard: cashiers cannot access kassa or auditLog

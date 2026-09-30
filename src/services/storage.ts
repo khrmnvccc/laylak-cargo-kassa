@@ -256,8 +256,31 @@ class StorageService {
     loginTime: '',
   };
 
+  private listeners: Set<() => void> = new Set();
+  private syncTimeout: any = null;
+  private isSyncing = false;
+  private lastServerTimestamp: string = '';
+  public isServerConnected = false;
+
   constructor() {
     this.init();
+  }
+
+  public subscribe(fn: () => void): () => void {
+    this.listeners.add(fn);
+    return () => {
+      this.listeners.delete(fn);
+    };
+  }
+
+  private notifyListeners(): void {
+    this.listeners.forEach((fn) => {
+      try {
+        fn();
+      } catch (e) {
+        console.error('Storage listener error:', e);
+      }
+    });
   }
 
   private init() {
@@ -349,7 +372,24 @@ class StorageService {
       // If there are no accounts registered yet, ensure login screen opens for registration
       if (this.accounts.length === 0) {
         this.user.isLoggedIn = false;
-        this.saveUser();
+      }
+
+      // Start automatic background synchronization for cross-device updates
+      if (typeof window !== 'undefined') {
+        this.fetchServerData();
+        setInterval(() => {
+          this.fetchServerData();
+        }, 3500);
+
+        window.addEventListener('focus', () => {
+          this.fetchServerData();
+        });
+
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') {
+            this.fetchServerData();
+          }
+        });
       }
     } catch (e) {
       console.error('Storage initialization error:', e);
@@ -402,8 +442,125 @@ class StorageService {
     this.saveExpenses();
   }
 
-  // --- SAVE METHODS ---
-  private saveReports(): void {
+  // --- SAVE METHODS (LOCAL + SERVER SYNC) ---
+  public triggerSync(): void {
+    if (this.syncTimeout) clearTimeout(this.syncTimeout);
+    this.syncTimeout = setTimeout(() => {
+      this.syncToServer();
+    }, 300);
+  }
+
+  public async syncToServer(): Promise<boolean> {
+    try {
+      const payload = {
+        reports: this.reports,
+        kassa: this.kassa,
+        expenses: this.expenses,
+        accounts: this.accounts,
+        logs: this.logs,
+      };
+      const res = await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.updatedAt) {
+          this.lastServerTimestamp = json.updatedAt;
+        }
+        this.isServerConnected = true;
+        return true;
+      }
+      return false;
+    } catch {
+      this.isServerConnected = false;
+      return false;
+    }
+  }
+
+  public async fetchServerData(): Promise<boolean> {
+    if (this.isSyncing) return false;
+    try {
+      this.isSyncing = true;
+      const res = await fetch('/api/data', { cache: 'no-store' });
+      if (!res.ok) {
+        this.isServerConnected = false;
+        return false;
+      }
+      const json = await res.json();
+      if (!json.success) {
+        this.isServerConnected = false;
+        return false;
+      }
+
+      this.isServerConnected = true;
+      const serverUpdated = json.updatedAt;
+      const serverReports = Array.isArray(json.reports) ? json.reports : [];
+      const serverKassa = Array.isArray(json.kassa) ? json.kassa : [];
+      const serverExpenses = Array.isArray(json.expenses) ? json.expenses : [];
+      const serverAccounts = Array.isArray(json.accounts) ? json.accounts : [];
+      const serverLogs = Array.isArray(json.logs) ? json.logs : [];
+
+      // If server is completely empty (first boot), push initial local seed data to server
+      if (
+        serverReports.length === 0 &&
+        serverKassa.length === 0 &&
+        (this.reports.length > 0 || this.kassa.length > 0)
+      ) {
+        await this.syncToServer();
+        return true;
+      }
+
+      // Check if server data differs or is newer
+      let hasChanges = false;
+      if (serverUpdated !== this.lastServerTimestamp) {
+        if (serverReports.length > 0 && JSON.stringify(this.reports) !== JSON.stringify(serverReports)) {
+          this.reports = serverReports;
+          this.saveReportsOnly();
+          hasChanges = true;
+        }
+
+        if (serverKassa.length > 0 && JSON.stringify(this.kassa) !== JSON.stringify(serverKassa)) {
+          this.kassa = serverKassa;
+          this.saveKassaOnly();
+          hasChanges = true;
+        }
+
+        if (serverExpenses.length > 0 && JSON.stringify(this.expenses) !== JSON.stringify(serverExpenses)) {
+          this.expenses = serverExpenses;
+          this.saveExpensesOnly();
+          hasChanges = true;
+        }
+
+        if (serverAccounts.length > 0 && JSON.stringify(this.accounts) !== JSON.stringify(serverAccounts)) {
+          this.accounts = serverAccounts;
+          this.saveAccountsOnly();
+          hasChanges = true;
+        }
+
+        if (serverLogs.length > 0 && JSON.stringify(this.logs) !== JSON.stringify(serverLogs)) {
+          this.logs = serverLogs;
+          this.saveLogsOnly();
+          hasChanges = true;
+        }
+
+        this.lastServerTimestamp = serverUpdated;
+
+        if (hasChanges) {
+          this.notifyListeners();
+        }
+      }
+      return true;
+    } catch {
+      this.isServerConnected = false;
+      return false;
+    } finally {
+      this.isSyncing = false;
+    }
+  }
+
+  private saveReportsOnly(): void {
     try {
       localStorage.setItem(STORAGE_KEYS.REPORTS, JSON.stringify(this.reports));
     } catch (err) {
@@ -411,7 +568,7 @@ class StorageService {
     }
   }
 
-  private saveKassa(): void {
+  private saveKassaOnly(): void {
     try {
       localStorage.setItem(STORAGE_KEYS.KASSA, JSON.stringify(this.kassa));
     } catch (err) {
@@ -419,7 +576,7 @@ class StorageService {
     }
   }
 
-  private saveExpenses(): void {
+  private saveExpensesOnly(): void {
     try {
       localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(this.expenses));
     } catch (err) {
@@ -427,15 +584,7 @@ class StorageService {
     }
   }
 
-  public saveUser(): void {
-    try {
-      localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(this.user));
-    } catch (err) {
-      console.warn('Failed saving user to localStorage', err);
-    }
-  }
-
-  public saveAccounts(): void {
+  private saveAccountsOnly(): void {
     try {
       localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(this.accounts));
     } catch (err) {
@@ -443,12 +592,51 @@ class StorageService {
     }
   }
 
-  public saveLogs(): void {
+  private saveLogsOnly(): void {
     try {
       localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(this.logs));
     } catch (err) {
       console.warn('Failed saving logs to localStorage', err);
     }
+  }
+
+  private saveReports(): void {
+    this.saveReportsOnly();
+    this.triggerSync();
+    this.notifyListeners();
+  }
+
+  private saveKassa(): void {
+    this.saveKassaOnly();
+    this.triggerSync();
+    this.notifyListeners();
+  }
+
+  private saveExpenses(): void {
+    this.saveExpensesOnly();
+    this.triggerSync();
+    this.notifyListeners();
+  }
+
+  public saveUser(): void {
+    try {
+      localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(this.user));
+      this.notifyListeners();
+    } catch (err) {
+      console.warn('Failed saving user to localStorage', err);
+    }
+  }
+
+  public saveAccounts(): void {
+    this.saveAccountsOnly();
+    this.triggerSync();
+    this.notifyListeners();
+  }
+
+  public saveLogs(): void {
+    this.saveLogsOnly();
+    this.triggerSync();
+    this.notifyListeners();
   }
 
   public logAction(

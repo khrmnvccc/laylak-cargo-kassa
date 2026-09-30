@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+*.json
+!package.json
+!tsconfig.json
+!metadata.json
+
