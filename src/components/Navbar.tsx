@@ -201,7 +201,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </div>
                 </div>
 
-                {/* Mobile Phone Version - Ixcham, bir qatorda, qisilib qolmaydi */}
+                {/* Mobile Phone Version */}
                 <div
                   onClick={() => setActiveTab('kassa')}
                   className="sm:hidden cursor-pointer flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 hover:border-emerald-500/50 active:scale-95 transition-all shadow-sm"
@@ -214,6 +214,16 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </div>
               </>
             )}
+
+            {/* Real-time server sync badge */}
+            <div
+              className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800/60 border border-slate-700/60 text-slate-300 text-[11px] font-medium"
+              title="Barcha telefonlar bilan markaziy server orqali real-vaqt sinxronizatsiya"
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-[11px] text-slate-300 font-medium">Onlayn baza</span>
+            </div>
+
 
             {/* Theme Toggle Button (Yorug' / Qorong'i rejim) */}
             <button
