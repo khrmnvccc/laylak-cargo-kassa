@@ -10,4 +10,5 @@ coverage/
 !package.json
 !tsconfig.json
 !metadata.json
+!vercel.json
 
