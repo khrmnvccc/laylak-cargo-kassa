@@ -1,0 +1,199 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+  
+  .font-mono-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-feature-settings: "tnum" 1;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.6);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.4);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.7);
+}
+
+/* Safe padding for mobile bottom bar */
+.pb-safe {
+  padding-bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* ==========================================================================
+   LIGHT MODE THEME OVERRIDES (Yorug' interfeys)
+   ========================================================================== */
+.theme-light {
+  color-scheme: light;
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+}
+
+.theme-light ::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+.theme-light ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+
+.theme-light ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Backgrounds in Light Mode */
+.theme-light .bg-slate-950 {
+  background-color: #f1f5f9 !important;
+}
+
+.theme-light .bg-slate-950\/95,
+.theme-light .bg-slate-950\/90,
+.theme-light .bg-slate-950\/80,
+.theme-light .bg-slate-950\/70,
+.theme-light .bg-slate-950\/60 {
+  background-color: rgba(241, 245, 249, 0.95) !important;
+}
+
+.theme-light .bg-slate-900 {
+  background-color: #ffffff !important;
+}
+
+.theme-light .bg-slate-900\/95,
+.theme-light .bg-slate-900\/90,
+.theme-light .bg-slate-900\/80 {
+  background-color: rgba(255, 255, 255, 0.96) !important;
+}
+
+.theme-light .bg-slate-850 {
+  background-color: #f8fafc !important;
+}
+
+.theme-light .from-slate-900 {
+  --tw-gradient-from: #ffffff !important;
+}
+
+.theme-light .via-slate-850,
+.theme-light .via-slate-900 {
+  --tw-gradient-stops: var(--tw-gradient-from), #f8fafc, var(--tw-gradient-to) !important;
+}
+
+.theme-light .to-slate-900 {
+  --tw-gradient-to: #ffffff !important;
+}
+
+.theme-light .bg-slate-800 {
+  background-color: #f1f5f9 !important;
+}
+
+.theme-light .bg-slate-800\/80,
+.theme-light .bg-slate-800\/60,
+.theme-light .bg-slate-800\/50,
+.theme-light .bg-slate-800\/40,
+.theme-light .bg-slate-800\/30 {
+  background-color: #f8fafc !important;
+}
+
+.theme-light .bg-slate-750 {
+  background-color: #e2e8f0 !important;
+}
+
+.theme-light .hover\:bg-slate-800:hover,
+.theme-light .hover\:bg-slate-750:hover {
+  background-color: #e2e8f0 !important;
+}
+
+.theme-light .hover\:bg-slate-800\/60:hover,
+.theme-light .hover\:bg-slate-800\/50:hover,
+.theme-light .hover\:bg-slate-800\/40:hover,
+.theme-light .hover\:bg-slate-800\/30:hover {
+  background-color: #f1f5f9 !important;
+}
+
+/* Borders in Light Mode */
+.theme-light .border-slate-800,
+.theme-light .border-slate-800\/80,
+.theme-light .border-slate-800\/60 {
+  border-color: #e2e8f0 !important;
+}
+
+.theme-light .border-slate-700,
+.theme-light .border-slate-700\/80,
+.theme-light .border-slate-700\/60,
+.theme-light .border-slate-750 {
+  border-color: #cbd5e1 !important;
+}
+
+.theme-light .divide-slate-800,
+.theme-light .divide-slate-800\/80,
+.theme-light .divide-slate-800\/60 {
+  border-color: #e2e8f0 !important;
+}
+
+/* Typography in Light Mode */
+.theme-light .text-white {
+  color: #0f172a !important;
+}
+
+.theme-light .text-slate-100 {
+  color: #1e293b !important;
+}
+
+.theme-light .text-slate-200 {
+  color: #334155 !important;
+}
+
+.theme-light .text-slate-300 {
+  color: #475569 !important;
+}
+
+.theme-light .text-slate-400 {
+  color: #64748b !important;
+}
+
+.theme-light .hover\:text-white:hover {
+  color: #0f172a !important;
+}
+
+/* Inputs, Selects & Forms in Light Mode */
+.theme-light input:not([type="checkbox"]):not([type="radio"]),
+.theme-light select,
+.theme-light textarea {
+  color: #0f172a !important;
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+}
+
+.theme-light input::placeholder,
+.theme-light textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* Subtle shadows for clean depth in Light Mode */
+.theme-light .shadow-xl,
+.theme-light .shadow-2xl {
+  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.07), 0 8px 10px -6px rgba(15, 23, 42, 0.04) !important;
+}
+
+.theme-light .shadow-lg {
+  box-shadow: 0 6px 16px -2px rgba(15, 23, 42, 0.06) !important;
+}
+
+.theme-light .shadow-md {
+  box-shadow: 0 4px 10px -1px rgba(15, 23, 42, 0.05) !important;
+}
