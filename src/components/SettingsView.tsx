@@ -17,6 +17,9 @@ import {
   Sun,
   Moon,
   Palette,
+  Eye,
+  EyeOff,
+  KeyRound,
 } from 'lucide-react';
 import { UserSession, UserAccount } from '../types';
 import { storage } from '../services/storage';
@@ -62,6 +65,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [newAccPassword, setNewAccPassword] = useState('');
   const [newAccRole, setNewAccRole] = useState<'admin' | 'kassir'>('kassir');
   const [newAccMsg, setNewAccMsg] = useState<{ text: string; isError?: boolean } | null>(null);
+
+  // Accounts password visibility and editing
+  const [revealedPasswords, setRevealedPasswords] = useState<{ [id: string]: boolean }>({});
+  const [editingAccId, setEditingAccId] = useState<string | null>(null);
+  const [editingAccPass, setEditingAccPass] = useState('');
+
+  const handleSaveEmployeePassword = (accId: string) => {
+    if (!editingAccPass.trim() || editingAccPass.trim().length < 4) {
+      alert('Parol kamida 4 ta belgidan iborat boʻlishi kerak!');
+      return;
+    }
+    const res = storage.updateAccount(accId, { password: editingAccPass.trim() });
+    if (res.success) {
+      setAccounts(storage.getAccounts());
+      setEditingAccId(null);
+      setEditingAccPass('');
+    }
+  };
 
   const handleUpdateCurrentProfile = (e: React.FormEvent) => {
     e.preventDefault();
@@ -459,39 +480,112 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               )}
 
               {/* Accounts List */}
-              <div className="space-y-1.5 max-h-48 overflow-y-auto">
+              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                 {accounts.map((acc) => (
                   <div
                     key={acc.id}
-                    className="flex items-center justify-between p-2.5 rounded-xl bg-slate-800/40 border border-slate-800 hover:border-slate-700 text-xs"
+                    className="p-2.5 rounded-xl bg-slate-800/40 border border-slate-800 hover:border-slate-700 text-xs space-y-2"
                   >
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-7 h-7 rounded-lg bg-slate-700 flex items-center justify-center font-bold text-white text-[11px]">
-                        {acc.name.charAt(0).toUpperCase()}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-7 h-7 rounded-lg bg-slate-700 flex items-center justify-center font-bold text-white text-[11px]">
+                          {acc.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <div className="font-bold text-white flex items-center gap-1.5">
+                            <span>{acc.name}</span>
+                            {acc.username === user.username && (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">
+                                Siz
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-slate-400 font-mono">
+                            @{acc.username} • {acc.role === 'admin' ? 'Bosh Admin' : 'Kassir'}
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <div className="font-bold text-white flex items-center gap-1.5">
-                          <span>{acc.name}</span>
-                          {acc.username === user.username && (
-                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">
-                              Siz
-                            </span>
-                          )}
+
+                      <div className="flex items-center gap-1.5">
+                        {/* Password pill */}
+                        <div className="flex items-center gap-1 bg-slate-900/90 px-2.5 py-1 rounded-lg border border-slate-700/80 font-mono text-[11px]">
+                          <span className="text-slate-500 text-[10px]">Parol:</span>
+                          <span className="text-amber-300 font-bold tracking-wider">
+                            {revealedPasswords[acc.id] ? acc.password : '••••••'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRevealedPasswords((prev) => ({
+                                ...prev,
+                                [acc.id]: !prev[acc.id],
+                              }))
+                            }
+                            className="text-slate-400 hover:text-amber-400 ml-1 p-0.5 transition-colors"
+                            title={revealedPasswords[acc.id] ? 'Parolni yashirish' : 'Parolni koʻrish'}
+                          >
+                            {revealedPasswords[acc.id] ? (
+                              <EyeOff className="w-3.5 h-3.5" />
+                            ) : (
+                              <Eye className="w-3.5 h-3.5" />
+                            )}
+                          </button>
                         </div>
-                        <div className="text-[11px] text-slate-400 font-mono">
-                          @{acc.username} • {acc.role === 'admin' ? 'Bosh Admin' : 'Kassir'}
-                        </div>
+
+                        {/* Quick edit password button */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (editingAccId === acc.id) {
+                              setEditingAccId(null);
+                            } else {
+                              setEditingAccId(acc.id);
+                              setEditingAccPass(acc.password);
+                            }
+                          }}
+                          className="p-1.5 text-slate-400 hover:text-amber-400 rounded-lg hover:bg-slate-700/50 transition-colors"
+                          title="Parolni oʻzgartirish"
+                        >
+                          <KeyRound className="w-3.5 h-3.5" />
+                        </button>
+
+                        {accounts.length > 1 && acc.username !== user.username && (
+                          <button
+                            onClick={() => handleDeleteAccount(acc.id, acc.username)}
+                            className="p-1.5 text-slate-500 hover:text-rose-400 rounded-lg hover:bg-slate-700/50 transition-colors"
+                            title="Akkauntni oʻchirish"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
 
-                    {accounts.length > 1 && acc.username !== user.username && (
-                      <button
-                        onClick={() => handleDeleteAccount(acc.id, acc.username)}
-                        className="p-1.5 text-slate-500 hover:text-rose-400 rounded-lg transition-colors"
-                        title="Akkauntni oʻchirish"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                    {/* Inline password editor */}
+                    {editingAccId === acc.id && (
+                      <div className="flex items-center gap-2 pt-1 border-t border-slate-700/50">
+                        <input
+                          type="text"
+                          value={editingAccPass}
+                          onChange={(e) => setEditingAccPass(e.target.value)}
+                          placeholder="Yangi parol..."
+                          className="flex-1 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-white font-mono text-xs focus:outline-none focus:border-amber-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleSaveEmployeePassword(acc.id)}
+                          className="px-2.5 py-1 rounded-lg bg-amber-500 text-slate-950 font-bold text-xs hover:bg-amber-400"
+                        >
+                          Saqlash
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingAccId(null)}
+                          className="px-2 py-1 rounded-lg bg-slate-800 text-slate-400 text-xs hover:text-white"
+                        >
+                          Bekor
+                        </button>
+                      </div>
                     )}
                   </div>
                 ))}

@@ -9,8 +9,10 @@ import {
   Eye,
   EyeOff,
   KeyRound,
+  RotateCcw,
 } from 'lucide-react';
 import { UserAccount } from '../types';
+import { storage } from '../services/storage';
 
 interface LoginModalProps {
   onLogin: (username: string, password: string) => { success: boolean; error?: string };
@@ -33,8 +35,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const isInitialSetupNeeded = accounts.length === 0;
 
   // Login form state
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  const [username, setUsername] = useState('admin');
+  const [password, setPassword] = useState('admin');
   const [showPassword, setShowPassword] = useState(false);
 
   // Initial setup state (only seen once by the owner on blank system)
@@ -49,9 +51,20 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     e.preventDefault();
     setError(null);
 
-    const result = onLogin(username, password);
+    const result = onLogin(username.trim().toLowerCase(), password.trim());
     if (!result.success) {
       setError(result.error || 'Login yoki parol notoʻgʻri!');
+    }
+  };
+
+  const handleResetPasswordToDefault = () => {
+    storage.resetMasterCredentials();
+    setUsername('admin');
+    setPassword('admin');
+    setError(null);
+    const result = onLogin('admin', 'admin');
+    if (!result.success) {
+      setError(result.error || 'Kirishda xatolik yuz berdi!');
     }
   };
 
@@ -102,9 +115,19 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         </div>
 
         {error && (
-          <div className="p-3.5 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2.5">
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
-            <span>{error}</span>
+          <div className="p-3.5 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs space-y-2">
+            <div className="flex items-center gap-2.5">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span>{error}</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleResetPasswordToDefault}
+              className="w-full py-2 px-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold text-xs border border-amber-500/40 flex items-center justify-center gap-1.5 transition-colors"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Parolni 'admin' ga qaytarib tiklash va kirish</span>
+            </button>
           </div>
         )}
 
@@ -165,6 +188,17 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               <span>TIZIMGA KIRISH</span>
               <ArrowRight className="w-4 h-4 stroke-[3]" />
             </button>
+
+            <div className="pt-2 text-center">
+              <button
+                type="button"
+                onClick={handleResetPasswordToDefault}
+                className="text-xs text-slate-400 hover:text-amber-400 transition-colors inline-flex items-center gap-1.5"
+              >
+                <RotateCcw className="w-3 h-3 text-slate-500" />
+                <span>Parolni unutdingizmi? <span className="text-amber-400 underline font-semibold ml-0.5">Parolni 'admin' qilib kirish</span></span>
+              </button>
+            </div>
           </form>
         )}
 

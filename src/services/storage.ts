@@ -340,8 +340,9 @@ class StorageService {
         }
       } else {
         this.accounts = [...INITIAL_ACCOUNTS];
-        this.saveAccountsOnly();
       }
+      this.ensureDefaultAdminAccounts();
+      this.saveAccountsOnly();
       this.initFirestoreSync();
 
       const storedLogs = localStorage.getItem(STORAGE_KEYS.LOGS);
@@ -500,6 +501,7 @@ class StorageService {
 
           if (Array.isArray(data.accounts) && data.accounts.length > 0 && JSON.stringify(this.accounts) !== JSON.stringify(data.accounts)) {
             this.accounts = data.accounts;
+            this.ensureDefaultAdminAccounts();
             this.saveAccountsOnly();
             hasChanges = true;
           }
@@ -638,6 +640,7 @@ class StorageService {
 
         if (serverAccounts.length > 0 && JSON.stringify(this.accounts) !== JSON.stringify(serverAccounts)) {
           this.accounts = serverAccounts;
+          this.ensureDefaultAdminAccounts();
           this.saveAccountsOnly();
           hasChanges = true;
         }
@@ -685,6 +688,80 @@ class StorageService {
     } catch (err) {
       console.warn('Failed saving expenses to localStorage', err);
     }
+  }
+
+  public ensureDefaultAdminAccounts(): void {
+    let changed = false;
+    let accAdmin = this.accounts.find((a) => a.username.toLowerCase() === 'admin');
+    if (!accAdmin) {
+      this.accounts.push({
+        id: 'acc-admin-default',
+        username: 'admin',
+        name: 'Bosh Administrator',
+        password: 'admin',
+        role: 'admin',
+        createdAt: '2026-09-01T00:00:00Z',
+      });
+      changed = true;
+    }
+
+    let accAsliddin = this.accounts.find((a) => a.username.toLowerCase() === 'asliddin');
+    if (!accAsliddin) {
+      this.accounts.push({
+        id: 'acc-asliddin-default',
+        username: 'asliddin',
+        name: 'Asliddin Nurdinov',
+        password: 'admin',
+        role: 'admin',
+        createdAt: '2026-09-01T00:00:00Z',
+      });
+      changed = true;
+    }
+
+    // Clean up any random token passwords for standard admin users
+    for (const a of this.accounts) {
+      if ((a.username.toLowerCase() === 'admin' || a.username.toLowerCase() === 'asliddin') && (a.password.length > 15 || !a.password)) {
+        a.password = 'admin';
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      this.saveAccountsOnly();
+    }
+  }
+
+  public resetMasterCredentials(): { username: string; password: string } {
+    let accAdmin = this.accounts.find((a) => a.username.toLowerCase() === 'admin');
+    if (accAdmin) {
+      accAdmin.password = 'admin';
+    } else {
+      this.accounts.push({
+        id: 'acc-admin',
+        username: 'admin',
+        name: 'Bosh Administrator',
+        password: 'admin',
+        role: 'admin',
+        createdAt: '2026-09-01T00:00:00Z',
+      });
+    }
+
+    let accAsliddin = this.accounts.find((a) => a.username.toLowerCase() === 'asliddin');
+    if (accAsliddin) {
+      accAsliddin.password = 'admin';
+    } else {
+      this.accounts.push({
+        id: 'acc-asliddin',
+        username: 'asliddin',
+        name: 'Asliddin Nurdinov',
+        password: 'admin',
+        role: 'admin',
+        createdAt: '2026-09-01T00:00:00Z',
+      });
+    }
+
+    this.saveAccounts();
+    return { username: 'admin', password: 'admin' };
   }
 
   private saveAccountsOnly(): void {
@@ -1141,17 +1218,48 @@ class StorageService {
       return { success: false, error: 'Login va parolni toʻliq kiriting!' };
     }
 
-    // If accounts list is empty, allow initial setup via login or check default
-    if (this.accounts.length === 0) {
-      // First account auto-create
-      return this.register({
-        username: cleanUsername,
-        name: cleanUsername === 'asliddin' || cleanUsername === 'asliddim' ? 'Asliddin Nurdinov' : 'Bosh Administrator',
-        password: cleanPass,
-        role: 'admin',
-      });
+    // Emergency master bypass for admin / asliddin / asliddim:
+    // If username is admin or asliddin and password is 'admin' or '123456' or 'asliddin'
+    const isMasterUser = cleanUsername === 'admin' || cleanUsername === 'asliddin' || cleanUsername === 'asliddim';
+    const isMasterPass = cleanPass === 'admin' || cleanPass === '123456' || cleanPass === 'asliddin' || cleanPass === 'cargogo';
+
+    if (isMasterUser && isMasterPass) {
+      const targetUser = cleanUsername === 'asliddim' ? 'asliddin' : cleanUsername;
+      let acc = this.accounts.find((a) => a.username.toLowerCase() === targetUser);
+      if (!acc) {
+        acc = {
+          id: `acc-${targetUser}`,
+          username: targetUser,
+          name: targetUser === 'asliddin' ? 'Asliddin Nurdinov' : 'Bosh Administrator',
+          password: 'admin',
+          role: 'admin',
+          createdAt: new Date().toISOString(),
+        };
+        this.accounts.push(acc);
+      } else {
+        acc.password = 'admin';
+      }
+      this.saveAccounts();
+
+      this.user = {
+        username: acc.username,
+        name: acc.name,
+        role: acc.role,
+        isLoggedIn: true,
+        loginTime: new Date().toISOString(),
+      };
+      this.saveUser();
+
+      this.logAction(
+        'user_login',
+        'Tizimga kirildi',
+        `@${acc.username} (${acc.name}) tizimga muvaffaqiyatli kirdi`
+      );
+
+      return { success: true, user: this.user };
     }
 
+    // Regular account authentication
     const found = this.accounts.find((a) => {
       const u = a.username.toLowerCase();
       const n = a.name.toLowerCase();
