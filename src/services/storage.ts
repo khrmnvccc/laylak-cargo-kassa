@@ -9,7 +9,7 @@ import {
 } from '../types';
 import { getDecadeInfo } from '../utils/formatters';
 import { db } from '../firebase';
-import { doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot, getDocFromServer } from 'firebase/firestore';
 
 const STORAGE_KEYS = {
   REPORTS: 'cargogo_reports_v2',
@@ -471,55 +471,95 @@ class StorageService {
     this.saveExpenses();
   }
 
+  public handleFirestoreData(data: any): boolean {
+    if (!data) return false;
+    let hasChanges = false;
+
+    if (Array.isArray(data.reports) && JSON.stringify(this.reports) !== JSON.stringify(data.reports)) {
+      this.reports = data.reports;
+      this.saveReportsOnly();
+      hasChanges = true;
+    }
+
+    if (Array.isArray(data.kassa) && JSON.stringify(this.kassa) !== JSON.stringify(data.kassa)) {
+      this.kassa = data.kassa;
+      this.saveKassaOnly();
+      hasChanges = true;
+    }
+
+    if (Array.isArray(data.expenses) && JSON.stringify(this.expenses) !== JSON.stringify(data.expenses)) {
+      this.expenses = data.expenses;
+      this.saveExpensesOnly();
+      hasChanges = true;
+    }
+
+    if (Array.isArray(data.accounts) && data.accounts.length > 0 && JSON.stringify(this.accounts) !== JSON.stringify(data.accounts)) {
+      this.accounts = data.accounts;
+      this.ensureDefaultAdminAccounts();
+      this.saveAccountsOnly();
+      hasChanges = true;
+    }
+
+    if (Array.isArray(data.logs) && JSON.stringify(this.logs) !== JSON.stringify(data.logs)) {
+      this.logs = data.logs;
+      this.saveLogsOnly();
+      hasChanges = true;
+    }
+
+    if (hasChanges) {
+      this.notifyListeners();
+    }
+    return hasChanges;
+  }
+
+  public async fetchFirestoreData(): Promise<boolean> {
+    try {
+      const docRef = doc(db, 'app_data', 'main');
+      const snap = await getDocFromServer(docRef);
+      if (snap.exists()) {
+        this.isServerConnected = true;
+        return this.handleFirestoreData(snap.data());
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
   private initFirestoreSync(): void {
     if (typeof window === 'undefined') return;
     try {
       const docRef = doc(db, 'app_data', 'main');
+
+      // 1. Real-time active stream listener
       onSnapshot(docRef, (snapshot) => {
         if (snapshot.exists()) {
-          const data = snapshot.data();
           this.isServerConnected = true;
-          let hasChanges = false;
-
-          if (Array.isArray(data.reports) && data.reports.length > 0 && JSON.stringify(this.reports) !== JSON.stringify(data.reports)) {
-            this.reports = data.reports;
-            this.saveReportsOnly();
-            hasChanges = true;
-          }
-
-          if (Array.isArray(data.kassa) && data.kassa.length > 0 && JSON.stringify(this.kassa) !== JSON.stringify(data.kassa)) {
-            this.kassa = data.kassa;
-            this.saveKassaOnly();
-            hasChanges = true;
-          }
-
-          if (Array.isArray(data.expenses) && JSON.stringify(this.expenses) !== JSON.stringify(data.expenses)) {
-            this.expenses = data.expenses;
-            this.saveExpensesOnly();
-            hasChanges = true;
-          }
-
-          if (Array.isArray(data.accounts) && data.accounts.length > 0 && JSON.stringify(this.accounts) !== JSON.stringify(data.accounts)) {
-            this.accounts = data.accounts;
-            this.ensureDefaultAdminAccounts();
-            this.saveAccountsOnly();
-            hasChanges = true;
-          }
-
-          if (Array.isArray(data.logs) && JSON.stringify(this.logs) !== JSON.stringify(data.logs)) {
-            this.logs = data.logs;
-            this.saveLogsOnly();
-            hasChanges = true;
-          }
-
-          if (hasChanges) {
-            this.notifyListeners();
-          }
+          this.handleFirestoreData(snapshot.data());
         } else {
           this.syncToFirestore();
         }
       }, (err) => {
         console.warn('Firestore snapshot notice:', err);
+      });
+
+      // 2. Fetch directly right now on startup
+      this.fetchFirestoreData();
+
+      // 3. Fallback poll every 3 seconds to guarantee updates even if mobile sleeps stream
+      setInterval(() => {
+        this.fetchFirestoreData();
+      }, 3000);
+
+      // 4. Mobile screen unlock / tab switch listener
+      window.addEventListener('focus', () => {
+        this.fetchFirestoreData();
+      });
+
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          this.fetchFirestoreData();
+        }
       });
     } catch (e) {
       console.warn('Firestore init notice:', e);
@@ -552,7 +592,7 @@ class StorageService {
     this.syncTimeout = setTimeout(() => {
       this.syncToFirestore();
       this.syncToServer();
-    }, 250);
+    }, 40);
   }
 
   public async syncToServer(): Promise<boolean> {

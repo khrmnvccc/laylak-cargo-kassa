@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Truck,
   Wallet,
@@ -12,9 +12,11 @@ import {
   Settings,
   Sun,
   Moon,
+  RotateCw,
 } from 'lucide-react';
 import { formatMoney, formatDateUz } from '../utils/formatters';
 import { ActiveTab, UserSession } from '../types';
+import { storage } from '../services/storage';
 
 interface NavbarProps {
   activeTab: ActiveTab;
@@ -43,6 +45,14 @@ export const Navbar: React.FC<NavbarProps> = ({
   theme,
   onToggleTheme,
 }) => {
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await storage.fetchFirestoreData();
+    setTimeout(() => setIsRefreshing(false), 500);
+  };
+
   return (
     <header className="sticky top-0 z-30 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 transition-colors">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
@@ -223,6 +233,15 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               <span className="text-[11px] text-slate-300 font-medium">Onlayn baza</span>
             </div>
+
+            {/* Quick Live Refresh Button for all devices */}
+            <button
+              onClick={handleRefresh}
+              className="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-750 border border-slate-700/80 hover:border-amber-500/40 text-slate-300 hover:text-amber-400 transition-all active:scale-95 shadow-sm"
+              title="Bulutli baza bilan yangilash (Sinxronizatsiya)"
+            >
+              <RotateCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-amber-400' : ''}`} />
+            </button>
 
 
             {/* Theme Toggle Button (Yorug' / Qorong'i rejim) */}
