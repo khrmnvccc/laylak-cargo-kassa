@@ -165,9 +165,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               <span>TIZIMGA KIRISH</span>
               <ArrowRight className="w-4 h-4 stroke-[3]" />
             </button>
-            <div className="pt-2 text-center text-[11px] text-slate-400 bg-slate-800/50 p-2.5 rounded-xl border border-slate-700/60">
-              <span className="text-amber-400 font-bold">Standart kirish:</span> Login: <span className="text-amber-300 font-mono font-semibold">admin</span> (yoki <span className="text-amber-300 font-mono font-semibold">asliddin</span>) • Parol: <span className="text-amber-300 font-mono font-semibold">admin</span>
-            </div>
           </form>
         )}
 

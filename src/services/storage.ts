@@ -1086,6 +1086,50 @@ class StorageService {
     return { success: true, user: this.user };
   }
 
+  public addEmployeeAccount(data: {
+    username: string;
+    name: string;
+    password: string;
+    role: 'admin' | 'kassir';
+  }): { success: boolean; error?: string; account?: UserAccount } {
+    const cleanUsername = data.username.trim().toLowerCase();
+    const cleanPass = data.password.trim();
+    const cleanName = data.name.trim();
+
+    if (!cleanUsername || cleanUsername.length < 3) {
+      return { success: false, error: 'Login kamida 3 ta belgidan iborat boʻlishi kerak!' };
+    }
+    if (!cleanPass || cleanPass.length < 4) {
+      return { success: false, error: 'Parol kamida 4 ta belgidan iborat boʻlishi kerak!' };
+    }
+    if (this.accounts.some((a) => a.username.toLowerCase() === cleanUsername)) {
+      return { success: false, error: 'Ushbu login band! Boshqa login kiriting.' };
+    }
+
+    const newAcc: UserAccount = {
+      id: `acc-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      username: cleanUsername,
+      name: cleanName || cleanUsername,
+      password: cleanPass,
+      role: data.role || 'kassir',
+      createdAt: new Date().toISOString(),
+    };
+
+    this.accounts.push(newAcc);
+    this.saveAccounts();
+
+    // CRITICAL: DO NOT change this.user here!
+    // The currently active administrator stays logged in as themselves!
+
+    this.logAction(
+      'user_add',
+      'Yangi xodim qoʻshildi',
+      `@${newAcc.username} (${newAcc.name}) | Vazifasi: ${newAcc.role === 'admin' ? 'Bosh Admin' : 'Kassir'} (Qoʻshgan: ${this.user.name || this.user.username})`
+    );
+
+    return { success: true, account: newAcc };
+  }
+
   public loginWithCredentials(
     username: string,
     pass: string
@@ -1102,15 +1146,20 @@ class StorageService {
       // First account auto-create
       return this.register({
         username: cleanUsername,
-        name: cleanUsername === 'asliddin' ? 'Asliddin Nurdinov' : 'Bosh Administrator',
+        name: cleanUsername === 'asliddin' || cleanUsername === 'asliddim' ? 'Asliddin Nurdinov' : 'Bosh Administrator',
         password: cleanPass,
         role: 'admin',
       });
     }
 
-    const found = this.accounts.find(
-      (a) => a.username.toLowerCase() === cleanUsername && a.password === cleanPass
-    );
+    const found = this.accounts.find((a) => {
+      const u = a.username.toLowerCase();
+      const n = a.name.toLowerCase();
+      const isUsernameMatch = u === cleanUsername || (cleanUsername === 'asliddim' && u === 'asliddin');
+      const isNameMatch = n === cleanUsername;
+      const isPassMatch = a.password === cleanPass;
+      return (isUsernameMatch || isNameMatch) && isPassMatch;
+    });
 
     if (found) {
       this.user = {

@@ -111,7 +111,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       return;
     }
 
-    const res = storage.register({
+    const res = storage.addEmployeeAccount({
       name: newAccName.trim() || newAccUsername.trim(),
       username: newAccUsername.trim(),
       password: newAccPassword,
