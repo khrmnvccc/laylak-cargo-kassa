@@ -1218,46 +1218,7 @@ class StorageService {
       return { success: false, error: 'Login va parolni toʻliq kiriting!' };
     }
 
-    // Emergency master bypass for admin / asliddin / asliddim:
-    // If username is admin or asliddin and password is 'admin' or '123456' or 'asliddin'
-    const isMasterUser = cleanUsername === 'admin' || cleanUsername === 'asliddin' || cleanUsername === 'asliddim';
-    const isMasterPass = cleanPass === 'admin' || cleanPass === '123456' || cleanPass === 'asliddin' || cleanPass === 'cargogo';
-
-    if (isMasterUser && isMasterPass) {
-      const targetUser = cleanUsername === 'asliddim' ? 'asliddin' : cleanUsername;
-      let acc = this.accounts.find((a) => a.username.toLowerCase() === targetUser);
-      if (!acc) {
-        acc = {
-          id: `acc-${targetUser}`,
-          username: targetUser,
-          name: targetUser === 'asliddin' ? 'Asliddin Nurdinov' : 'Bosh Administrator',
-          password: 'admin',
-          role: 'admin',
-          createdAt: new Date().toISOString(),
-        };
-        this.accounts.push(acc);
-      } else {
-        acc.password = 'admin';
-      }
-      this.saveAccounts();
-
-      this.user = {
-        username: acc.username,
-        name: acc.name,
-        role: acc.role,
-        isLoggedIn: true,
-        loginTime: new Date().toISOString(),
-      };
-      this.saveUser();
-
-      this.logAction(
-        'user_login',
-        'Tizimga kirildi',
-        `@${acc.username} (${acc.name}) tizimga muvaffaqiyatli kirdi`
-      );
-
-      return { success: true, user: this.user };
-    }
+    // Strict authentication against database accounts
 
     // Regular account authentication
     const found = this.accounts.find((a) => {
