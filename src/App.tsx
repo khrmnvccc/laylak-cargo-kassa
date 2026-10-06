@@ -40,6 +40,7 @@ export default function App() {
   const [expenses, setExpenses] = useState<ExpenseRecord[]>([]);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [user, setUser] = useState<UserSession>(storage.getUser());
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [theme, setTheme] = useState<'dark' | 'light'>(() => storage.getTheme());
 
   // Sync theme with document root
@@ -104,6 +105,36 @@ export default function App() {
     return () => {
       unsubscribe();
     };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const restoreAuthSession = async () => {
+      try {
+        const response = await fetch('/api/auth/get-session', { cache: 'no-store' });
+        const session = response.ok ? await response.json() : null;
+        if (active && session?.user?.id && session.user.email) {
+          await storage.setAuthenticatedUser({
+            id: session.user.id,
+            email: session.user.email,
+            name: session.user.name,
+          });
+          if (active) refreshData();
+        } else if (active) {
+          storage.logout();
+          setUser(storage.getUser());
+        }
+      } catch {
+        if (active) {
+          storage.logout();
+          setUser(storage.getUser());
+        }
+      } finally {
+        if (active) setIsAuthLoading(false);
+      }
+    };
+    void restoreAuthSession();
+    return () => { active = false; };
   }, []);
 
   // Role guard: cashiers cannot access kassa or auditLog
@@ -238,40 +269,55 @@ export default function App() {
   };
 
   // Login handler
-  const handleLogin = (username: string, pass: string, rememberMe?: boolean) => {
-    const res = storage.loginWithCredentials(username, pass, rememberMe ?? true);
-    if (res.success) {
-      setUser(storage.getUser());
+  const completeAuth = async () => {
+    const response = await fetch('/api/auth/get-session', { cache: 'no-store' });
+    const session = response.ok ? await response.json() : null;
+    if (!session?.user?.id || !session.user.email) {
+      return { success: false, error: 'Sessiya ochilmadi. Qayta urinib ko‘ring.' };
     }
-    return res;
+    await storage.setAuthenticatedUser({ id: session.user.id, email: session.user.email, name: session.user.name });
+    refreshData();
+    return { success: true };
   };
 
-  // Register handler
-  const handleRegister = (data: {
-    username: string;
-    name: string;
-    password: string;
-    role?: 'admin' | 'kassir';
-  }) => {
-    const res = storage.register(data);
-    if (res.success) {
-      setUser(storage.getUser());
-    }
-    return res;
+  const handleLogin = async (email: string, password: string) => {
+    const response = await fetch('/api/auth/sign-in/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) return { success: false, error: result?.message || 'Email yoki parol noto‘g‘ri.' };
+    return completeAuth();
   };
 
-  const handleLogout = () => {
+  const handleRegister = async (email: string, name: string, password: string) => {
+    const response = await fetch('/api/auth/sign-up/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, name, password }),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) return { success: false, error: result?.message || 'Akkaunt yaratilmadi.' };
+    return completeAuth();
+  };
+
+  const handleLogout = async () => {
+    await storage.syncToServer();
+    await fetch('/api/auth/sign-out', { method: 'POST' }).catch(() => undefined);
     storage.logout();
     setUser(storage.getUser());
   };
 
   // If user is not logged in, enforce security
   if (!user.isLoggedIn) {
+    if (isAuthLoading) {
+      return <div className="min-h-screen bg-slate-950 text-slate-300 flex items-center justify-center text-sm">Sessiya tekshirilmoqda…</div>;
+    }
     return (
       <LoginModal
         onLogin={handleLogin}
         onRegister={handleRegister}
-        accounts={storage.getAccounts()}
       />
     );
   }
@@ -388,10 +434,6 @@ export default function App() {
         {activeTab === 'settings' && (
           <SettingsView
             user={user}
-            onUpdateUser={(u) => {
-              storage.setUser(u);
-              setUser(u);
-            }}
             onLogout={handleLogout}
             onResetData={handleResetData}
             onClearData={handleClearData}
