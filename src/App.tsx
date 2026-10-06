@@ -280,14 +280,24 @@ export default function App() {
     return { success: true };
   };
 
+  const authErrorMessage = async (response: Response, fallback: string) => {
+    const text = await response.text();
+    try {
+      const body = JSON.parse(text);
+      const message = body?.message || body?.error?.message || body?.error || body?.code;
+      return typeof message === 'string' && message ? message : fallback;
+    } catch {
+      return text && text.length < 240 ? text : fallback;
+    }
+  };
+
   const handleLogin = async (email: string, password: string) => {
     const response = await fetch('/api/auth/sign-in/email', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
-    const result = await response.json().catch(() => null);
-    if (!response.ok) return { success: false, error: result?.message || 'Email yoki parol noto‘g‘ri.' };
+    if (!response.ok) return { success: false, error: await authErrorMessage(response, 'Email yoki parol noto‘g‘ri.') };
     return completeAuth();
   };
 
@@ -297,8 +307,7 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, name, password }),
     });
-    const result = await response.json().catch(() => null);
-    if (!response.ok) return { success: false, error: result?.message || 'Akkaunt yaratilmadi.' };
+    if (!response.ok) return { success: false, error: await authErrorMessage(response, 'Akkaunt yaratilmadi.') };
     return completeAuth();
   };
 
