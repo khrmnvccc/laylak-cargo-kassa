@@ -1,117 +1,47 @@
 import React, { useState } from 'react';
-import {
-  Truck,
-  Lock,
-  User,
-  AlertCircle,
-  ArrowRight,
-  ShieldCheck,
-  Eye,
-  EyeOff,
-  KeyRound,
-} from 'lucide-react';
-import { UserAccount } from '../types';
+import { AlertCircle, ArrowRight, Eye, EyeOff, Lock, Mail, ShieldCheck, Truck, User } from 'lucide-react';
+
+type AuthResult = { success: boolean; error?: string };
 
 interface LoginModalProps {
-  onLogin: (username: string, password: string, rememberMe?: boolean) => { success: boolean; error?: string };
-  onRegister: (data: {
-    username: string;
-    name: string;
-    password: string;
-    role?: 'admin' | 'kassir';
-  }) => { success: boolean; error?: string };
-  accounts: UserAccount[];
+  onLogin: (email: string, password: string) => Promise<AuthResult>;
+  onRegister: (email: string, name: string, password: string) => Promise<AuthResult>;
 }
 
-export const LoginModal: React.FC<LoginModalProps> = ({
-  onLogin,
-  onRegister,
-  accounts,
-}) => {
-  // If no admin account exists yet in the database, allow the owner a 1-time setup.
-  // Once created, public registration is PERMANENTLY LOCKED.
-  const isInitialSetupNeeded = accounts.length === 0;
-
-  // Login form state
-  const [username, setUsername] = useState(() => {
-    try {
-      return localStorage.getItem('cargogo_last_username') || '';
-    } catch {
-      return '';
-    }
-  });
+export const LoginModal: React.FC<LoginModalProps> = ({ onLogin, onRegister }) => {
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(() => {
-    try {
-      return localStorage.getItem('cargogo_remember_me') !== 'false';
-    } catch {
-      return true;
-    }
-  });
-
-  // Initial setup state (only seen once by the owner on blank system)
-  const [setupName, setSetupName] = useState('Asliddin Nurdinov');
-  const [setupUsername, setSetupUsername] = useState('');
-  const [setupPassword, setSetupPassword] = useState('');
-  const [setupConfirm, setSetupConfirm] = useState('');
-
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
     setError(null);
-
-    const result = onLogin(username.trim().toLowerCase(), password.trim(), rememberMe);
-    if (!result.success) {
-      setError(result.error || 'Login yoki parol notoʻgʻri!');
-    }
-  };
-
-  const handleInitialSetupSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-
-    const cleanUser = setupUsername.trim().toLowerCase();
-    if (!cleanUser || cleanUser.length < 3) {
-      setError('Login kamida 3 ta belgidan iborat boʻlishi kerak!');
-      return;
-    }
-    if (!setupPassword || setupPassword.length < 4) {
-      setError('Parol kamida 4 ta belgidan iborat boʻlishi kerak!');
-      return;
-    }
-    if (setupPassword !== setupConfirm) {
-      setError('Kiritilgan parollar bir-biriga mos kelmadi!');
-      return;
-    }
-
-    const result = onRegister({
-      name: setupName.trim() || 'Bosh Administrator',
-      username: cleanUser,
-      password: setupPassword,
-      role: 'admin',
-    });
-
-    if (!result.success) {
-      setError(result.error || 'Akkaunt yaratishda xatolik yuz berdi!');
+    setIsSubmitting(true);
+    try {
+      const result = isRegistering
+        ? await onRegister(email.trim().toLowerCase(), name.trim(), password)
+        : await onLogin(email.trim().toLowerCase(), password);
+      if (!result.success) setError(result.error || 'Kirish amalga oshmadi. Ma’lumotlarni tekshiring.');
+    } catch {
+      setError('Ulanishda xatolik. Internetni tekshirib, qayta urinib ko‘ring.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/95 backdrop-blur-xl">
-      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6 animate-in zoom-in-95 duration-200">
-        {/* Brand Header */}
+      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
         <div className="text-center space-y-2">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center mx-auto shadow-xl shadow-amber-500/20 text-slate-950 font-black">
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center mx-auto text-slate-950">
             <Truck className="w-8 h-8 stroke-[2.5]" />
           </div>
-          <h1 className="text-2xl font-black text-white tracking-tight pt-1">
-            Laylak <span className="text-amber-400">Cargo</span> Kassa
-          </h1>
-          <p className="text-xs text-slate-400">
-            Shaxsiy yopiq tizim. Faqat ruxsat berilgan xodimlar uchun.
-          </p>
+          <h1 className="text-2xl font-black text-white tracking-tight">Laylak <span className="text-amber-400">Cargo</span> Kassa</h1>
+          <p className="text-xs text-slate-400">Hisobotlaringiz akkauntingizda saqlanadi va qurilmalar orasida sinxronlanadi.</p>
         </div>
 
         {error && (
@@ -121,188 +51,49 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           </div>
         )}
 
-        {/* --- CASE 1: STRICT LOGIN FORM (When admin account is configured) --- */}
-        {!isInitialSetupNeeded && (
-          <form onSubmit={handleLoginSubmit} className="space-y-4">
+        <form onSubmit={submit} className="space-y-4">
+          {isRegistering && (
             <div>
-              <label className="block text-xs font-bold text-slate-300 mb-1.5">
-                Login
-              </label>
+              <label className="block text-xs font-bold text-slate-300 mb-1.5">Ism</label>
               <div className="relative">
                 <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
-                <input
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="Loginingizni kiriting"
-                  className="w-full pl-10 pr-3.5 py-3 rounded-2xl bg-slate-800/80 border border-slate-700 text-white text-sm focus:outline-none focus:border-amber-500 transition-colors"
-                  required
-                  autoFocus
-                />
+                <input value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" placeholder="Ismingiz" required className="w-full pl-10 pr-3.5 py-3 rounded-2xl bg-slate-800/80 border border-slate-700 text-white text-sm focus:outline-none focus:border-amber-500" />
               </div>
             </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-300 mb-1.5">
-                Parol
-              </label>
-              <div className="relative">
-                <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Parolni kiriting"
-                  className="w-full pl-10 pr-10 py-3 rounded-2xl bg-slate-800/80 border border-slate-700 text-white text-sm focus:outline-none focus:border-amber-500 transition-colors"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="p-1.5 text-slate-400 hover:text-slate-200 absolute right-3 top-2.5"
-                  title={showPassword ? 'Yashirish' : 'Koʻrsatish'}
-                >
-                  {showPassword ? (
-                    <EyeOff className="w-4 h-4" />
-                  ) : (
-                    <Eye className="w-4 h-4" />
-                  )}
-                </button>
-              </div>
+          )}
+          <div>
+            <label className="block text-xs font-bold text-slate-300 mb-1.5">Email</label>
+            <div className="relative">
+              <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
+              <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" placeholder="name@example.com" required className="w-full pl-10 pr-3.5 py-3 rounded-2xl bg-slate-800/80 border border-slate-700 text-white text-sm focus:outline-none focus:border-amber-500" />
             </div>
-
-            <div className="flex items-center justify-between pt-0.5">
-              <label className="flex items-center gap-2 cursor-pointer select-none group">
-                <input
-                  type="checkbox"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-700 bg-slate-800 text-amber-500 focus:ring-amber-500/20 focus:ring-offset-0 cursor-pointer accent-amber-500"
-                />
-                <span className="text-xs text-slate-300 group-hover:text-white transition-colors font-medium">
-                  Meni eslab qolish (ushbu telefonda)
-                </span>
-              </label>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-300 mb-1.5">Parol</label>
+            <div className="relative">
+              <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
+              <input type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={isRegistering ? 'new-password' : 'current-password'} placeholder="Parolni kiriting" minLength={8} required className="w-full pl-10 pr-10 py-3 rounded-2xl bg-slate-800/80 border border-slate-700 text-white text-sm focus:outline-none focus:border-amber-500" />
+              <button type="button" onClick={() => setShowPassword((value) => !value)} className="p-1.5 text-slate-400 hover:text-slate-200 absolute right-3 top-2.5" aria-label={showPassword ? 'Parolni yashirish' : 'Parolni ko‘rsatish'}>
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
             </div>
+          </div>
+          <button disabled={isSubmitting} type="submit" className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-60 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/20 flex items-center justify-center gap-2">
+            <span>{isSubmitting ? 'KUTILMOQDA…' : isRegistering ? 'AKKAUNT OCHISH' : 'TIZIMGA KIRISH'}</span>
+            <ArrowRight className="w-4 h-4 stroke-[3]" />
+          </button>
+        </form>
 
-            <button
-              type="submit"
-              className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/20 active:scale-98 transition-all flex items-center justify-center gap-2 pt-3"
-            >
-              <span>TIZIMGA KIRISH</span>
-              <ArrowRight className="w-4 h-4 stroke-[3]" />
-            </button>
+        <div className="text-center text-xs text-slate-400">
+          {isRegistering ? 'Akkauntingiz bormi?' : 'Birinchi marta kirdingizmi?'}{' '}
+          <button type="button" onClick={() => { setIsRegistering((value) => !value); setError(null); }} className="text-amber-400 hover:text-amber-300 font-bold">
+            {isRegistering ? 'Kirish' : 'Akkaunt ochish'}
+          </button>
+        </div>
 
-            <div className="pt-2 text-center text-[11px] text-slate-500 flex items-center justify-center gap-1.5">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Har bir telefon faqat oʻz hisobida alohida ishlaydi</span>
-            </div>
-          </form>
-        )}
-
-        {/* --- CASE 2: ONLY ON VERY FIRST VISIT (Set owner's master login & password) --- */}
-        {isInitialSetupNeeded && (
-          <form onSubmit={handleInitialSetupSubmit} className="space-y-4">
-            <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5">
-              <KeyRound className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-              <div>
-                <span className="font-bold block">Tizim egasi uchun dastlabki sozlash</span>
-                <span className="text-[11px] text-amber-200/80">
-                  Oʻzingiz uchun shaxsiy login va parol oʻrnating. Shundan soʻng tizim yopiladi va boshqa hech kim roʻyxatdan oʻta olmaydi.
-                </span>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-300 mb-1">
-                Ism va familiyangiz
-              </label>
-              <input
-                type="text"
-                value={setupName}
-                onChange={(e) => setSetupName(e.target.value)}
-                placeholder="Masalan: Asliddin Nurdinov"
-                className="w-full px-3.5 py-2.5 rounded-2xl bg-slate-800/80 border border-slate-700 text-white text-sm focus:outline-none focus:border-amber-500 transition-colors"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-300 mb-1">
-                Oʻzingizga qulay yangi Login
-              </label>
-              <div className="relative">
-                <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
-                <input
-                  type="text"
-                  value={setupUsername}
-                  onChange={(e) => setSetupUsername(e.target.value.toLowerCase().replace(/\s+/g, ''))}
-                  placeholder="masalan: asliddin yoki laylak"
-                  className="w-full pl-10 pr-3.5 py-2.5 rounded-2xl bg-slate-800/80 border border-slate-700 text-white text-sm font-mono focus:outline-none focus:border-amber-500 transition-colors"
-                  required
-                  autoFocus
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">
-                  Parol
-                </label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={setupPassword}
-                    onChange={(e) => setSetupPassword(e.target.value)}
-                    placeholder="Kamida 4 belgi"
-                    className="w-full pl-9 pr-8 py-2.5 rounded-2xl bg-slate-800/80 border border-slate-700 text-white text-sm focus:outline-none focus:border-amber-500 transition-colors"
-                    required
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="p-1 text-slate-400 hover:text-slate-200 absolute right-2 top-2"
-                  >
-                    {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">
-                  Parolni tasdiqlang
-                </label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={setupConfirm}
-                    onChange={(e) => setSetupConfirm(e.target.value)}
-                    placeholder="Qayta yozing"
-                    className="w-full pl-9 pr-3 py-2.5 rounded-2xl bg-slate-800/80 border border-slate-700 text-white text-sm focus:outline-none focus:border-amber-500 transition-colors"
-                    required
-                  />
-                </div>
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/20 active:scale-98 transition-all flex items-center justify-center gap-2 pt-3"
-            >
-              <span>PAROLNI SAQLASH VA TIZIMNI QULFLASH</span>
-              <ArrowRight className="w-4 h-4 stroke-[3]" />
-            </button>
-          </form>
-        )}
-
-        <div className="pt-2 border-t border-slate-800/80 text-center">
-          <p className="text-[11px] text-slate-500 flex items-center justify-center gap-1">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Begonalar uchun roʻyxatdan oʻtish yopiq</span>
-          </p>
+        <div className="pt-2 border-t border-slate-800/80 text-center text-[11px] text-slate-500 flex items-center justify-center gap-1.5">
+          <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+          <span>Ma’lumotlar faqat shu email akkauntiga tegishli bo‘ladi.</span>
         </div>
       </div>
     </div>

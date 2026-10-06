@@ -4,12 +4,9 @@ import {
   ExpenseRecord,
   ExpenseCategory,
   UserSession,
-  UserAccount,
   ActivityLog,
 } from '../types';
 import { getDecadeInfo } from '../utils/formatters';
-import { db } from '../firebase';
-import { doc, setDoc, onSnapshot, getDocFromServer } from 'firebase/firestore';
 
 const STORAGE_KEYS = {
   REPORTS: 'cargogo_reports_v2',
@@ -17,28 +14,20 @@ const STORAGE_KEYS = {
   EXPENSES: 'cargogo_expenses_v2',
   USER: 'cargogo_user_v2',
   SETTINGS: 'cargogo_settings_v2',
-  ACCOUNTS: 'cargogo_accounts_v3',
   LOGS: 'cargogo_logs_v2',
   THEME: 'cargogo_theme_v2',
+  DELETED_IDS: 'cargogo_deleted_ids_v1',
+  LEGACY_SAMPLE_CLEANUP: 'cargogo_legacy_sample_cleanup_v1',
+  AUTH_OWNER: 'cargogo_auth_owner_v1',
 };
 
-export const INITIAL_ACCOUNTS: UserAccount[] = [
-  {
-    id: 'acc-admin-1',
-    username: 'asliddin',
-    name: 'Asliddin Nurdinov',
-    password: 'admin',
-    role: 'admin',
-    createdAt: '2026-09-01T00:00:00Z',
-  },
-  {
-    id: 'acc-admin-2',
-    username: 'admin',
-    name: 'Bosh Administrator',
-    password: 'admin',
-    role: 'admin',
-    createdAt: '2026-09-01T00:00:00Z',
-  },
+const LEGACY_SAMPLE_RECORD_IDS = [
+  ...Array.from({ length: 8 }, (_, index) => `rep-${index + 1}`),
+  ...Array.from({ length: 8 }, (_, index) => `kas-${index + 1}`),
+  ...Array.from({ length: 8 }, (_, index) => `exp-kas-${index + 1}`),
+  'log-init-1',
+  'log-init-2',
+  'log-init-3',
 ];
 
 // Initial realistic seed data matching user prompt specifications
@@ -251,6 +240,28 @@ const INITIAL_KASSA: CashRecord[] = [
   },
 ];
 
+function recordTimestamp(record: { updatedAt?: string; createdAt?: string; timestamp?: string }): number {
+  const value = Date.parse(record.updatedAt || record.createdAt || record.timestamp || '');
+  return Number.isFinite(value) ? value : 0;
+}
+
+function mergeRecords<T extends { id: string; updatedAt?: string; createdAt?: string; timestamp?: string }>(
+  remote: unknown,
+  local: T[],
+  deleted: Set<string>,
+): T[] {
+  const merged = new Map<string, T>();
+  for (const record of Array.isArray(remote) ? remote as T[] : []) {
+    if (record?.id && !deleted.has(record.id)) merged.set(record.id, record);
+  }
+  for (const record of local) {
+    if (!record?.id || deleted.has(record.id)) continue;
+    const existing = merged.get(record.id);
+    if (!existing || recordTimestamp(record) >= recordTimestamp(existing)) merged.set(record.id, record);
+  }
+  return [...merged.values()];
+}
+
 // Helper to deduce expense category from note text
 export function deduceExpenseCategory(note: string): ExpenseCategory {
   const n = (note || '').toLowerCase();
@@ -267,7 +278,6 @@ class StorageService {
   private reports: ReportRecord[] = [];
   private kassa: CashRecord[] = [];
   private expenses: ExpenseRecord[] = [];
-  private accounts: UserAccount[] = [];
   private logs: ActivityLog[] = [];
   private user: UserSession = {
     username: '',
@@ -280,6 +290,10 @@ class StorageService {
   private listeners: Set<() => void> = new Set();
   private syncTimeout: any = null;
   private isSyncing = false;
+  private isInitializing = true;
+  private hasPendingServerSync = false;
+  private authUserId = '';
+  private deletedIds = new Map<string, string>();
   private lastServerTimestamp: string = '';
   public isServerConnected = false;
 
@@ -306,21 +320,29 @@ class StorageService {
 
   private init() {
     try {
+      const storedDeletedIds = localStorage.getItem(STORAGE_KEYS.DELETED_IDS);
+      if (storedDeletedIds) {
+        const parsed = JSON.parse(storedDeletedIds);
+        if (Array.isArray(parsed)) {
+          this.deletedIds = new Map(parsed.filter((entry): entry is [string, string] =>
+            Array.isArray(entry) && typeof entry[0] === 'string' && typeof entry[1] === 'string'
+          ));
+        }
+      }
       const storedReports = localStorage.getItem(STORAGE_KEYS.REPORTS);
       if (storedReports) {
         this.reports = JSON.parse(storedReports);
       } else {
-        this.reports = [...INITIAL_REPORTS];
-        this.saveReports();
+        this.reports = [];
+        this.saveReportsOnly();
       }
 
       const storedKassa = localStorage.getItem(STORAGE_KEYS.KASSA);
       if (storedKassa) {
         this.kassa = JSON.parse(storedKassa);
       } else {
-        this.kassa = [...INITIAL_KASSA];
-        this.recalculateKassaChain();
-        this.saveKassa();
+        this.kassa = [];
+        this.saveKassaOnly();
       }
 
       const storedExpenses = localStorage.getItem(STORAGE_KEYS.EXPENSES);
@@ -330,131 +352,42 @@ class StorageService {
         this.syncExpensesFromKassa();
       }
 
-      const storedAccounts = localStorage.getItem(STORAGE_KEYS.ACCOUNTS);
-      if (storedAccounts) {
-        try {
-          const parsed = JSON.parse(storedAccounts);
-          this.accounts = Array.isArray(parsed) && parsed.length > 0 ? parsed : [...INITIAL_ACCOUNTS];
-        } catch {
-          this.accounts = [...INITIAL_ACCOUNTS];
-        }
-      } else {
-        this.accounts = [...INITIAL_ACCOUNTS];
-      }
-      this.ensureDefaultAdminAccounts();
-      this.saveAccountsOnly();
-      this.initFirestoreSync();
-
+      // Authentication is handled by Neon Auth. Never load or seed local plaintext passwords.
       const storedLogs = localStorage.getItem(STORAGE_KEYS.LOGS);
       if (storedLogs) {
         this.logs = JSON.parse(storedLogs);
       } else {
-        this.logs = [
-          {
-            id: 'log-init-1',
-            timestamp: '2026-09-29T14:00:00Z',
-            actionType: 'kassa_add',
-            title: 'Kassaga tushum kiritildi',
-            description: '2026-09-29 sanasiga 505 000 soʻm kunlik tushum kassa balansiga qoʻshildi',
-            authorUsername: 'asliddin',
-            authorName: 'Asliddin Nurdinov',
-            authorRole: 'admin',
-          },
-          {
-            id: 'log-init-2',
-            timestamp: '2026-09-28T19:00:00Z',
-            actionType: 'expense_add',
-            title: 'Chiqim qayd etildi',
-            description: '860 000 soʻm ombor ijarasi uchun chiqim qilindi',
-            authorUsername: 'asliddin',
-            authorName: 'Asliddin Nurdinov',
-            authorRole: 'admin',
-          },
-          {
-            id: 'log-init-3',
-            timestamp: '2026-09-18T17:15:00Z',
-            actionType: 'report_add',
-            title: 'Reys otchyoti kiritildi',
-            description: 'ID: 104444 raqamli 2 195 000 soʻmlik otchyot saqlandi',
-            authorUsername: 'asliddin',
-            authorName: 'Asliddin Nurdinov',
-            authorRole: 'admin',
-          },
-        ];
-        this.saveLogs();
+        this.logs = [];
+        this.saveLogsOnly();
       }
 
-      // Isolated per-device session management
-      const isRemember = localStorage.getItem('cargogo_remember_me') !== 'false';
-      let storedUser: string | null = null;
-      try {
-        if (isRemember) {
-          storedUser = localStorage.getItem(STORAGE_KEYS.USER);
-        }
-        if (!storedUser) {
-          storedUser = sessionStorage.getItem(STORAGE_KEYS.USER);
-        }
-      } catch {
-        storedUser = null;
-      }
-
-      if (storedUser) {
-        try {
-          this.user = JSON.parse(storedUser);
-        } catch {
-          this.user = {
-            username: '',
-            name: '',
-            role: 'kassir',
-            isLoggedIn: false,
-            loginTime: '',
-          };
-        }
-      } else {
-        this.user = {
-          username: '',
-          name: '',
-          role: 'kassir',
-          isLoggedIn: false,
-          loginTime: '',
-        };
-      }
-
-      // If user is marked logged in, verify against loaded accounts
-      if (this.user.isLoggedIn && this.user.username) {
-        const found = this.accounts.find(
-          (a) => a.username.toLowerCase() === this.user.username.toLowerCase()
+      if (localStorage.getItem(STORAGE_KEYS.LEGACY_SAMPLE_CLEANUP) !== 'true') {
+        const cleanupDate = new Date().toISOString();
+        for (const id of LEGACY_SAMPLE_RECORD_IDS) this.deletedIds.set(id, cleanupDate);
+        const deleted = new Set(LEGACY_SAMPLE_RECORD_IDS);
+        this.reports = this.reports.filter((record) => !deleted.has(record.id));
+        this.kassa = this.kassa.filter((record) => !deleted.has(record.id));
+        this.expenses = this.expenses.filter((record) =>
+          !deleted.has(record.id) && !(record.sourceKassaId && deleted.has(record.sourceKassaId))
         );
-        if (found) {
-          this.user.name = found.name;
-          this.user.role = found.role;
-        } else if (this.accounts.length > 0) {
-          // If the account was removed, invalidate this device's session
-          this.user.isLoggedIn = false;
-        }
+        this.logs = this.logs.filter((record) => !deleted.has(record.id));
+        this.saveReportsOnly();
+        this.saveKassaOnly();
+        this.saveExpensesOnly();
+        this.saveLogsOnly();
+        this.saveDeletedIds();
+        localStorage.setItem(STORAGE_KEYS.LEGACY_SAMPLE_CLEANUP, 'true');
       }
 
-      // Start automatic background synchronization for cross-device updates
-      if (typeof window !== 'undefined') {
-        this.fetchServerData();
-        setInterval(() => {
-          this.fetchServerData();
-        }, 3500);
-
-        window.addEventListener('focus', () => {
-          this.fetchServerData();
-        });
-
-        document.addEventListener('visibilitychange', () => {
-          if (document.visibilityState === 'visible') {
-            this.fetchServerData();
-          }
-        });
-      }
+      // A local flag is never enough to authenticate. The app restores the
+      // session from Neon Auth on each load before enabling data sync.
+      this.user = { username: '', name: '', role: 'kassir', isLoggedIn: false, loginTime: '' };
     } catch (e) {
       console.error('Storage initialization error:', e);
-      this.reports = [...INITIAL_REPORTS];
-      this.kassa = [...INITIAL_KASSA];
+      this.reports = [];
+      this.kassa = [];
+    } finally {
+      this.isInitializing = false;
     }
   }
 
@@ -495,6 +428,7 @@ class StorageService {
           note: k.note || 'Xarajat',
           sourceKassaId: k.id,
           createdAt: k.createdAt || new Date().toISOString(),
+          updatedAt: k.updatedAt,
         });
       }
     });
@@ -502,52 +436,47 @@ class StorageService {
     this.saveExpenses();
   }
 
-  public handleFirestoreData(data: any): boolean {
+  public handleServerData(data: any): boolean {
     if (!data) return false;
     let hasChanges = false;
 
-    if (Array.isArray(data.reports) && JSON.stringify(this.reports) !== JSON.stringify(data.reports)) {
-      this.reports = data.reports;
+    if (Array.isArray(data.deletedIds)) {
+      for (const id of data.deletedIds) {
+        if (typeof id === 'string' && !this.deletedIds.has(id)) {
+          this.deletedIds.set(id, '');
+          hasChanges = true;
+        }
+      }
+      this.saveDeletedIds();
+    }
+
+    const deleted = new Set(this.deletedIds.keys());
+
+    const reports = Array.isArray(data.reports) ? mergeRecords<ReportRecord>(data.reports, this.reports, deleted) : null;
+    if (reports && JSON.stringify(this.reports) !== JSON.stringify(reports)) {
+      this.reports = reports;
       this.saveReportsOnly();
       hasChanges = true;
     }
 
-    if (Array.isArray(data.kassa) && JSON.stringify(this.kassa) !== JSON.stringify(data.kassa)) {
-      this.kassa = data.kassa;
+    const kassa = Array.isArray(data.kassa) ? mergeRecords<CashRecord>(data.kassa, this.kassa, deleted) : null;
+    if (kassa && JSON.stringify(this.kassa) !== JSON.stringify(kassa)) {
+      this.kassa = kassa;
       this.saveKassaOnly();
       hasChanges = true;
     }
 
-    if (Array.isArray(data.expenses) && JSON.stringify(this.expenses) !== JSON.stringify(data.expenses)) {
-      this.expenses = data.expenses;
+    const expenses = Array.isArray(data.expenses) ? mergeRecords<ExpenseRecord>(data.expenses, this.expenses, deleted)
+      .filter((record) => !(record.sourceKassaId && deleted.has(record.sourceKassaId))) : null;
+    if (expenses && JSON.stringify(this.expenses) !== JSON.stringify(expenses)) {
+      this.expenses = expenses;
       this.saveExpensesOnly();
       hasChanges = true;
     }
 
-    if (Array.isArray(data.accounts) && data.accounts.length > 0 && JSON.stringify(this.accounts) !== JSON.stringify(data.accounts)) {
-      this.accounts = data.accounts;
-      this.ensureDefaultAdminAccounts();
-      this.saveAccountsOnly();
-
-      // If active session on this phone matches an account, keep its role and name updated
-      if (this.user.isLoggedIn && this.user.username) {
-        const matching = this.accounts.find(
-          (a) => a.username.toLowerCase() === this.user.username.toLowerCase()
-        );
-        if (matching) {
-          if (this.user.name !== matching.name || this.user.role !== matching.role) {
-            this.user.name = matching.name;
-            this.user.role = matching.role;
-            this.saveUser();
-          }
-        }
-      }
-
-      hasChanges = true;
-    }
-
-    if (Array.isArray(data.logs) && JSON.stringify(this.logs) !== JSON.stringify(data.logs)) {
-      this.logs = data.logs;
+    const logs = Array.isArray(data.logs) ? mergeRecords<ActivityLog>(data.logs, this.logs, deleted) : null;
+    if (logs && JSON.stringify(this.logs) !== JSON.stringify(logs)) {
+      this.logs = logs;
       this.saveLogsOnly();
       hasChanges = true;
     }
@@ -558,112 +487,51 @@ class StorageService {
     return hasChanges;
   }
 
-  public async fetchFirestoreData(): Promise<boolean> {
+  private saveDeletedIds(): void {
     try {
-      const docRef = doc(db, 'app_data', 'main');
-      const snap = await getDocFromServer(docRef);
-      if (snap.exists()) {
-        this.isServerConnected = true;
-        return this.handleFirestoreData(snap.data());
-      }
-      return false;
-    } catch {
-      return false;
-    }
-  }
-
-  private initFirestoreSync(): void {
-    if (typeof window === 'undefined') return;
-    try {
-      const docRef = doc(db, 'app_data', 'main');
-
-      // 1. Real-time active stream listener
-      onSnapshot(docRef, (snapshot) => {
-        if (snapshot.exists()) {
-          this.isServerConnected = true;
-          this.handleFirestoreData(snapshot.data());
-        } else {
-          this.syncToFirestore();
-        }
-      }, (err) => {
-        console.warn('Firestore snapshot notice:', err);
-      });
-
-      // 2. Fetch directly right now on startup
-      this.fetchFirestoreData();
-
-      // 3. Fallback poll every 3 seconds to guarantee updates even if mobile sleeps stream
-      setInterval(() => {
-        this.fetchFirestoreData();
-      }, 3000);
-
-      // 4. Mobile screen unlock / tab switch listener
-      window.addEventListener('focus', () => {
-        this.fetchFirestoreData();
-      });
-
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') {
-          this.fetchFirestoreData();
-        }
-      });
-    } catch (e) {
-      console.warn('Firestore init notice:', e);
-    }
-  }
-
-  public async syncToFirestore(): Promise<boolean> {
-    try {
-      const docRef = doc(db, 'app_data', 'main');
-      const payload = {
-        reports: this.reports,
-        kassa: this.kassa,
-        expenses: this.expenses,
-        accounts: this.accounts,
-        logs: this.logs,
-        updatedAt: new Date().toISOString(),
-      };
-      await setDoc(docRef, payload, { merge: true });
-      this.isServerConnected = true;
-      return true;
+      localStorage.setItem(STORAGE_KEYS.DELETED_IDS, JSON.stringify(Array.from(this.deletedIds.entries())));
     } catch (err) {
-      console.warn('Firestore sync write notice:', err);
-      return false;
+      console.warn('Failed saving synchronized delete markers', err);
     }
   }
 
-  // --- SAVE METHODS (LOCAL + SERVER SYNC) ---
-  public triggerSync(): void {
-    if (this.syncTimeout) clearTimeout(this.syncTimeout);
-    this.syncTimeout = setTimeout(() => {
-      this.syncToFirestore();
-      this.syncToServer();
-    }, 40);
+  private markDeleted(...ids: string[]): void {
+    const deletedAt = new Date().toISOString();
+    for (const id of ids) {
+      if (id) this.deletedIds.set(id, deletedAt);
+    }
+    this.saveDeletedIds();
+  }
+
+  private clearDeleteMarkersFor(ids: string[]): void {
+    for (const id of ids) this.deletedIds.delete(id);
+    this.saveDeletedIds();
   }
 
   public async syncToServer(): Promise<boolean> {
+    if (!this.user.isLoggedIn || !this.authUserId) return false;
     try {
-      const payload = {
-        reports: this.reports,
-        kassa: this.kassa,
-        expenses: this.expenses,
-        accounts: this.accounts,
-        logs: this.logs,
-      };
-      const res = await fetch('/api/sync', {
-        method: 'POST',
+      const response = await fetch('/api/data', {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          reports: this.reports,
+          kassa: this.kassa,
+          expenses: this.expenses,
+          logs: this.logs,
+          deletedIds: Array.from(this.deletedIds.keys()),
+        }),
       });
-      if (res.ok) {
-        const json = await res.json();
-        if (json.updatedAt) {
-          this.lastServerTimestamp = json.updatedAt;
-        }
-        this.isServerConnected = true;
-        return true;
+      if (!response.ok) {
+        this.isServerConnected = false;
+        return false;
       }
-      return false;
+      const data = await response.json();
+      this.isServerConnected = true;
+      this.lastServerTimestamp = data.updatedAt || this.lastServerTimestamp;
+      this.hasPendingServerSync = false;
+      this.handleServerData(data);
+      return true;
     } catch {
       this.isServerConnected = false;
       return false;
@@ -671,77 +539,32 @@ class StorageService {
   }
 
   public async fetchServerData(): Promise<boolean> {
-    if (this.isSyncing) return false;
+    if (!this.user.isLoggedIn || !this.authUserId || this.isSyncing) return false;
     try {
       this.isSyncing = true;
-      const res = await fetch('/api/data', { cache: 'no-store' });
-      if (!res.ok) {
+      const response = await fetch('/api/data', { cache: 'no-store' });
+      if (!response.ok) {
         this.isServerConnected = false;
         return false;
       }
-      const json = await res.json();
-      if (!json.success) {
+      const data = await response.json();
+      if (!data.success) {
         this.isServerConnected = false;
         return false;
       }
-
       this.isServerConnected = true;
-      const serverUpdated = json.updatedAt;
-      const serverReports = Array.isArray(json.reports) ? json.reports : [];
-      const serverKassa = Array.isArray(json.kassa) ? json.kassa : [];
-      const serverExpenses = Array.isArray(json.expenses) ? json.expenses : [];
-      const serverAccounts = Array.isArray(json.accounts) ? json.accounts : [];
-      const serverLogs = Array.isArray(json.logs) ? json.logs : [];
-
-      // If server is completely empty (first boot), push initial local seed data to server
-      if (
-        serverReports.length === 0 &&
-        serverKassa.length === 0 &&
-        (this.reports.length > 0 || this.kassa.length > 0)
-      ) {
+      const remoteHasData = [data.reports, data.kassa, data.expenses, data.logs]
+        .some((items) => Array.isArray(items) && items.length > 0);
+      const localHasData = this.reports.length + this.kassa.length + this.expenses.length + this.logs.length > 0;
+      this.lastServerTimestamp = data.updatedAt || '';
+      if (!remoteHasData && localHasData) {
         await this.syncToServer();
-        return true;
-      }
-
-      // Check if server data differs or is newer
-      let hasChanges = false;
-      if (serverUpdated !== this.lastServerTimestamp) {
-        if (serverReports.length > 0 && JSON.stringify(this.reports) !== JSON.stringify(serverReports)) {
-          this.reports = serverReports;
-          this.saveReportsOnly();
-          hasChanges = true;
-        }
-
-        if (serverKassa.length > 0 && JSON.stringify(this.kassa) !== JSON.stringify(serverKassa)) {
-          this.kassa = serverKassa;
-          this.saveKassaOnly();
-          hasChanges = true;
-        }
-
-        if (serverExpenses.length > 0 && JSON.stringify(this.expenses) !== JSON.stringify(serverExpenses)) {
-          this.expenses = serverExpenses;
-          this.saveExpensesOnly();
-          hasChanges = true;
-        }
-
-        if (serverAccounts.length > 0 && JSON.stringify(this.accounts) !== JSON.stringify(serverAccounts)) {
-          this.accounts = serverAccounts;
-          this.ensureDefaultAdminAccounts();
-          this.saveAccountsOnly();
-          hasChanges = true;
-        }
-
-        if (serverLogs.length > 0 && JSON.stringify(this.logs) !== JSON.stringify(serverLogs)) {
-          this.logs = serverLogs;
-          this.saveLogsOnly();
-          hasChanges = true;
-        }
-
-        this.lastServerTimestamp = serverUpdated;
-
-        if (hasChanges) {
-          this.notifyListeners();
-        }
+      } else {
+        this.handleServerData(data);
+        const localIsAhead = ['reports', 'kassa', 'expenses', 'logs'].some((key) =>
+          JSON.stringify((this as any)[key]) !== JSON.stringify(Array.isArray(data[key]) ? data[key] : [])
+        ) || [...this.deletedIds.keys()].some((id) => !data.deletedIds?.includes(id));
+        if (localIsAhead) await this.syncToServer();
       }
       return true;
     } catch {
@@ -750,6 +573,47 @@ class StorageService {
     } finally {
       this.isSyncing = false;
     }
+  }
+
+  public async setAuthenticatedUser(identity: { id: string; email: string; name?: string }): Promise<void> {
+    let previousOwner = '';
+    try { previousOwner = localStorage.getItem(STORAGE_KEYS.AUTH_OWNER) || ''; } catch { /* private browsing */ }
+    if ((this.authUserId && this.authUserId !== identity.id) || (previousOwner && previousOwner !== identity.id)) {
+      this.reports = [];
+      this.kassa = [];
+      this.expenses = [];
+      this.logs = [];
+      this.deletedIds.clear();
+      this.saveReportsOnly();
+      this.saveKassaOnly();
+      this.saveExpensesOnly();
+      this.saveLogsOnly();
+      this.saveDeletedIds();
+    }
+    this.authUserId = identity.id;
+    try {
+      localStorage.setItem(STORAGE_KEYS.AUTH_OWNER, identity.id);
+    } catch {
+      // Auth cookies remain the source of truth if browser storage is unavailable.
+    }
+    this.user = {
+      username: identity.email,
+      name: identity.name || identity.email,
+      role: 'admin',
+      isLoggedIn: true,
+      loginTime: new Date().toISOString(),
+    };
+    this.notifyListeners();
+    await this.fetchServerData();
+  }
+
+  public triggerSync(): void {
+    if (this.isInitializing || !this.user.isLoggedIn) return;
+    this.hasPendingServerSync = true;
+    if (this.syncTimeout) clearTimeout(this.syncTimeout);
+    this.syncTimeout = setTimeout(() => {
+      void this.syncToServer();
+    }, 300);
   }
 
   private saveReportsOnly(): void {
@@ -773,88 +637,6 @@ class StorageService {
       localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(this.expenses));
     } catch (err) {
       console.warn('Failed saving expenses to localStorage', err);
-    }
-  }
-
-  public ensureDefaultAdminAccounts(): void {
-    let changed = false;
-    let accAdmin = this.accounts.find((a) => a.username.toLowerCase() === 'admin');
-    if (!accAdmin) {
-      this.accounts.push({
-        id: 'acc-admin-default',
-        username: 'admin',
-        name: 'Bosh Administrator',
-        password: 'admin',
-        role: 'admin',
-        createdAt: '2026-09-01T00:00:00Z',
-      });
-      changed = true;
-    }
-
-    let accAsliddin = this.accounts.find((a) => a.username.toLowerCase() === 'asliddin');
-    if (!accAsliddin) {
-      this.accounts.push({
-        id: 'acc-asliddin-default',
-        username: 'asliddin',
-        name: 'Asliddin Nurdinov',
-        password: 'admin',
-        role: 'admin',
-        createdAt: '2026-09-01T00:00:00Z',
-      });
-      changed = true;
-    }
-
-    // Clean up any random token passwords for standard admin users
-    for (const a of this.accounts) {
-      if ((a.username.toLowerCase() === 'admin' || a.username.toLowerCase() === 'asliddin') && (a.password.length > 15 || !a.password)) {
-        a.password = 'admin';
-        changed = true;
-      }
-    }
-
-    if (changed) {
-      this.saveAccountsOnly();
-    }
-  }
-
-  public resetMasterCredentials(): { username: string; password: string } {
-    let accAdmin = this.accounts.find((a) => a.username.toLowerCase() === 'admin');
-    if (accAdmin) {
-      accAdmin.password = 'admin';
-    } else {
-      this.accounts.push({
-        id: 'acc-admin',
-        username: 'admin',
-        name: 'Bosh Administrator',
-        password: 'admin',
-        role: 'admin',
-        createdAt: '2026-09-01T00:00:00Z',
-      });
-    }
-
-    let accAsliddin = this.accounts.find((a) => a.username.toLowerCase() === 'asliddin');
-    if (accAsliddin) {
-      accAsliddin.password = 'admin';
-    } else {
-      this.accounts.push({
-        id: 'acc-asliddin',
-        username: 'asliddin',
-        name: 'Asliddin Nurdinov',
-        password: 'admin',
-        role: 'admin',
-        createdAt: '2026-09-01T00:00:00Z',
-      });
-    }
-
-    this.saveAccounts();
-    return { username: 'admin', password: 'admin' };
-  }
-
-  private saveAccountsOnly(): void {
-    try {
-      localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(this.accounts));
-    } catch (err) {
-      console.warn('Failed saving accounts to localStorage', err);
     }
   }
 
@@ -885,24 +667,6 @@ class StorageService {
   }
 
   public saveUser(): void {
-    try {
-      const isRemember = localStorage.getItem('cargogo_remember_me') !== 'false';
-      if (isRemember) {
-        localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(this.user));
-        sessionStorage.removeItem(STORAGE_KEYS.USER);
-      } else {
-        sessionStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(this.user));
-        localStorage.removeItem(STORAGE_KEYS.USER);
-      }
-      this.notifyListeners();
-    } catch (err) {
-      console.warn('Failed saving user to storage', err);
-    }
-  }
-
-  public saveAccounts(): void {
-    this.saveAccountsOnly();
-    this.triggerSync();
     this.notifyListeners();
   }
 
@@ -1020,6 +784,7 @@ class StorageService {
       total,
       period10Days: decadeInfo.label,
       updatedBy: this.user.username || 'admin',
+      updatedAt: new Date().toISOString(),
     };
 
     this.saveReports();
@@ -1038,6 +803,7 @@ class StorageService {
     const target = this.reports.find((r) => r.id === id);
     if (!target) return false;
 
+    this.markDeleted(id);
     this.reports = this.reports.filter((r) => r.id !== id);
     this.saveReports();
 
@@ -1129,6 +895,7 @@ class StorageService {
       note,
       category,
       updatedBy: this.user.username || 'admin',
+      updatedAt: new Date().toISOString(),
     };
 
     this.recalculateKassaChain();
@@ -1149,6 +916,8 @@ class StorageService {
     const target = this.kassa.find((k) => k.id === id);
     if (!target) return false;
 
+    const linkedExpenseIds = this.expenses.filter((expense) => expense.sourceKassaId === id).map((expense) => expense.id);
+    this.markDeleted(id, ...linkedExpenseIds);
     this.kassa = this.kassa.filter((k) => k.id !== id);
     this.recalculateKassaChain();
     this.saveKassa();
@@ -1193,276 +962,14 @@ class StorageService {
     return newExp;
   }
 
-  // --- ACCOUNTS & AUTHENTICATION ---
-  public getAccounts(): UserAccount[] {
-    return [...this.accounts];
-  }
-
-  public hasAccounts(): boolean {
-    return this.accounts.length > 0;
-  }
-
-  public register(data: {
-    username: string;
-    name: string;
-    password: string;
-    role?: 'admin' | 'kassir';
-  }): { success: boolean; error?: string; user?: UserSession } {
-    const cleanUsername = data.username.trim().toLowerCase();
-    const cleanName = data.name.trim();
-    const cleanPass = data.password.trim();
-
-    if (!cleanUsername) {
-      return { success: false, error: 'Login kiritilishi shart!' };
-    }
-    if (cleanUsername.length < 3) {
-      return { success: false, error: 'Login kamida 3 ta belgidan iborat boʻlishi kerak!' };
-    }
-    if (!cleanPass || cleanPass.length < 4) {
-      return { success: false, error: 'Parol kamida 4 ta belgidan iborat boʻlishi kerak!' };
-    }
-    if (this.accounts.some((a) => a.username.toLowerCase() === cleanUsername)) {
-      return { success: false, error: 'Ushbu login band! Boshqa login kiriting.' };
-    }
-
-    const newAcc: UserAccount = {
-      id: `acc-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      username: cleanUsername,
-      name: cleanName || cleanUsername,
-      password: cleanPass,
-      role: data.role || (this.accounts.length === 0 ? 'admin' : 'kassir'),
-      createdAt: new Date().toISOString(),
-    };
-
-    this.accounts.push(newAcc);
-    this.saveAccounts();
-
-    // Auto-login into session
-    this.user = {
-      username: newAcc.username,
-      name: newAcc.name,
-      role: newAcc.role,
-      isLoggedIn: true,
-      loginTime: new Date().toISOString(),
-    };
-    this.saveUser();
-
-    this.logAction(
-      'user_add',
-      'Yangi akkaunt yaratildi',
-      `@${newAcc.username} (${newAcc.name}) | Vazifasi: ${newAcc.role === 'admin' ? 'Bosh Admin' : 'Kassir'}`
-    );
-
-    return { success: true, user: this.user };
-  }
-
-  public addEmployeeAccount(data: {
-    username: string;
-    name: string;
-    password: string;
-    role: 'admin' | 'kassir';
-  }): { success: boolean; error?: string; account?: UserAccount } {
-    const cleanUsername = data.username.trim().toLowerCase();
-    const cleanPass = data.password.trim();
-    const cleanName = data.name.trim();
-
-    if (!cleanUsername || cleanUsername.length < 3) {
-      return { success: false, error: 'Login kamida 3 ta belgidan iborat boʻlishi kerak!' };
-    }
-    if (!cleanPass || cleanPass.length < 4) {
-      return { success: false, error: 'Parol kamida 4 ta belgidan iborat boʻlishi kerak!' };
-    }
-    if (this.accounts.some((a) => a.username.toLowerCase() === cleanUsername)) {
-      return { success: false, error: 'Ushbu login band! Boshqa login kiriting.' };
-    }
-
-    const newAcc: UserAccount = {
-      id: `acc-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      username: cleanUsername,
-      name: cleanName || cleanUsername,
-      password: cleanPass,
-      role: data.role || 'kassir',
-      createdAt: new Date().toISOString(),
-    };
-
-    this.accounts.push(newAcc);
-    this.saveAccounts();
-
-    // CRITICAL: DO NOT change this.user here!
-    // The currently active administrator stays logged in as themselves!
-
-    this.logAction(
-      'user_add',
-      'Yangi xodim qoʻshildi',
-      `@${newAcc.username} (${newAcc.name}) | Vazifasi: ${newAcc.role === 'admin' ? 'Bosh Admin' : 'Kassir'} (Qoʻshgan: ${this.user.name || this.user.username})`
-    );
-
-    return { success: true, account: newAcc };
-  }
-
-  public loginWithCredentials(
-    username: string,
-    pass: string,
-    rememberMe: boolean = true
-  ): { success: boolean; error?: string; user?: UserSession } {
-    const cleanUsername = username.trim().toLowerCase();
-    const cleanPass = pass.trim();
-
-    if (!cleanUsername || !cleanPass) {
-      return { success: false, error: 'Login va parolni toʻliq kiriting!' };
-    }
-
-    // Strict authentication against database accounts
-
-    // Regular account authentication
-    const found = this.accounts.find((a) => {
-      const u = a.username.toLowerCase();
-      const n = a.name.toLowerCase();
-      const isUsernameMatch = u === cleanUsername || (cleanUsername === 'asliddim' && u === 'asliddin');
-      const isNameMatch = n === cleanUsername;
-      const isPassMatch = a.password === cleanPass;
-      return (isUsernameMatch || isNameMatch) && isPassMatch;
-    });
-
-    if (found) {
-      this.user = {
-        username: found.username,
-        name: found.name,
-        role: found.role,
-        isLoggedIn: true,
-        loginTime: new Date().toISOString(),
-      };
-
-      try {
-        localStorage.setItem('cargogo_last_username', found.username);
-        localStorage.setItem('cargogo_remember_me', rememberMe ? 'true' : 'false');
-      } catch (err) {
-        console.warn('Storage preference error:', err);
-      }
-
-      this.saveUser();
-
-      this.logAction(
-        'user_login',
-        'Tizimga kirildi',
-        `@${found.username} (${found.name}) tizimga muvaffaqiyatli kirdi`
-      );
-
-      return { success: true, user: this.user };
-    }
-
-    return { success: false, error: 'Login yoki parol notoʻgʻri!' };
-  }
-
-  // Backwards compatibility method
-  public login(password: string): boolean {
-    if (this.accounts.length > 0) {
-      // Check first account or any account matching password
-      const match = this.accounts.find((a) => a.password === password.trim());
-      if (match) {
-        this.user = {
-          username: match.username,
-          name: match.name,
-          role: match.role,
-          isLoggedIn: true,
-          loginTime: new Date().toISOString(),
-        };
-        this.saveUser();
-        return true;
-      }
-    }
-    const savedPass = localStorage.getItem('cargogo_master_password') || '123456';
-    if (password === savedPass || password === 'admin' || password === 'cargogo') {
-      this.user.isLoggedIn = true;
-      this.user.loginTime = new Date().toISOString();
-      this.saveUser();
-      return true;
-    }
-    return false;
-  }
-
   public logout(): void {
-    this.user = {
-      username: '',
-      name: '',
-      role: 'kassir',
-      isLoggedIn: false,
-      loginTime: '',
-    };
-    try {
-      localStorage.removeItem(STORAGE_KEYS.USER);
-      sessionStorage.removeItem(STORAGE_KEYS.USER);
-    } catch (err) {
-      console.warn('Logout storage clear error:', err);
-    }
+    this.authUserId = '';
+    this.user = { username: '', name: '', role: 'kassir', isLoggedIn: false, loginTime: '' };
     this.notifyListeners();
-  }
-
-  public updateAccount(
-    id: string,
-    data: Partial<Pick<UserAccount, 'name' | 'username' | 'password' | 'role'>>
-  ): { success: boolean; error?: string } {
-    const idx = this.accounts.findIndex((a) => a.id === id);
-    if (idx === -1) return { success: false, error: 'Akkaunt topilmadi!' };
-
-    if (data.username) {
-      const cleanUser = data.username.trim().toLowerCase();
-      if (this.accounts.some((a, i) => i !== idx && a.username.toLowerCase() === cleanUser)) {
-        return { success: false, error: 'Bu login allaqachon mavjud!' };
-      }
-      this.accounts[idx].username = cleanUser;
-    }
-    if (data.name) this.accounts[idx].name = data.name.trim();
-    if (data.password) this.accounts[idx].password = data.password.trim();
-    if (data.role) this.accounts[idx].role = data.role;
-
-    // Sync session if updating current active user
-    if (this.user.username.toLowerCase() === this.accounts[idx].username.toLowerCase()) {
-      this.user.name = this.accounts[idx].name;
-      this.user.role = this.accounts[idx].role;
-      this.saveUser();
-    }
-
-    this.saveAccounts();
-    return { success: true };
-  }
-
-  public deleteAccount(id: string): { success: boolean; error?: string } {
-    if (this.accounts.length <= 1) {
-      return { success: false, error: 'Yagona administrator akkauntini oʻchirib boʻlmaydi!' };
-    }
-    const acc = this.accounts.find((a) => a.id === id);
-    if (!acc) return { success: false, error: 'Akkaunt topilmadi!' };
-
-    this.accounts = this.accounts.filter((a) => a.id !== id);
-    this.saveAccounts();
-
-    // If currently logged in user was deleted, logout
-    if (this.user.username.toLowerCase() === acc.username.toLowerCase()) {
-      this.logout();
-    }
-    return { success: true };
   }
 
   public getUser(): UserSession {
     return this.user;
-  }
-
-  public setUser(user: UserSession): void {
-    this.user = user;
-    this.saveUser();
-  }
-
-  public changePassword(newPass: string): void {
-    localStorage.setItem('cargogo_master_password', newPass);
-    // Also update current user account password
-    const acc = this.accounts.find(
-      (a) => a.username.toLowerCase() === this.user.username.toLowerCase()
-    );
-    if (acc) {
-      acc.password = newPass;
-      this.saveAccounts();
-    }
   }
 
   // --- BULK IMPORT ---
@@ -1488,8 +995,22 @@ class StorageService {
 
   // Reset to original demo data
   public resetToSampleData(): void {
+    this.markDeleted(
+      ...this.reports.map((record) => record.id),
+      ...this.kassa.map((record) => record.id),
+      ...this.expenses.map((record) => record.id),
+    );
     this.reports = [...INITIAL_REPORTS];
     this.kassa = [...INITIAL_KASSA];
+    const sampleIds = [
+      ...this.reports.map((record) => record.id),
+      ...this.kassa.map((record) => record.id),
+      ...this.kassa.map((record) => `exp-${record.id}`),
+    ];
+    this.clearDeleteMarkersFor(sampleIds);
+    const resetAt = new Date().toISOString();
+    this.reports = this.reports.map((record) => ({ ...record, updatedAt: resetAt }));
+    this.kassa = this.kassa.map((record) => ({ ...record, updatedAt: resetAt }));
     this.recalculateKassaChain();
     this.saveReports();
     this.saveKassa();
@@ -1498,6 +1019,11 @@ class StorageService {
 
   // Clear all data
   public clearAllData(): void {
+    this.markDeleted(
+      ...this.reports.map((record) => record.id),
+      ...this.kassa.map((record) => record.id),
+      ...this.expenses.map((record) => record.id),
+    );
     this.reports = [];
     this.kassa = [];
     this.expenses = [];

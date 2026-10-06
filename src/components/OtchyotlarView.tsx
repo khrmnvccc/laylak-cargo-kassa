@@ -15,7 +15,7 @@ import {
   X,
   Check,
 } from 'lucide-react';
-import { formatMoney, formatDateUz, parseDateInput } from '../utils/formatters';
+import { addDaysToDateString, formatMoney, formatDateUz, parseDateInput } from '../utils/formatters';
 import { ReportRecord, DateFilterType } from '../types';
 
 interface OtchyotlarViewProps {
@@ -45,18 +45,9 @@ export const OtchyotlarView: React.FC<OtchyotlarViewProps> = ({
   const [editingItem, setEditingItem] = useState<ReportRecord | null>(null);
 
   // Compute date thresholds
-  const today = new Date(todayDate);
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = yesterday.toISOString().split('T')[0];
-
-  const d7 = new Date(today);
-  d7.setDate(d7.getDate() - 7);
-  const d7Str = d7.toISOString().split('T')[0];
-
-  const d10 = new Date(today);
-  d10.setDate(d10.getDate() - 10);
-  const d10Str = d10.toISOString().split('T')[0];
+  const yesterdayStr = addDaysToDateString(todayDate, -1);
+  const d7Str = addDaysToDateString(todayDate, -7);
+  const d10Str = addDaysToDateString(todayDate, -10);
 
   const thisMonthPrefix = todayDate.substring(0, 7);
 

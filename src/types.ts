@@ -14,6 +14,7 @@ export interface ReportRecord {
   createdByName?: string; // e.g. "Asliddin Nurdinov"
   updatedBy?: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface CashRecord {
@@ -29,6 +30,7 @@ export interface CashRecord {
   createdByName?: string;
   updatedBy?: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export type ExpenseCategory =
@@ -50,6 +52,7 @@ export interface ExpenseRecord {
   createdBy?: string;
   createdByName?: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface ActivityLog {
@@ -109,15 +112,6 @@ export interface MonthlySummary {
   kassaExpense: number;
   kassaFinalBalance: number;
   reportsCount: number;
-}
-
-export interface UserAccount {
-  id: string;
-  username: string;
-  name: string;
-  password: string;
-  role: 'admin' | 'kassir';
-  createdAt: string;
 }
 
 export interface UserSession {

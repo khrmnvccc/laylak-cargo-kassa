@@ -8,9 +8,8 @@ coverage/
 !.env.example
 *.json
 !package.json
+!package-lock.json
 !tsconfig.json
 !metadata.json
 !vercel.json
-!firebase-applet-config.json
-!firebase-blueprint.json
 

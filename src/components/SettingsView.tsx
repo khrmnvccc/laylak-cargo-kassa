@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Settings,
   ShieldCheck,
@@ -21,12 +21,11 @@ import {
   EyeOff,
   KeyRound,
 } from 'lucide-react';
-import { UserSession, UserAccount } from '../types';
+import { UserSession } from '../types';
 import { storage } from '../services/storage';
 
 interface SettingsViewProps {
   user: UserSession;
-  onUpdateUser: (u: UserSession) => void;
   onLogout: () => void;
   onResetData: () => void;
   onClearData: () => void;
@@ -39,7 +38,6 @@ interface SettingsViewProps {
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   user,
-  onUpdateUser,
   onLogout,
   onResetData,
   onClearData,
@@ -49,121 +47,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   theme,
   onToggleTheme,
 }) => {
-  // Accounts state
-  const [accounts, setAccounts] = useState<UserAccount[]>(storage.getAccounts());
-  const [isAddAccountOpen, setIsAddAccountOpen] = useState(false);
-
-  // Edit current profile state
-  const [editName, setEditName] = useState(user.name);
-  const [editUsername, setEditUsername] = useState(user.username);
-  const [editPassword, setEditPassword] = useState('');
-  const [profileMsg, setProfileMsg] = useState<{ text: string; isError?: boolean } | null>(null);
-
-  // New account form state
-  const [newAccName, setNewAccName] = useState('');
-  const [newAccUsername, setNewAccUsername] = useState('');
-  const [newAccPassword, setNewAccPassword] = useState('');
-  const [newAccRole, setNewAccRole] = useState<'admin' | 'kassir'>('kassir');
-  const [newAccMsg, setNewAccMsg] = useState<{ text: string; isError?: boolean } | null>(null);
-
-  // Accounts password visibility and editing
-  const [revealedPasswords, setRevealedPasswords] = useState<{ [id: string]: boolean }>({});
-  const [editingAccId, setEditingAccId] = useState<string | null>(null);
-  const [editingAccPass, setEditingAccPass] = useState('');
-
-  const handleSaveEmployeePassword = (accId: string) => {
-    if (!editingAccPass.trim() || editingAccPass.trim().length < 4) {
-      alert('Parol kamida 4 ta belgidan iborat boʻlishi kerak!');
-      return;
-    }
-    const res = storage.updateAccount(accId, { password: editingAccPass.trim() });
-    if (res.success) {
-      setAccounts(storage.getAccounts());
-      setEditingAccId(null);
-      setEditingAccPass('');
-    }
-  };
-
-  const handleUpdateCurrentProfile = (e: React.FormEvent) => {
-    e.preventDefault();
-    setProfileMsg(null);
-
-    const currentAcc = accounts.find(
-      (a) => a.username.toLowerCase() === user.username.toLowerCase()
-    );
-
-    if (currentAcc) {
-      const res = storage.updateAccount(currentAcc.id, {
-        name: editName.trim(),
-        username: editUsername.trim().toLowerCase(),
-        password: editPassword.trim() ? editPassword.trim() : undefined,
-      });
-
-      if (!res.success) {
-        setProfileMsg({ text: res.error || 'Xatolik yuz berdi!', isError: true });
-        return;
-      }
-    } else {
-      storage.register({
-        name: editName.trim(),
-        username: editUsername.trim().toLowerCase(),
-        password: editPassword.trim() || '123456',
-        role: user.role,
-      });
-    }
-
-    setAccounts(storage.getAccounts());
-    onUpdateUser(storage.getUser());
-    setProfileMsg({ text: 'Maʻlumotlaringiz muvaffaqiyatli saqlandi!' });
-    setEditPassword('');
-    setTimeout(() => setProfileMsg(null), 3500);
-  };
-
-  const handleCreateNewAccount = (e: React.FormEvent) => {
-    e.preventDefault();
-    setNewAccMsg(null);
-
-    if (!newAccUsername.trim()) {
-      setNewAccMsg({ text: 'Login kiritilishi shart!', isError: true });
-      return;
-    }
-    if (!newAccPassword || newAccPassword.length < 4) {
-      setNewAccMsg({ text: 'Parol kamida 4 belgidan iborat boʻlishi kerak!', isError: true });
-      return;
-    }
-
-    const res = storage.addEmployeeAccount({
-      name: newAccName.trim() || newAccUsername.trim(),
-      username: newAccUsername.trim(),
-      password: newAccPassword,
-      role: newAccRole,
-    });
-
-    if (!res.success) {
-      setNewAccMsg({ text: res.error || 'Akkaunt yaratilmadi!', isError: true });
-      return;
-    }
-
-    setAccounts(storage.getAccounts());
-    setNewAccMsg({ text: 'Yangi akkaunt muvaffaqiyatli qoʻshildi!' });
-    setNewAccName('');
-    setNewAccUsername('');
-    setNewAccPassword('');
-    setIsAddAccountOpen(false);
-    setTimeout(() => setNewAccMsg(null), 3500);
-  };
-
-  const handleDeleteAccount = (id: string, username: string) => {
-    if (window.confirm(`Haqiqatan ham @${username} akkauntini oʻchirmoqchimisiz?`)) {
-      const res = storage.deleteAccount(id);
-      if (!res.success) {
-        alert(res.error || 'Akkauntni oʻchirib boʻlmadi!');
-      } else {
-        setAccounts(storage.getAccounts());
-      }
-    }
-  };
-
   // Export full JSON backup
   const handleExportBackup = () => {
     const backupData = {
@@ -274,324 +157,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* 1. AKKAUNTLAR VA XAVFSIZLIK */}
+        {/* Account security is managed by Neon Auth; do not store or display passwords in app data. */}
         <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 shadow-xl space-y-5">
           <div className="flex items-center justify-between pb-3 border-b border-slate-800">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-400">
-                <ShieldCheck className="w-5 h-5" />
-              </div>
+              <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-400"><ShieldCheck className="w-5 h-5" /></div>
               <div>
-                <h2 className="font-bold text-white text-base">Akkauntlar & Xavfsizlik</h2>
-                <p className="text-xs text-slate-400">Login, parol va xodimlarni boshqarish</p>
+                <h2 className="font-bold text-white text-base">Akkaunt va xavfsizlik</h2>
+                <p className="text-xs text-slate-400">Email orqali himoyalangan kirish</p>
               </div>
             </div>
-
-            <button
-              onClick={onLogout}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-950/40 hover:bg-rose-900/40 border border-rose-500/30 text-rose-300 text-xs font-bold transition-all active:scale-95"
-              title="Tizimdan chiqish"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>Chiqish</span>
+            <button onClick={onLogout} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-950/40 hover:bg-rose-900/40 border border-rose-500/30 text-rose-300 text-xs font-bold">
+              <LogOut className="w-3.5 h-3.5" /><span>Chiqish</span>
             </button>
           </div>
-
-          {/* Active Profile Card */}
-          <div className="p-4 rounded-2xl bg-slate-800/60 border border-slate-750 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-black text-lg border border-amber-500/30">
-                {(user.name || 'A').charAt(0).toUpperCase()}
-              </div>
-              <div>
-                <div className="text-sm font-bold text-white flex items-center gap-2">
-                  <span>{user.name}</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 font-bold border border-amber-500/30 uppercase">
-                    {user.role === 'admin' ? 'Bosh Admin' : 'Kassir'}
-                  </span>
-                </div>
-                <div className="text-xs text-slate-400 font-mono mt-0.5">
-                  Login: <span className="text-amber-400 font-bold">@{user.username}</span>
-                </div>
-              </div>
+          <div className="p-4 rounded-2xl bg-slate-800/60 border border-slate-700 flex items-center gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-black text-lg border border-amber-500/30">{(user.name || 'A').charAt(0).toUpperCase()}</div>
+            <div className="min-w-0">
+              <div className="text-sm font-bold text-white truncate">{user.name}</div>
+              <div className="text-xs text-amber-400 font-mono mt-0.5 truncate">{user.username}</div>
             </div>
-            <span className="text-[10px] px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
-              Faol
-            </span>
+            <span className="ml-auto text-[10px] px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">Faol</span>
           </div>
-
-          {/* Edit current profile form */}
-          <form onSubmit={handleUpdateCurrentProfile} className="space-y-3 pt-1">
-            <span className="block text-xs font-bold text-slate-300">
-              Oʻz maʻlumotlaringizni yangilash:
-            </span>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              <div>
-                <label className="block text-[11px] text-slate-400 mb-1">Ism va familiya</label>
-                <input
-                  type="text"
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  placeholder="Ism..."
-                  className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-none focus:border-amber-500"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] text-slate-400 mb-1">Login</label>
-                <input
-                  type="text"
-                  value={editUsername}
-                  onChange={(e) => setEditUsername(e.target.value.toLowerCase().replace(/\s+/g, ''))}
-                  placeholder="Login..."
-                  className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs font-mono focus:outline-none focus:border-amber-500"
-                  required
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-slate-400 mb-1">
-                Yangi Parol (agar almashtirmoqchi boʻlsangiz)
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="password"
-                  value={editPassword}
-                  onChange={(e) => setEditPassword(e.target.value)}
-                  placeholder="Yangi parol (boʻsh qoldirilsa avvalgi parol qoladi)"
-                  className="flex-1 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs font-mono focus:outline-none focus:border-amber-500"
-                />
-                <button
-                  type="submit"
-                  className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-colors whitespace-nowrap"
-                >
-                  Saqlash
-                </button>
-              </div>
-            </div>
-
-            {profileMsg && (
-              <p
-                className={`text-xs font-medium flex items-center gap-1.5 ${
-                  profileMsg.isError ? 'text-rose-400' : 'text-emerald-400'
-                }`}
-              >
-                {profileMsg.isError ? (
-                  <AlertCircle className="w-3.5 h-3.5" />
-                ) : (
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                )}
-                <span>{profileMsg.text}</span>
-              </p>
-            )}
-          </form>
-
-          {/* List of Registered Accounts - FAQAT BOSH ADMIN UCHUN */}
-          {user.role === 'admin' && (
-            <div className="pt-3 border-t border-slate-800 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                  <Users className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Ruxsat berilgan xodimlar ({accounts.length} ta):</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setIsAddAccountOpen(!isAddAccountOpen)}
-                  className="text-xs text-amber-400 hover:text-amber-300 font-semibold flex items-center gap-1"
-                >
-                  <UserPlus className="w-3.5 h-3.5" />
-                  <span>+ Yangi xodim qoʻshish</span>
-                </button>
-              </div>
-
-              {/* Collapsible Add Account Form */}
-              {isAddAccountOpen && (
-                <form
-                  onSubmit={handleCreateNewAccount}
-                  className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-3 animate-in fade-in"
-                >
-                  <span className="text-xs font-bold text-amber-400 block">
-                    Yangi xodim akkauntini ochish:
-                  </span>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <input
-                      type="text"
-                      placeholder="Xodim ismi..."
-                      value={newAccName}
-                      onChange={(e) => setNewAccName(e.target.value)}
-                      className="px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-white text-xs"
-                      required
-                    />
-                    <input
-                      type="text"
-                      placeholder="Logini (masalan: kassir1)..."
-                      value={newAccUsername}
-                      onChange={(e) => setNewAccUsername(e.target.value.toLowerCase().replace(/\s+/g, ''))}
-                      className="px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-white text-xs font-mono"
-                      required
-                    />
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <input
-                      type="password"
-                      placeholder="Parol (kamida 4 belgi)..."
-                      value={newAccPassword}
-                      onChange={(e) => setNewAccPassword(e.target.value)}
-                      className="px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-white text-xs"
-                      required
-                    />
-                    <select
-                      value={newAccRole}
-                      onChange={(e) => setNewAccRole(e.target.value as 'admin' | 'kassir')}
-                      className="px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-white text-xs"
-                    >
-                      <option value="kassir">Kassir / Operator</option>
-                      <option value="admin">Administrator</option>
-                    </select>
-                  </div>
-                  <div className="flex items-center justify-end gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => setIsAddAccountOpen(false)}
-                      className="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-400 text-xs"
-                    >
-                      Bekor qilish
-                    </button>
-                    <button
-                      type="submit"
-                      className="px-3 py-1.5 rounded-lg bg-amber-500 text-slate-950 font-bold text-xs"
-                    >
-                      Qoʻshish
-                    </button>
-                  </div>
-                  {newAccMsg && (
-                    <p
-                      className={`text-xs ${
-                        newAccMsg.isError ? 'text-rose-400' : 'text-emerald-400'
-                      }`}
-                    >
-                      {newAccMsg.text}
-                    </p>
-                  )}
-                </form>
-              )}
-
-              {/* Accounts List */}
-              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                {accounts.map((acc) => (
-                  <div
-                    key={acc.id}
-                    className="p-2.5 rounded-xl bg-slate-800/40 border border-slate-800 hover:border-slate-700 text-xs space-y-2"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-7 h-7 rounded-lg bg-slate-700 flex items-center justify-center font-bold text-white text-[11px]">
-                          {acc.name.charAt(0).toUpperCase()}
-                        </div>
-                        <div>
-                          <div className="font-bold text-white flex items-center gap-1.5">
-                            <span>{acc.name}</span>
-                            {acc.username === user.username && (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">
-                                Siz
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[11px] text-slate-400 font-mono">
-                            @{acc.username} • {acc.role === 'admin' ? 'Bosh Admin' : 'Kassir'}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1.5">
-                        {/* Password pill */}
-                        <div className="flex items-center gap-1 bg-slate-900/90 px-2.5 py-1 rounded-lg border border-slate-700/80 font-mono text-[11px]">
-                          <span className="text-slate-500 text-[10px]">Parol:</span>
-                          <span className="text-amber-300 font-bold tracking-wider">
-                            {revealedPasswords[acc.id] ? acc.password : '••••••'}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setRevealedPasswords((prev) => ({
-                                ...prev,
-                                [acc.id]: !prev[acc.id],
-                              }))
-                            }
-                            className="text-slate-400 hover:text-amber-400 ml-1 p-0.5 transition-colors"
-                            title={revealedPasswords[acc.id] ? 'Parolni yashirish' : 'Parolni koʻrish'}
-                          >
-                            {revealedPasswords[acc.id] ? (
-                              <EyeOff className="w-3.5 h-3.5" />
-                            ) : (
-                              <Eye className="w-3.5 h-3.5" />
-                            )}
-                          </button>
-                        </div>
-
-                        {/* Quick edit password button */}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (editingAccId === acc.id) {
-                              setEditingAccId(null);
-                            } else {
-                              setEditingAccId(acc.id);
-                              setEditingAccPass(acc.password);
-                            }
-                          }}
-                          className="p-1.5 text-slate-400 hover:text-amber-400 rounded-lg hover:bg-slate-700/50 transition-colors"
-                          title="Parolni oʻzgartirish"
-                        >
-                          <KeyRound className="w-3.5 h-3.5" />
-                        </button>
-
-                        {accounts.length > 1 && acc.username !== user.username && (
-                          <button
-                            onClick={() => handleDeleteAccount(acc.id, acc.username)}
-                            className="p-1.5 text-slate-500 hover:text-rose-400 rounded-lg hover:bg-slate-700/50 transition-colors"
-                            title="Akkauntni oʻchirish"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Inline password editor */}
-                    {editingAccId === acc.id && (
-                      <div className="flex items-center gap-2 pt-1 border-t border-slate-700/50">
-                        <input
-                          type="text"
-                          value={editingAccPass}
-                          onChange={(e) => setEditingAccPass(e.target.value)}
-                          placeholder="Yangi parol..."
-                          className="flex-1 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-white font-mono text-xs focus:outline-none focus:border-amber-500"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => handleSaveEmployeePassword(acc.id)}
-                          className="px-2.5 py-1 rounded-lg bg-amber-500 text-slate-950 font-bold text-xs hover:bg-amber-400"
-                        >
-                          Saqlash
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setEditingAccId(null)}
-                          className="px-2 py-1 rounded-lg bg-slate-800 text-slate-400 text-xs hover:text-white"
-                        >
-                          Bekor
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          <p className="text-xs text-slate-400 leading-relaxed">Parol va akkauntni tiklash Neon Auth tomonidan boshqariladi. Bu sayt parolingizni o‘z bazasida saqlamaydi.</p>
         </div>
 
         {/* 2. KASSA VA TIZIM XOTIRASI - FAQAT BOSH ADMINLAR UCHUN */}
