@@ -52,7 +52,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    await storage.fetchFirestoreData();
+    await storage.fetchServerData();
     setTimeout(() => setIsRefreshing(false), 500);
   };
 
