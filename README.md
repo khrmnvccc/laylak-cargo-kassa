@@ -13,7 +13,8 @@ CargoGo uchun professional, mobile-first, kassa zanjirini avtomatik hisoblovchi 
 ├── package.json                 # Bog'liqliklar va skriptlar
 ├── tsconfig.json                # TypeScript konfiguratsiyasi
 ├── vite.config.ts               # Vite va Tailwind konfiguratsiyasi
-├── server.ts                    # Express backend server (disk persistence & REST API)
+├── server.ts                    # Local Express/Vite development server
+├── api/                         # Neon Auth proxy and authenticated data API
 ├── src/
 │   ├── main.tsx                 # React dasturi nuqtasi
 │   ├── App.tsx                  # Boshqaruvchi asosiy komponent, holatlar va navigatsiya
@@ -166,10 +167,11 @@ npm run dev
 # http://localhost:3000
 ```
 
-### Standart Kirish Ma'lumotlari:
-* **Login:** `admin`
-* **Parol:** `123456`
-*(Parolni saytning "Sozlamalar" bo'limida o'zgartirishingiz mumkin)*
+### Ma’lumotlar va akkauntlar
+
+Kirish Neon Auth orqali, hisobot/kassa/xarajatlar Neon PostgreSQL’da saqlanadi. Bir xil akkaunt bilan kirgan qurilmalar ma’lumotlarni sinxronlaydi. `.env.example` kerakli o‘zgaruvchi nomlarini ko‘rsatadi; haqiqiy qiymatlar `.env` yoki Vercel Environment Variables’da turishi kerak. Standart login/parol yo‘q: sayt orqali alohida akkaunt ochiladi.
+
+Vercel’dagi Neon integratsiyasi Preview muhitiga kerakli o‘zgaruvchilarni beradi. Production’ga chiqarishdan avval Production environment variables’ni alohida sozlab, preview’ni tekshiring. Firestore endi ilova tomonidan ishlatilmaydi; `firestore.rules` barcha kirishni rad etadi, lekin Firebase Console’dagi mavjud qoidalar bu faylni alohida deploy qilmaguncha o‘zgarmaydi.
 
 ---
 
