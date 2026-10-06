@@ -114,16 +114,6 @@ export interface MonthlySummary {
   reportsCount: number;
 }
 
-export interface UserAccount {
-  id: string;
-  username: string;
-  name: string;
-  password: string;
-  role: 'admin' | 'kassir';
-  createdAt: string;
-  updatedAt?: string;
-}
-
 export interface UserSession {
   username: string;
   name: string;
