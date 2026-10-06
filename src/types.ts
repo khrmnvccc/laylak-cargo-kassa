@@ -14,6 +14,7 @@ export interface ReportRecord {
   createdByName?: string; // e.g. "Asliddin Nurdinov"
   updatedBy?: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface CashRecord {
@@ -29,6 +30,7 @@ export interface CashRecord {
   createdByName?: string;
   updatedBy?: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export type ExpenseCategory =
@@ -50,6 +52,7 @@ export interface ExpenseRecord {
   createdBy?: string;
   createdByName?: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface ActivityLog {
@@ -118,6 +121,7 @@ export interface UserAccount {
   password: string;
   role: 'admin' | 'kassir';
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface UserSession {

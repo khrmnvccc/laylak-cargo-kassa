@@ -1,18 +1,15 @@
 import React, { useState } from 'react';
 import {
   Truck,
-  Wallet,
   Search,
   FileSpreadsheet,
   LogOut,
-  Calendar,
-  Sparkles,
-  ArrowUpRight,
   History,
-  Settings,
   Sun,
   Moon,
   RotateCw,
+  BarChart3,
+  ChevronDown,
 } from 'lucide-react';
 import { formatMoney, formatDateUz } from '../utils/formatters';
 import { ActiveTab, UserSession } from '../types';
@@ -46,6 +43,12 @@ export const Navbar: React.FC<NavbarProps> = ({
   onToggleTheme,
 }) => {
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isReportsMenuOpen, setIsReportsMenuOpen] = useState(false);
+
+  const selectTab = (tab: ActiveTab) => {
+    setActiveTab(tab);
+    setIsReportsMenuOpen(false);
+  };
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -85,20 +88,20 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Desktop Nav Items */}
           <nav className="hidden md:flex items-center gap-1 bg-slate-950/60 p-1.5 rounded-xl border border-slate-800/80">
             <button
-              onClick={() => setActiveTab('dashboard')}
+              onClick={() => selectTab('dashboard')}
               className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
                 activeTab === 'dashboard'
                   ? 'bg-amber-500 text-slate-950 shadow-sm'
                   : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
               }`}
             >
-              Dashboard
+              Bosh sahifa
             </button>
 
             {/* Kassa - FAQAT BOSH ADMINLAR UCHUN */}
             {user.role === 'admin' && (
               <button
-                onClick={() => setActiveTab('kassa')}
+                onClick={() => selectTab('kassa')}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
                   activeTab === 'kassa'
                     ? 'bg-amber-500 text-slate-950 shadow-sm'
@@ -110,7 +113,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             )}
 
             <button
-              onClick={() => setActiveTab('reports')}
+              onClick={() => selectTab('reports')}
               className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
                 activeTab === 'reports'
                   ? 'bg-amber-500 text-slate-950 shadow-sm'
@@ -119,74 +122,46 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               Otchyotlar
             </button>
-            <button
-              onClick={() => setActiveTab('cashCard')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                activeTab === 'cashCard'
-                  ? 'bg-amber-500 text-slate-950 shadow-sm'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              Naqd / Karta
-            </button>
-            <button
-              onClick={() => setActiveTab('decade')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                activeTab === 'decade'
-                  ? 'bg-amber-500 text-slate-950 shadow-sm'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              10 Kunlik
-            </button>
-            <button
-              onClick={() => setActiveTab('monthly')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                activeTab === 'monthly'
-                  ? 'bg-amber-500 text-slate-950 shadow-sm'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              Oylik
-            </button>
-            <button
-              onClick={() => setActiveTab('expenses')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                activeTab === 'expenses'
-                  ? 'bg-amber-500 text-slate-950 shadow-sm'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              Xarajatlar
-            </button>
-
-            {/* Harakatlar tarixi - FAQAT BOSH ADMINLAR UCHUN */}
-            {user.role === 'admin' && (
+            <div className="relative">
               <button
-                onClick={() => setActiveTab('auditLog')}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 ${
-                  activeTab === 'auditLog'
+                type="button"
+                onClick={() => setIsReportsMenuOpen((open) => !open)}
+                aria-expanded={isReportsMenuOpen}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  ['cashCard', 'decade', 'monthly', 'expenses'].includes(activeTab)
                     ? 'bg-amber-500 text-slate-950 shadow-sm'
                     : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
                 }`}
-                title="Kim qachon nima kiritgan yoki oʻzgartirganini koʻrish"
               >
-                <History className="w-3.5 h-3.5" />
-                <span>Harakatlar tarixi</span>
+                <BarChart3 className="w-3.5 h-3.5" />
+                Tahlillar
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isReportsMenuOpen ? 'rotate-180' : ''}`} />
               </button>
-            )}
+              {isReportsMenuOpen && (
+                <div className="absolute left-0 top-full mt-2 w-52 rounded-xl border border-slate-700 bg-slate-900 p-1.5 shadow-2xl">
+                  {([
+                    ['cashCard', 'Naqd / Karta'],
+                    ['decade', '10 kunlik hisobot'],
+                    ['monthly', 'Oylik hisobot'],
+                    ['expenses', 'Xarajatlar'],
+                  ] as [ActiveTab, string][]).map(([tab, label]) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => selectTab(tab)}
+                      className={`w-full rounded-lg px-3 py-2 text-left text-xs font-semibold transition-colors ${
+                        activeTab === tab
+                          ? 'bg-amber-500/15 text-amber-300'
+                          : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
 
-            <button
-              onClick={() => setActiveTab('settings')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 ${
-                activeTab === 'settings'
-                  ? 'bg-amber-500 text-slate-950 shadow-sm'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <Settings className="w-3.5 h-3.5" />
-              <span>Sozlamalar</span>
-            </button>
           </nav>
 
           {/* Right Controls */}

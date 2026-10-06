@@ -60,13 +60,20 @@ export function parseDateInput(dateStr: string): string {
 }
 
 export function getTodayDateString(): string {
-  // Use current local time or September 2026 based on app context
   const d = new Date();
-  // If year is before 2026, we can still use real date or sample default
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+/** Add calendar days to a YYYY-MM-DD value without converting through local time. */
+export function addDaysToDateString(dateStr: string, days: number): string {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  if (!year || !month || !day || !Number.isFinite(days)) return dateStr;
+
+  const date = new Date(Date.UTC(year, month - 1, day + Math.trunc(days)));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
 }
 
 export function getDecadeInfo(dateStr: string): {

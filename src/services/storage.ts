@@ -8,8 +8,8 @@ import {
   ActivityLog,
 } from '../types';
 import { getDecadeInfo } from '../utils/formatters';
-import { db } from '../firebase';
-import { doc, setDoc, onSnapshot, getDocFromServer } from 'firebase/firestore';
+import { db, isFirestoreEnabled } from '../firebase';
+import { doc, onSnapshot, getDocFromServer, runTransaction } from 'firebase/firestore';
 
 const STORAGE_KEYS = {
   REPORTS: 'cargogo_reports_v2',
@@ -20,7 +20,55 @@ const STORAGE_KEYS = {
   ACCOUNTS: 'cargogo_accounts_v3',
   LOGS: 'cargogo_logs_v2',
   THEME: 'cargogo_theme_v2',
+  FIRESTORE_PENDING: 'cargogo_firestore_pending_v1',
+  DELETED_IDS: 'cargogo_deleted_ids_v1',
+  LEGACY_SAMPLE_CLEANUP: 'cargogo_legacy_sample_cleanup_v1',
 };
+
+const LEGACY_SAMPLE_RECORD_IDS = [
+  ...Array.from({ length: 8 }, (_, index) => `rep-${index + 1}`),
+  ...Array.from({ length: 8 }, (_, index) => `kas-${index + 1}`),
+  ...Array.from({ length: 8 }, (_, index) => `exp-kas-${index + 1}`),
+  'log-init-1',
+  'log-init-2',
+  'log-init-3',
+];
+
+type FirestoreRecord = {
+  id: string;
+  createdAt?: string;
+  updatedAt?: string;
+  timestamp?: string;
+};
+
+function recordTimestamp(record: FirestoreRecord): number {
+  const timestamp = record.updatedAt || record.createdAt || record.timestamp;
+  const parsed = timestamp ? Date.parse(timestamp) : 0;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function mergeFirestoreRecords<T extends FirestoreRecord>(
+  remoteValue: unknown,
+  localRecords: T[],
+  deletedIds: Set<string>,
+): T[] {
+  const records = new Map<string, T>();
+  const remoteRecords = Array.isArray(remoteValue) ? remoteValue as T[] : [];
+
+  for (const record of remoteRecords) {
+    if (record?.id && !deletedIds.has(record.id)) records.set(record.id, record);
+  }
+
+  for (const record of localRecords) {
+    if (!record?.id || deletedIds.has(record.id)) continue;
+    const previous = records.get(record.id);
+    if (!previous || recordTimestamp(record) >= recordTimestamp(previous)) {
+      records.set(record.id, record);
+    }
+  }
+
+  return Array.from(records.values());
+}
 
 export const INITIAL_ACCOUNTS: UserAccount[] = [
   {
@@ -280,6 +328,11 @@ class StorageService {
   private listeners: Set<() => void> = new Set();
   private syncTimeout: any = null;
   private isSyncing = false;
+  private isInitializing = true;
+  private isFirestoreWriteInFlight = false;
+  private hasPendingFirestoreSync = false;
+  private firestoreRevision = 0;
+  private deletedIds = new Map<string, string>();
   private lastServerTimestamp: string = '';
   public isServerConnected = false;
 
@@ -306,21 +359,30 @@ class StorageService {
 
   private init() {
     try {
+      this.hasPendingFirestoreSync = localStorage.getItem(STORAGE_KEYS.FIRESTORE_PENDING) === 'true';
+      const storedDeletedIds = localStorage.getItem(STORAGE_KEYS.DELETED_IDS);
+      if (storedDeletedIds) {
+        const parsed = JSON.parse(storedDeletedIds);
+        if (Array.isArray(parsed)) {
+          this.deletedIds = new Map(parsed.filter((entry): entry is [string, string] =>
+            Array.isArray(entry) && typeof entry[0] === 'string' && typeof entry[1] === 'string'
+          ));
+        }
+      }
       const storedReports = localStorage.getItem(STORAGE_KEYS.REPORTS);
       if (storedReports) {
         this.reports = JSON.parse(storedReports);
       } else {
-        this.reports = [...INITIAL_REPORTS];
-        this.saveReports();
+        this.reports = [];
+        this.saveReportsOnly();
       }
 
       const storedKassa = localStorage.getItem(STORAGE_KEYS.KASSA);
       if (storedKassa) {
         this.kassa = JSON.parse(storedKassa);
       } else {
-        this.kassa = [...INITIAL_KASSA];
-        this.recalculateKassaChain();
-        this.saveKassa();
+        this.kassa = [];
+        this.saveKassaOnly();
       }
 
       const storedExpenses = localStorage.getItem(STORAGE_KEYS.EXPENSES);
@@ -343,45 +405,34 @@ class StorageService {
       }
       this.ensureDefaultAdminAccounts();
       this.saveAccountsOnly();
-      this.initFirestoreSync();
 
       const storedLogs = localStorage.getItem(STORAGE_KEYS.LOGS);
       if (storedLogs) {
         this.logs = JSON.parse(storedLogs);
       } else {
-        this.logs = [
-          {
-            id: 'log-init-1',
-            timestamp: '2026-09-29T14:00:00Z',
-            actionType: 'kassa_add',
-            title: 'Kassaga tushum kiritildi',
-            description: '2026-09-29 sanasiga 505 000 soʻm kunlik tushum kassa balansiga qoʻshildi',
-            authorUsername: 'asliddin',
-            authorName: 'Asliddin Nurdinov',
-            authorRole: 'admin',
-          },
-          {
-            id: 'log-init-2',
-            timestamp: '2026-09-28T19:00:00Z',
-            actionType: 'expense_add',
-            title: 'Chiqim qayd etildi',
-            description: '860 000 soʻm ombor ijarasi uchun chiqim qilindi',
-            authorUsername: 'asliddin',
-            authorName: 'Asliddin Nurdinov',
-            authorRole: 'admin',
-          },
-          {
-            id: 'log-init-3',
-            timestamp: '2026-09-18T17:15:00Z',
-            actionType: 'report_add',
-            title: 'Reys otchyoti kiritildi',
-            description: 'ID: 104444 raqamli 2 195 000 soʻmlik otchyot saqlandi',
-            authorUsername: 'asliddin',
-            authorName: 'Asliddin Nurdinov',
-            authorRole: 'admin',
-          },
-        ];
-        this.saveLogs();
+        this.logs = [];
+        this.saveLogsOnly();
+      }
+
+      if (localStorage.getItem(STORAGE_KEYS.LEGACY_SAMPLE_CLEANUP) !== 'true') {
+        const cleanupDate = new Date().toISOString();
+        for (const id of LEGACY_SAMPLE_RECORD_IDS) this.deletedIds.set(id, cleanupDate);
+        const deleted = new Set(LEGACY_SAMPLE_RECORD_IDS);
+        this.reports = this.reports.filter((record) => !deleted.has(record.id));
+        this.kassa = this.kassa.filter((record) => !deleted.has(record.id));
+        this.expenses = this.expenses.filter((record) =>
+          !deleted.has(record.id) && !(record.sourceKassaId && deleted.has(record.sourceKassaId))
+        );
+        this.logs = this.logs.filter((record) => !deleted.has(record.id));
+        this.saveReportsOnly();
+        this.saveKassaOnly();
+        this.saveExpensesOnly();
+        this.saveLogsOnly();
+        this.saveDeletedIds();
+        this.hasPendingFirestoreSync = true;
+        this.firestoreRevision += 1;
+        localStorage.setItem(STORAGE_KEYS.FIRESTORE_PENDING, 'true');
+        localStorage.setItem(STORAGE_KEYS.LEGACY_SAMPLE_CLEANUP, 'true');
       }
 
       // Isolated per-device session management
@@ -436,25 +487,24 @@ class StorageService {
 
       // Start automatic background synchronization for cross-device updates
       if (typeof window !== 'undefined') {
-        this.fetchServerData();
-        setInterval(() => {
-          this.fetchServerData();
-        }, 3500);
-
         window.addEventListener('focus', () => {
-          this.fetchServerData();
+          this.fetchFirestoreData();
         });
 
         document.addEventListener('visibilitychange', () => {
           if (document.visibilityState === 'visible') {
-            this.fetchServerData();
+            this.fetchFirestoreData();
           }
         });
       }
     } catch (e) {
       console.error('Storage initialization error:', e);
-      this.reports = [...INITIAL_REPORTS];
-      this.kassa = [...INITIAL_KASSA];
+      this.reports = [];
+      this.kassa = [];
+    } finally {
+      this.isInitializing = false;
+      this.initFirestoreSync();
+      if (typeof window !== 'undefined') this.fetchFirestoreData();
     }
   }
 
@@ -495,6 +545,7 @@ class StorageService {
           note: k.note || 'Xarajat',
           sourceKassaId: k.id,
           createdAt: k.createdAt || new Date().toISOString(),
+          updatedAt: k.updatedAt,
         });
       }
     });
@@ -504,28 +555,50 @@ class StorageService {
 
   public handleFirestoreData(data: any): boolean {
     if (!data) return false;
+    if (this.hasPendingFirestoreSync) {
+      void this.syncToFirestore();
+      return false;
+    }
     let hasChanges = false;
 
-    if (Array.isArray(data.reports) && JSON.stringify(this.reports) !== JSON.stringify(data.reports)) {
-      this.reports = data.reports;
+    if (Array.isArray(data.deletedIds)) {
+      for (const id of data.deletedIds) {
+        if (typeof id === 'string' && !this.deletedIds.has(id)) {
+          this.deletedIds.set(id, '');
+          hasChanges = true;
+        }
+      }
+      this.saveDeletedIds();
+    }
+
+    const deleted = new Set(this.deletedIds.keys());
+
+    const reports = Array.isArray(data.reports) ? data.reports.filter((record: ReportRecord) => !deleted.has(record.id)) : null;
+    if (reports && JSON.stringify(this.reports) !== JSON.stringify(reports)) {
+      this.reports = reports;
       this.saveReportsOnly();
       hasChanges = true;
     }
 
-    if (Array.isArray(data.kassa) && JSON.stringify(this.kassa) !== JSON.stringify(data.kassa)) {
-      this.kassa = data.kassa;
+    const kassa = Array.isArray(data.kassa) ? data.kassa.filter((record: CashRecord) => !deleted.has(record.id)) : null;
+    if (kassa && JSON.stringify(this.kassa) !== JSON.stringify(kassa)) {
+      this.kassa = kassa;
       this.saveKassaOnly();
       hasChanges = true;
     }
 
-    if (Array.isArray(data.expenses) && JSON.stringify(this.expenses) !== JSON.stringify(data.expenses)) {
-      this.expenses = data.expenses;
+    const expenses = Array.isArray(data.expenses) ? data.expenses.filter((record: ExpenseRecord) =>
+      !deleted.has(record.id) && !(record.sourceKassaId && deleted.has(record.sourceKassaId))
+    ) : null;
+    if (expenses && JSON.stringify(this.expenses) !== JSON.stringify(expenses)) {
+      this.expenses = expenses;
       this.saveExpensesOnly();
       hasChanges = true;
     }
 
-    if (Array.isArray(data.accounts) && data.accounts.length > 0 && JSON.stringify(this.accounts) !== JSON.stringify(data.accounts)) {
-      this.accounts = data.accounts;
+    const accounts = Array.isArray(data.accounts) ? data.accounts.filter((account: UserAccount) => !deleted.has(account.id)) : null;
+    if (accounts && accounts.length > 0 && JSON.stringify(this.accounts) !== JSON.stringify(accounts)) {
+      this.accounts = accounts;
       this.ensureDefaultAdminAccounts();
       this.saveAccountsOnly();
 
@@ -558,7 +631,29 @@ class StorageService {
     return hasChanges;
   }
 
+  private saveDeletedIds(): void {
+    try {
+      localStorage.setItem(STORAGE_KEYS.DELETED_IDS, JSON.stringify(Array.from(this.deletedIds.entries())));
+    } catch (err) {
+      console.warn('Failed saving synchronized delete markers', err);
+    }
+  }
+
+  private markDeleted(...ids: string[]): void {
+    const deletedAt = new Date().toISOString();
+    for (const id of ids) {
+      if (id) this.deletedIds.set(id, deletedAt);
+    }
+    this.saveDeletedIds();
+  }
+
+  private clearDeleteMarkersFor(ids: string[]): void {
+    for (const id of ids) this.deletedIds.delete(id);
+    this.saveDeletedIds();
+  }
+
   public async fetchFirestoreData(): Promise<boolean> {
+    if (!isFirestoreEnabled) return false;
     try {
       const docRef = doc(db, 'app_data', 'main');
       const snap = await getDocFromServer(docRef);
@@ -573,7 +668,7 @@ class StorageService {
   }
 
   private initFirestoreSync(): void {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined' || !isFirestoreEnabled) return;
     try {
       const docRef = doc(db, 'app_data', 'main');
 
@@ -592,12 +687,7 @@ class StorageService {
       // 2. Fetch directly right now on startup
       this.fetchFirestoreData();
 
-      // 3. Fallback poll every 3 seconds to guarantee updates even if mobile sleeps stream
-      setInterval(() => {
-        this.fetchFirestoreData();
-      }, 3000);
-
-      // 4. Mobile screen unlock / tab switch listener
+      // Refresh once when the app becomes active again; the snapshot listener handles live updates.
       window.addEventListener('focus', () => {
         this.fetchFirestoreData();
       });
@@ -613,31 +703,91 @@ class StorageService {
   }
 
   public async syncToFirestore(): Promise<boolean> {
+    if (!isFirestoreEnabled) return false;
+    if (this.isFirestoreWriteInFlight) return false;
+    this.isFirestoreWriteInFlight = true;
+    const revision = this.firestoreRevision;
     try {
       const docRef = doc(db, 'app_data', 'main');
-      const payload = {
-        reports: this.reports,
-        kassa: this.kassa,
-        expenses: this.expenses,
-        accounts: this.accounts,
-        logs: this.logs,
-        updatedAt: new Date().toISOString(),
+      const local = {
+        reports: [...this.reports],
+        kassa: [...this.kassa],
+        expenses: [...this.expenses],
+        accounts: [...this.accounts],
+        logs: [...this.logs],
       };
-      await setDoc(docRef, payload, { merge: true });
+      const localDeletedIds = new Map(this.deletedIds);
+      let committed: any = null;
+
+      await runTransaction(db, async (transaction) => {
+        const snapshot = await transaction.get(docRef);
+        const remote = snapshot.exists() ? snapshot.data() : {};
+        const deletedIds = new Set<string>([
+          ...(Array.isArray(remote.deletedIds) ? remote.deletedIds.filter((id: unknown): id is string => typeof id === 'string') : []),
+          ...localDeletedIds.keys(),
+        ]);
+        const payload = {
+          reports: mergeFirestoreRecords<ReportRecord>(remote.reports, local.reports, deletedIds),
+          kassa: mergeFirestoreRecords<CashRecord>(remote.kassa, local.kassa, deletedIds),
+          expenses: mergeFirestoreRecords<ExpenseRecord>(remote.expenses, local.expenses, deletedIds)
+            .filter((record) => !(record.sourceKassaId && deletedIds.has(record.sourceKassaId))),
+          accounts: mergeFirestoreRecords<UserAccount>(remote.accounts, local.accounts, deletedIds),
+          logs: mergeFirestoreRecords<ActivityLog>(remote.logs, local.logs, deletedIds),
+          deletedIds: Array.from(deletedIds),
+          updatedAt: new Date().toISOString(),
+        };
+        transaction.set(docRef, payload);
+        committed = payload;
+      });
+
       this.isServerConnected = true;
+      if (this.firestoreRevision === revision) {
+        if (committed) {
+          this.reports = committed.reports;
+          this.kassa = committed.kassa;
+          this.expenses = committed.expenses;
+          this.accounts = committed.accounts;
+          this.logs = committed.logs;
+          for (const id of committed.deletedIds) {
+            if (!this.deletedIds.has(id)) this.deletedIds.set(id, '');
+          }
+          this.saveReportsOnly();
+          this.saveKassaOnly();
+          this.saveExpensesOnly();
+          this.saveAccountsOnly();
+          this.saveLogsOnly();
+          this.saveDeletedIds();
+          this.notifyListeners();
+        }
+        this.hasPendingFirestoreSync = false;
+        localStorage.removeItem(STORAGE_KEYS.FIRESTORE_PENDING);
+      }
       return true;
     } catch (err) {
       console.warn('Firestore sync write notice:', err);
       return false;
+    } finally {
+      this.isFirestoreWriteInFlight = false;
+      if (this.hasPendingFirestoreSync && this.firestoreRevision !== revision) {
+        this.triggerSync();
+      }
     }
   }
 
   // --- SAVE METHODS (LOCAL + SERVER SYNC) ---
   public triggerSync(): void {
+    if (this.isInitializing) return;
+    if (!isFirestoreEnabled) return;
+    this.hasPendingFirestoreSync = true;
+    this.firestoreRevision += 1;
+    try {
+      localStorage.setItem(STORAGE_KEYS.FIRESTORE_PENDING, 'true');
+    } catch (err) {
+      console.warn('Failed recording pending cloud sync', err);
+    }
     if (this.syncTimeout) clearTimeout(this.syncTimeout);
     this.syncTimeout = setTimeout(() => {
       this.syncToFirestore();
-      this.syncToServer();
     }, 40);
   }
 
@@ -1020,6 +1170,7 @@ class StorageService {
       total,
       period10Days: decadeInfo.label,
       updatedBy: this.user.username || 'admin',
+      updatedAt: new Date().toISOString(),
     };
 
     this.saveReports();
@@ -1038,6 +1189,7 @@ class StorageService {
     const target = this.reports.find((r) => r.id === id);
     if (!target) return false;
 
+    this.markDeleted(id);
     this.reports = this.reports.filter((r) => r.id !== id);
     this.saveReports();
 
@@ -1129,6 +1281,7 @@ class StorageService {
       note,
       category,
       updatedBy: this.user.username || 'admin',
+      updatedAt: new Date().toISOString(),
     };
 
     this.recalculateKassaChain();
@@ -1149,6 +1302,8 @@ class StorageService {
     const target = this.kassa.find((k) => k.id === id);
     if (!target) return false;
 
+    const linkedExpenseIds = this.expenses.filter((expense) => expense.sourceKassaId === id).map((expense) => expense.id);
+    this.markDeleted(id, ...linkedExpenseIds);
     this.kassa = this.kassa.filter((k) => k.id !== id);
     this.recalculateKassaChain();
     this.saveKassa();
@@ -1415,6 +1570,7 @@ class StorageService {
     if (data.name) this.accounts[idx].name = data.name.trim();
     if (data.password) this.accounts[idx].password = data.password.trim();
     if (data.role) this.accounts[idx].role = data.role;
+    this.accounts[idx].updatedAt = new Date().toISOString();
 
     // Sync session if updating current active user
     if (this.user.username.toLowerCase() === this.accounts[idx].username.toLowerCase()) {
@@ -1435,6 +1591,7 @@ class StorageService {
     if (!acc) return { success: false, error: 'Akkaunt topilmadi!' };
 
     this.accounts = this.accounts.filter((a) => a.id !== id);
+    this.markDeleted(id);
     this.saveAccounts();
 
     // If currently logged in user was deleted, logout
@@ -1488,8 +1645,22 @@ class StorageService {
 
   // Reset to original demo data
   public resetToSampleData(): void {
+    this.markDeleted(
+      ...this.reports.map((record) => record.id),
+      ...this.kassa.map((record) => record.id),
+      ...this.expenses.map((record) => record.id),
+    );
     this.reports = [...INITIAL_REPORTS];
     this.kassa = [...INITIAL_KASSA];
+    const sampleIds = [
+      ...this.reports.map((record) => record.id),
+      ...this.kassa.map((record) => record.id),
+      ...this.kassa.map((record) => `exp-${record.id}`),
+    ];
+    this.clearDeleteMarkersFor(sampleIds);
+    const resetAt = new Date().toISOString();
+    this.reports = this.reports.map((record) => ({ ...record, updatedAt: resetAt }));
+    this.kassa = this.kassa.map((record) => ({ ...record, updatedAt: resetAt }));
     this.recalculateKassaChain();
     this.saveReports();
     this.saveKassa();
@@ -1498,6 +1669,11 @@ class StorageService {
 
   // Clear all data
   public clearAllData(): void {
+    this.markDeleted(
+      ...this.reports.map((record) => record.id),
+      ...this.kassa.map((record) => record.id),
+      ...this.expenses.map((record) => record.id),
+    );
     this.reports = [];
     this.kassa = [];
     this.expenses = [];

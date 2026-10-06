@@ -2,11 +2,15 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
+// Keep preview and local builds isolated from the live shared database.
+export const isFirestoreEnabled = import.meta.env.VERCEL_ENV === 'production';
+
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || '(default)');
 
 // Validate connection on boot
 (async () => {
+  if (!isFirestoreEnabled) return;
   try {
     await getDocFromServer(doc(db, 'app_data', 'connection_test'));
   } catch (error) {

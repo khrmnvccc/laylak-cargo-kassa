@@ -19,7 +19,7 @@ import {
   RotateCcw,
   Zap,
 } from 'lucide-react';
-import { formatMoney, getTodayDateString } from '../utils/formatters';
+import { addDaysToDateString, formatMoney, getTodayDateString } from '../utils/formatters';
 import { ExpenseCategory } from '../types';
 
 interface QuickAddModalProps {
@@ -119,11 +119,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
 
   // Quick preset dates
   const setQuickDate = (type: 'today' | 'yesterday') => {
-    const d = new Date();
-    if (type === 'yesterday') {
-      d.setDate(d.getDate() - 1);
-    }
-    const iso = d.toISOString().split('T')[0];
+    const iso = addDaysToDateString(getTodayDateString(), type === 'yesterday' ? -1 : 0);
     setReportDate(iso);
     setKassaDate(iso);
   };
