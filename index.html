@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Doʻkon va kargolar uchun kassa tizimi: toʻlovlar, hisobotlar, mijozlar, kassa balansi, yorliq chop etish.">
+<style>html{color-scheme:light}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>Kassa tizimi namunasi</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=JetBrains+Mono:wght@600&display=swap">
+<style>
+/* Layout: product walkthrough — a short intro, then one row per screen (text beside a framed screenshot), printouts and phone shots as pairs. */
+:root {
+  --bg: #f4f5f8;
+  --surface: #ffffff;
+  --ink: #111827;
+  --ink-2: #4b5363;
+  --ink-3: #7a8191;
+  --line: #e2e5eb;
+  --cash: #1aa774;
+  --card: #2a78d6;
+  --yandex: #e9a10c;
+  --pochta: #6b4fd8;
+  --frame: #0f1522;
+  --font-display: "Onest", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Onest", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1119; --surface: #151b26; --ink: #eef1f6; --ink-2: #b4bbc8; --ink-3: #848c9b; --line: #262e3c; --frame: #05080d;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1119; --surface: #151b26; --ink: #eef1f6; --ink-2: #b4bbc8; --ink-3: #848c9b; --line: #262e3c; --frame: #05080d;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+.wrap { max-width: 1160px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; letter-spacing: -0.02em; }
+p { margin: 0; }
+
+.methods { display: flex; height: 6px; border-radius: 3px; overflow: hidden; width: 180px; }
+.methods span:nth-child(1) { flex: 51; background: var(--cash); }
+.methods span:nth-child(2) { flex: 37; background: var(--card); }
+.methods span:nth-child(3) { flex: 6; background: var(--yandex); }
+.methods span:nth-child(4) { flex: 6; background: var(--pochta); }
+
+header.hero { padding-block: 56px 32px; display: grid; gap: 28px; }
+.brand { display: flex; align-items: center; gap: 12px; font-weight: 600; }
+.logo { width: 40px; height: 40px; border-radius: 10px; background: var(--ink); color: var(--bg); display: grid; place-items: center; font-weight: 800; }
+.brand small { display: block; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); font-weight: 500; }
+.hero h1 { font-size: clamp(32px, 5.4vw, 58px); line-height: 1.05; font-weight: 800; max-width: 15ch; }
+.hero .lead { font-size: clamp(17px, 2vw, 20px); color: var(--ink-2); max-width: 60ch; }
+.notice { display: inline-flex; align-items: center; gap: 10px; font-size: 14px; color: var(--ink-2); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px 6px 8px; width: fit-content; max-width: 100%; }
+.notice b { background: var(--yandex); color: #1b1300; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px; }
+.facts span { font-size: 14px; color: var(--ink-2); border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; }
+
+.shot { margin: 0; background: var(--frame); border-radius: 14px; padding: 10px; box-shadow: 0 24px 60px -30px rgba(15, 21, 34, 0.55); min-width: 0; }
+.shot button { all: unset; display: block; cursor: zoom-in; border-radius: 8px; overflow: hidden; width: 100%; }
+.shot button:focus-visible { outline: 3px solid var(--card); outline-offset: 3px; }
+.shot img { display: block; width: 100%; height: auto; }
+.hero-shot { margin-top: 8px; }
+
+section.feature { padding-block: 64px; border-top: 1px solid var(--line); display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: 40px; align-items: start; }
+.feature .text { display: grid; gap: 14px; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); }
+.eyebrow { font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.eyebrow i { width: 8px; height: 8px; border-radius: 50%; background: var(--dot, var(--card)); }
+.feature h2 { font-size: clamp(24px, 3vw, 32px); line-height: 1.15; font-weight: 700; }
+.feature p { color: var(--ink-2); }
+.feature ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; color: var(--ink-2); font-size: 15px; }
+.feature li { display: grid; grid-template-columns: 14px 1fr; gap: 10px; }
+.feature li::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--dot, var(--card)); margin-top: 9px; }
+.stack { display: grid; gap: 18px; min-width: 0; }
+.pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; align-items: start; }
+.pair.print { grid-template-columns: minmax(0, 0.62fr) minmax(0, 1fr); }
+.paper { background: #fff; border-radius: 10px; padding: 14px; border: 1px solid var(--line); }
+.cap { font-size: 13px; color: var(--ink-3); margin-top: 8px; }
+.id-chip { font-family: var(--font-mono); font-size: 13px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; color: var(--ink); }
+
+.contact { border-top: 1px solid var(--line); padding-block: 56px; display: grid; gap: 18px; }
+.contact h2 { font-size: clamp(24px, 3vw, 32px); line-height: 1.15; font-weight: 700; }
+.contact p { color: var(--ink-2); max-width: 60ch; }
+.contact-links { display: flex; flex-wrap: wrap; gap: 12px; }
+.contact-links a { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 18px; font-weight: 600; font-size: 17px; }
+.contact-links a:hover { border-color: var(--card); }
+.contact-links small { display: block; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); font-weight: 500; }
+.contact-links .num { font-family: var(--font-mono); }
+
+footer { border-top: 1px solid var(--line); padding-block: 40px 56px; color: var(--ink-3); font-size: 14px; display: grid; gap: 6px; }
+
+dialog { border: 0; padding: 0; background: transparent; max-width: min(96vw, 1600px); max-height: 94vh; }
+dialog::backdrop { background: rgba(5, 8, 13, 0.82); }
+dialog img { display: block; max-width: 100%; max-height: 90vh; width: auto; height: auto; border-radius: 10px; }
+dialog form { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 12px); right: calc(env(safe-area-inset-right, 0px) + 12px); }
+dialog form button { font: 600 14px var(--font-body); background: #fff; color: #111; border: 0; border-radius: 999px; padding: 8px 14px; cursor: pointer; }
+
+@media (max-width: 860px) {
+  section.feature { grid-template-columns: minmax(0, 1fr); gap: 24px; padding-block: 44px; }
+  .feature .text { position: static; }
+}
+@media (max-width: 520px) {
+  .pair, .pair.print { grid-template-columns: minmax(0, 1fr); }
+  .shot { padding: 6px; border-radius: 10px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .shot button img { transition: transform .25s ease; }
+  .shot button:hover img { transform: scale(1.01); }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="hero">
+    <div class="brand"><div class="logo">L</div><div>Laylak Cargo<small>Kassa tizimi</small></div></div>
+    <h1>Doʻkon va kargolar uchun onlayn kassa</h1>
+    <p class="lead">Har bir toʻlov bir zumda barcha xodimlarda koʻrinadi. Hisobotlar, mijozlar bazasi, kassa balansi va paketga yorliq chop etish bitta tizimda. Kompyuterda ham, telefonda ham ishlaydi.</p>
+    <div class="methods" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+    <span class="notice"><b>Namuna</b>Rasmlardagi ism, ID va summalar sinov uchun toʻqilgan, haqiqiy mijoz maʼlumoti emas.</span>
+    <div class="facts"><span>Naqd · Karta · Yandex · Pochta</span><span>Admin va ishchi rollari</span><span>Jonli yangilanish</span><span>76×130 yorliq va A4</span><span>Excel’dan import</span></div>
+    <figure class="shot hero-shot"><button type="button" aria-label="Dashboard rasmini kattalashtirish"><img src="img/dashboard.webp" alt="Dashboard: bugungi tushum, toʻlov turlari boʻyicha, 14 kunlik grafik va ishchilar tushumi" width="2160" height="1350"></button></figure>
+  </header>
+
+  <section class="feature" style="--dot: var(--cash)">
+    <div class="text">
+      <span class="eyebrow"><i></i>Kassa</span>
+      <h2>Toʻlovni 5 soniyada kiritish</h2>
+      <p>Ishchi mijoz ID raqamini, summani va toʻlov turini kiritadi. Saqlangan toʻlov boshqa xodimlarning ekranida darhol paydo boʻladi.</p>
+      <ul><li>Summa yozilayotganda <span class="id-chip">448 000</span> koʻrinishida ajratiladi</li><li>Yon panelda bugungi kassa va oʻzi kiritganlari</li><li>Saqlagach yorliq avtomatik chop etilishi mumkin</li></ul>
+    </div>
+    <figure class="shot"><button type="button" aria-label="Kassa rasmini kattalashtirish"><img src="img/kassa.webp" alt="Kassa sahifasi: toʻlov kiritish shakli va bugungi kassa" width="2160" height="1350" loading="lazy"></button></figure>
+  </section>
+
+  <section class="feature" style="--dot: var(--card)">
+    <div class="text">
+      <span class="eyebrow"><i></i>Operatsiyalar</span>
+      <h2>Har bir toʻlov tarixi bilan</h2>
+      <p>Barcha kirimlarni ID, ism, izoh yoki ishchi boʻyicha qidirish va sana, toʻlov turi va holat boʻyicha saralash mumkin.</p>
+      <ul><li>Toʻlovni oʻchirib boʻlmaydi, faqat sababi yozilib bekor qilinadi</li><li>Excel (CSV) eksport va A4 chop etish</li><li>Eski Excel hisobotini bir tugma bilan yuklash</li></ul>
+    </div>
+    <div class="stack">
+      <figure class="shot"><button type="button" aria-label="Operatsiyalar rasmini kattalashtirish"><img src="img/operations.webp" alt="Operatsiyalar roʻyxati filtrlar bilan" width="2160" height="1350" loading="lazy"></button></figure>
+      <figure class="shot"><button type="button" aria-label="Toʻlov tafsiloti rasmini kattalashtirish"><img src="img/payment-detail.webp" alt="Toʻlov tafsiloti oynasi: yorliq va bekor qilish tugmalari" width="2160" height="1350" loading="lazy"></button></figure>
+    </div>
+  </section>
+
+  <section class="feature" style="--dot: var(--yandex)">
+    <div class="text">
+      <span class="eyebrow"><i></i>Hisobotlar</span>
+      <h2>Kunlik, haftalik va oylik hisobot</h2>
+      <p>Har bir kun yoki davr boʻyicha jami tushum, toʻlov turlari va ishchilar kesimi koʻrinadi. Hamma raqam kiritilgan toʻlovlardan avtomatik hisoblanadi.</p>
+      <ul><li>Oldingi kun yoki davr bilan solishtirish</li><li>Imzo joylari bilan A4 chop etish</li></ul>
+    </div>
+    <div class="stack">
+      <figure class="shot"><button type="button" aria-label="Kunlik hisobot rasmini kattalashtirish"><img src="img/daily.webp" alt="Kunlik hisobot" width="2160" height="1350" loading="lazy"></button></figure>
+      <figure class="shot"><button type="button" aria-label="Haftalik va oylik hisobot rasmini kattalashtirish"><img src="img/periods.webp" alt="Haftalik va oylik hisobot" width="2160" height="1350" loading="lazy"></button></figure>
+    </div>
+  </section>
+
+  <section class="feature" style="--dot: var(--pochta)">
+    <div class="text">
+      <span class="eyebrow"><i></i>Mijozlar</span>
+      <h2>Kim qancha toʻlagani bir qarashda</h2>
+      <p>Har bir mijoz uchun jami summa, naqd va karta boʻyicha alohida koʻrinadi. Roʻyxatni faollar, koʻp toʻlaganlar yoki oxirgi toʻlov boʻyicha saralash mumkin.</p>
+      <ul><li>Mijoz sahifasida toʻlovlar tarixi va hisob-varaq</li><li>Minglab mijozni CSV orqali bir martada yuklash</li></ul>
+    </div>
+    <div class="stack">
+      <figure class="shot"><button type="button" aria-label="Mijozlar rasmini kattalashtirish"><img src="img/clients.webp" alt="Mijozlar roʻyxati saralash bilan" width="2160" height="1350" loading="lazy"></button></figure>
+      <figure class="shot"><button type="button" aria-label="Mijoz sahifasi rasmini kattalashtirish"><img src="img/client.webp" alt="Bitta mijozning sahifasi va toʻlovlar tarixi" width="2160" height="1350" loading="lazy"></button></figure>
+    </div>
+  </section>
+
+  <section class="feature" style="--dot: var(--cash)">
+    <div class="text">
+      <span class="eyebrow"><i></i>Kassa balansi · faqat admin</span>
+      <h2>Kassada va kartada qancha pul bor</h2>
+      <p>Har kuni kun boshidagi qoldiq, tushum, rasxod va kun oxiridagi qoldiq koʻrinadi. Yandex va Pochta pullari karta hisobiga qoʻshiladi.</p>
+      <ul><li>Rasxodlar toifa boʻyicha: tovar, paket, oylik, kommunal…</li><li>Sanab chiqilgan haqiqiy summa bilan qoldiqni tuzatish</li><li>Excel’dagi kassa daftarini yuklash</li></ul>
+    </div>
+    <figure class="shot"><button type="button" aria-label="Kassa balansi rasmini kattalashtirish"><img src="img/balance.webp" alt="Kassa balansi: naqd va karta qoldiqlari, kunlik harakat" width="2160" height="1350" loading="lazy"></button></figure>
+  </section>
+
+  <section class="feature" style="--dot: var(--ink)">
+    <div class="text">
+      <span class="eyebrow"><i></i>Chop etish</span>
+      <h2>Paketga yorliq va A4 hisobot</h2>
+      <p>Termoprinterda 76×130 mm yorliq chiqadi: katta mijoz ID, ism, telefon va toʻlov. Oddiy printerda esa hisobotlar A4 varaqda chop etiladi.</p>
+      <ul><li>Yorliq oʻlchami har bir doʻkon printeriga moslanadi</li><li>Bekor qilingan toʻlov yorliqda belgilanadi</li></ul>
+    </div>
+    <div class="pair print">
+      <div><div class="paper"><button type="button" class="zoom" aria-label="Yorliq rasmini kattalashtirish" style="all:unset;cursor:zoom-in;display:block"><img src="img/print-label.webp" alt="76×130 mm yorliq namunasi" width="329" height="564" loading="lazy"></button></div><p class="cap">Yorliq, 76×130 mm</p></div>
+      <div><div class="paper"><button type="button" class="zoom" aria-label="A4 hisobot rasmini kattalashtirish" style="all:unset;cursor:zoom-in;display:block"><img src="img/print-a4.webp" alt="A4 kunlik hisobot namunasi" width="744" height="1053" loading="lazy"></button></div><p class="cap">Kunlik hisobot, A4</p></div>
+    </div>
+  </section>
+
+  <section class="feature" style="--dot: var(--card)">
+    <div class="text">
+      <span class="eyebrow"><i></i>Telefonda va tunda</span>
+      <h2>Ishchi telefonidan ham ishlaydi</h2>
+      <p>Telefonda pastki menyu va katta "+" tugmasi chiqadi, toʻlov bir qoʻl bilan kiritiladi. Kechqurun uchun tungi rejim bor.</p>
+    </div>
+    <div class="stack">
+      <div class="pair">
+        <figure class="shot"><button type="button" aria-label="Telefondagi dashboard rasmini kattalashtirish"><img src="img/m-dashboard.webp" alt="Telefonda dashboard" width="780" height="1688" loading="lazy"></button></figure>
+        <figure class="shot"><button type="button" aria-label="Telefondagi kassa rasmini kattalashtirish"><img src="img/m-kassa.webp" alt="Telefonda kassa sahifasi" width="780" height="1688" loading="lazy"></button></figure>
+      </div>
+      <figure class="shot"><button type="button" aria-label="Tungi rejim rasmini kattalashtirish"><img src="img/dark.webp" alt="Tungi rejimdagi dashboard" width="2160" height="1350" loading="lazy"></button></figure>
+    </div>
+  </section>
+
+  <section class="contact" id="aloqa">
+    <span class="eyebrow"><i style="--dot: var(--cash)"></i>Aloqa</span>
+    <h2>Shunday tizim sizning doʻkon yoki kargongiz uchun ham</h2>
+    <p>Nomingiz, toʻlov turlari va hisobotlaringizga moslab sozlab beramiz. Yozing yoki qoʻngʻiroq qiling.</p>
+    <div class="contact-links">
+      <a href="https://t.me/khrmnvccc" target="_blank" rel="noopener"><span><small>Telegram</small>@khrmnvccc</span></a>
+      <a href="tel:+998935991226"><span><small>Telefon</small><span class="num">+998 93 599 12 26</span></span></a>
+    </div>
+  </section>
+
+  <footer>
+    <p>Maʼlumotlar xavfsiz serverda saqlanadi. Har bir doʻkonning bazasi alohida boʻladi, parollar shifrlangan holda saqlanadi, har bir amal jurnalga yoziladi.</p>
+    <p>Rasmlardagi barcha ism, ID va summalar namuna uchun toʻqilgan.</p>
+  </footer>
+</div>
+
+<dialog id="viewer" aria-label="Rasm">
+  <form method="dialog"><button id="viewer-close" type="submit">Yopish</button></form>
+  <img id="viewer-img" alt="">
+</dialog>
+
+<script>
+(() => {
+  const dlg = document.getElementById('viewer');
+  const big = document.getElementById('viewer-img');
+  document.querySelectorAll('.shot button, button.zoom').forEach((b) => {
+    b.addEventListener('click', () => {
+      const img = b.querySelector('img');
+      big.src = img.src; big.alt = img.alt;
+      if (dlg.showModal) dlg.showModal();
+    });
+  });
+  dlg.addEventListener('click', (e) => { if (e.target === dlg || e.target === big) dlg.close(); });
+})();
+</script>
+
+</body>
+</html>
