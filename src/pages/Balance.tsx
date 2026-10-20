@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Ban, ChevronLeft, ChevronRight, Minus, Plus, Scale, Wallet } from 'lucide-react';
+import { Ban, ChevronLeft, ChevronRight, Minus, Plus, Scale, Upload, Wallet } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { printBalance } from '../lib/reports';
 import { PrintButton } from '../components/PrintButton';
+import { ImportKassa } from '../components/ImportKassa';
 import { useApi, useLive } from '../lib/live';
 import { addDays, dateTime, formatDate, groupDigits, methodColor, methodLabel, money, timeOf, todayTashkent, weekday } from '../lib/format';
 import type { BalanceReport, Expense, ExpenseCategory, SourceBalance } from '../lib/types';
@@ -40,7 +41,7 @@ export default function Balance() {
   const today = todayTashkent();
   const [date, setDate] = useState(today);
   const { data, error, loading, reload } = useApi<BalanceReport>('/balance', { date });
-  const [modal, setModal] = useState<'expense' | 'adjust' | Expense | null>(null);
+  const [modal, setModal] = useState<'expense' | 'adjust' | 'import' | Expense | null>(null);
 
   const sources = data?.sources || [];
   const sum = (k: keyof Omit<SourceBalance, 'source'>) => sources.reduce((s, r) => s + Number(r[k]), 0);
@@ -54,6 +55,7 @@ export default function Balance() {
         title="Kassa balansi"
         subtitle="Naqd va kartada qancha pul borligi, kunlik rasxodlar · faqat admin koʻradi"
         actions={<>
+          <Button icon={<Upload className="size-4" />} onClick={() => setModal('import')}>Daftarni yuklash</Button>
           <PrintButton disabled={!data} run={() => data && printBalance(data, user.full_name)} />
           <Button icon={<Scale className="size-4" />} onClick={() => setModal('adjust')}>Qoldiqni tuzatish</Button>
           <Button variant="primary" icon={<Minus className="size-4" />} onClick={() => setModal('expense')}>Rasxod qoʻshish</Button>
@@ -232,6 +234,7 @@ export default function Balance() {
       )}
 
       {modal === 'expense' && <ExpenseForm date={date} onClose={() => setModal(null)} />}
+      {modal === 'import' && <ImportKassa categoryLabel={categoryLabel} onClose={() => setModal(null)} />}
       {modal === 'adjust' && <AdjustForm sources={sources} onClose={() => setModal(null)} />}
       {modal && typeof modal === 'object' && <ExpenseDetail expense={modal} onClose={() => setModal(null)} />}
     </>
