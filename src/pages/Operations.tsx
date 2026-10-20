@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, Download, Search, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, Search, Upload, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { useApi } from '../lib/live';
 import { METHODS, dateOf, downloadCsv, methodLabel, money, rangeLabel, timeOf } from '../lib/format';
 import type { Method, PaymentList, Summary } from '../lib/types';
 import { DateRangePicker, presetRange, type Range } from '../components/DateRange';
 import { PaymentsTable } from '../components/PaymentsTable';
+import { ImportPayments } from '../components/ImportPayments';
 import { PrintButton } from '../components/PrintButton';
 import { useAuth } from '../lib/auth';
 import { printOperations } from '../lib/reports';
@@ -24,6 +25,7 @@ export default function Operations({ params }: { params: URLSearchParams }) {
   const [debounced, setDebounced] = useState(search);
   const [page, setPage] = useState(0);
   const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   useEffect(() => {
     const id = setTimeout(() => setDebounced(search.trim()), 300);
@@ -69,10 +71,12 @@ export default function Operations({ params }: { params: URLSearchParams }) {
         title="Operatsiyalar"
         subtitle="Barcha kirimlar tarixi"
         actions={<>
+          {user.role === 'admin' && <Button icon={<Upload className="size-4" />} onClick={() => setImporting(true)}>Hisobotni yuklash</Button>}
           <Button icon={<Download className="size-4" />} loading={exporting} onClick={exportCsv} disabled={!data?.count}>Excel (CSV)</Button>
           <PrintButton disabled={!data?.count} run={() => printOperations(filters, [method !== 'all' && methodLabel(method), status === 'voided' ? 'bekor qilinganlar' : status === 'all' ? 'faol va bekor qilinganlar' : '', debounced && `qidiruv: ${debounced}`].filter(Boolean).join(' · '), user.full_name)} />
         </>}
       />
+      {importing && <ImportPayments onClose={() => setImporting(false)} />}
 
       <Card padded={false}>
         <div className="flex flex-col gap-3 border-b border-line p-3 sm:p-4 xl:flex-row xl:items-center">

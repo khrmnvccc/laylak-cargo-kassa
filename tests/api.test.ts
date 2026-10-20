@@ -274,6 +274,46 @@ test('client list sorting and admin import', async () => {
   assert.equal((await worker.call('GET', '/clients', undefined, { q: 'jasur' })).body.items[0].code, 'LC500');
 });
 
+test('payment import from a report skips what the kassa already has', async () => {
+  const admin = new Client();
+  assert.equal((await admin.call('POST', '/auth/login', { username: 'admin', password: 'password123' })).status, 200);
+  const worker = new Client();
+  assert.equal((await worker.call('POST', '/auth/login', { username: 'sardor', password: 'worker123' })).status, 200);
+  assert.equal((await worker.call('POST', '/payments/import', { rows: [{ date: '2026-10-01', code: 'A1', method: 'cash', amount: 1 }] })).status, 403);
+
+  // 2026-10-05 101111: the legacy seed already holds cash 150000 and card 250000 for that day.
+  const rows = [
+    { date: '2026-10-05', code: '101111', method: 'cash', amount: 150000, note: 'Reyslar: 3' },
+    { date: '2026-10-05', code: '101111', method: 'card', amount: 250000 },
+    { date: '2026-10-08', code: '303030', method: 'yandex', amount: 70000, note: 'Reyslar: 1' },
+    { date: '2026-10-08', code: '303030', method: 'yandex', amount: 70000 },
+    { date: '2026-10-09', code: '303031', method: 'pochta', amount: 25000 },
+    { date: '2999-01-01', code: '1', method: 'cash', amount: 5 },
+    { date: '2026-10-09', code: '1', method: 'crypto', amount: 5 },
+  ];
+  const before = (await admin.call('GET', '/summary', undefined, { from: '2026-10-01', to: '2026-10-31' })).body.totals.total;
+  const dry = await admin.call('POST', '/payments/import', { rows, dryRun: true });
+  assert.equal(dry.status, 200, JSON.stringify(dry.body));
+  assert.equal(dry.body.adding.count, 3);
+  assert.equal(dry.body.adding.total, 165000);
+  assert.equal(dry.body.alreadyInKassa, 2);
+  assert.equal(dry.body.invalid, 2);
+  assert.equal(dry.body.newClients, 2);
+  assert.equal((await admin.call('GET', '/summary', undefined, { from: '2026-10-01', to: '2026-10-31' })).body.totals.total, before, 'dry run writes nothing');
+
+  const real = await admin.call('POST', '/payments/import', { rows });
+  assert.equal(real.body.adding.count, 3);
+  const after = (await admin.call('GET', '/summary', undefined, { from: '2026-10-01', to: '2026-10-31' })).body.totals;
+  assert.equal(after.total, before + 165000);
+  const day = (await admin.call('GET', '/payments', undefined, { from: '2026-10-08', to: '2026-10-08' })).body.items;
+  assert.equal(day.length, 2);
+  assert.equal(day[0].created_by_name, 'Excel hisobot');
+
+  const again = await admin.call('POST', '/payments/import', { rows });
+  assert.equal(again.body.adding.count, 0, 'uploading the same file twice adds nothing');
+  assert.equal(again.body.alreadyInKassa, 5);
+});
+
 test.after(async () => {
   await getPool().end();
 });
