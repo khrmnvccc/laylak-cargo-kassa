@@ -460,3 +460,75 @@ test('roles: the owner manages admins, an admin is limited by the owner and mana
   assert.equal(back.status, 200);
   assert.ok(back.body.staff.permissions.includes('balance.view'));
 });
+
+test('telegram: owner connects a bot, gets void alerts, the evening report and a backup', async () => {
+  const sent: Array<{ method: string; body: any }> = [];
+  const realFetch = globalThis.fetch;
+  const realNow = Date.now;
+  globalThis.fetch = (async (url: string, init: any) => {
+    const method = String(url).split('/').pop()!;
+    const body = init.body instanceof FormData ? Object.fromEntries(init.body.entries()) : JSON.parse(init.body);
+    sent.push({ method, body });
+    const result = method === 'getMe' ? { username: 'laylak_test_bot' }
+      : method === 'getUpdates' ? [{ message: { text: `/start ${codeSeen}`, chat: { id: 777, type: 'private', first_name: 'Ega' } } }]
+      : true;
+    return new Response(JSON.stringify({ ok: true, result }), { status: 200 });
+  }) as typeof fetch;
+  let codeSeen = '';
+  try {
+    const owner = new Client();
+    assert.equal((await owner.call('POST', '/auth/login', { username: 'admin', password: 'password123' })).status, 200);
+    const w = new Client();
+    assert.equal((await w.call('POST', '/auth/login', { username: 'sardor', password: 'worker123' })).status, 200);
+    assert.equal((await w.call('GET', '/telegram')).status, 403);
+    assert.equal((await w.call('GET', '/backup')).status, 403);
+
+    assert.equal((await owner.call('PUT', '/telegram', { token: 'bad' })).status, 400);
+    const token = '123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw1';
+    const put = await owner.call('PUT', '/telegram', { token });
+    assert.equal(put.status, 200, JSON.stringify(put.body));
+    assert.equal(put.body.telegram.connected, false);
+    codeSeen = put.body.telegram.code;
+    const check = await owner.call('POST', '/telegram/check');
+    assert.equal(check.status, 200, JSON.stringify(check.body));
+    assert.deepEqual([check.body.telegram.connected, check.body.telegram.chatName], [true, 'Ega']);
+    assert.ok(!JSON.stringify(check.body).includes(token), 'token never goes back to the browser');
+    assert.ok(!JSON.stringify((await owner.call('GET', '/system')).body).includes(token));
+
+    // Cancelling a payment alerts the owner.
+    const pay = await owner.call('POST', '/payments', { clientCode: 'TG-1', amount: 55000, method: 'cash' });
+    sent.length = 0;
+    assert.equal((await owner.call('POST', `/payments/${pay.body.payment.id}/void`, { reason: 'xato kiritildi' })).status, 200);
+    assert.equal(sent[0]?.method, 'sendMessage');
+    assert.match(sent[0].body.text, /bekor qilindi[\s\S]*55 000 soʻm[\s\S]*xato kiritildi/);
+
+    // Backup: every table, without passwords or the token.
+    const backup = await owner.call('GET', '/backup');
+    assert.equal(backup.status, 200);
+    const { gunzipSync } = await import('node:zlib');
+    const dump = JSON.parse(gunzipSync(Buffer.from(backup.body.data, 'base64')).toString());
+    assert.ok(dump.tables.payments.length > 0 && dump.tables.attendance && dump.tables.clients);
+    assert.ok(!('app_sessions' in dump.tables));
+    assert.ok(!JSON.stringify(dump).includes('scrypt$') && !JSON.stringify(dump).includes(token));
+
+    // The cron: secret checked, nothing before 20:00 Tashkent, then exactly one report a day.
+    process.env.CRON_SECRET = 'cron-test';
+    const cron = (auth?: string) => handleApi({ method: 'GET', path: '/cron/daily', query: {}, body: {}, headers: { authorization: auth } }) as Promise<{ status: number; body: any }>;
+    assert.equal((await cron()).status, 401);
+    const day = new Date(Date.now() + 5 * 3600_000).toISOString().slice(0, 10);
+    Date.now = () => Date.parse(`${day}T10:00:00Z`); // 15:00 in Tashkent
+    assert.equal((await cron('Bearer cron-test')).body.reason, 'early');
+    Date.now = () => Date.parse(`${day}T16:05:00Z`); // 21:05 in Tashkent
+    sent.length = 0;
+    const first = await cron('Bearer cron-test');
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    assert.equal(first.body.sent, true);
+    assert.deepEqual(sent.map((s) => s.method), ['sendMessage', 'sendDocument']);
+    assert.match(sent[0].body.text, /Jami:[\s\S]*Davomat/);
+    assert.equal((await cron('Bearer cron-test')).body.reason, 'already-sent');
+  } finally {
+    globalThis.fetch = realFetch;
+    Date.now = realNow;
+    delete process.env.CRON_SECRET;
+  }
+});
