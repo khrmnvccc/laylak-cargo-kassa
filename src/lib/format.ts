@@ -118,7 +118,17 @@ export const METHODS = [
   { value: 'pochta', label: 'Pochta', color: 'var(--pochta)' },
 ] as const;
 
-export const methodLabel = (m: string) => METHODS.find((x) => x.value === m)?.label ?? m;
+/** Card, Yandex and Pochta all land on the card account; the app shows them as one "Karta" total, opened up on demand. */
+export const CARD_METHODS = METHODS.filter((m) => m.value !== 'cash');
+export const cardTotal = (t?: { card?: number | string; yandex?: number | string; pochta?: number | string } | null) =>
+  t ? Number(t.card || 0) + Number(t.yandex || 0) + Number(t.pochta || 0) : 0;
+export const PAY_GROUPS = [
+  { value: 'cash', label: 'Naqd', color: 'var(--cash)', sum: (t: { cash?: number | string }) => Number(t.cash || 0) },
+  { value: 'card', label: 'Karta', color: 'var(--card)', sum: cardTotal },
+] as const;
+export const isCardMethod = (m: string) => m === 'card' || m === 'yandex' || m === 'pochta';
+
+export const methodLabel = (m: string) => (m === 'yandex' || m === 'pochta' ? `Karta · ${METHODS.find((x) => x.value === m)!.label}` : METHODS.find((x) => x.value === m)?.label ?? m);
 export const methodColor = (m: string) => METHODS.find((x) => x.value === m)?.color ?? 'var(--ink-3)';
 
 export function initials(name: string): string {

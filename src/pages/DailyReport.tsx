@@ -7,12 +7,13 @@ import { PaymentsTable } from '../components/PaymentsTable';
 import { PrintButton } from '../components/PrintButton';
 import { useAuth } from '../lib/auth';
 import { printDailyReport } from '../lib/reports';
-import { Avatar, Button, Card, CardHeader, EmptyState, ErrorState, IconButton, Input, PageHeader, SkeletonRows, StatCard, cx, td, th } from '../components/ui';
+import { Avatar, Button, Card, CardHeader, EmptyState, ErrorState, IconButton, Input, MethodCells, MethodHeads, MethodStatCards, PageHeader, SkeletonRows, StatCard, cx, td, th } from '../components/ui';
 
 export default function DailyReport({ params }: { params: URLSearchParams }) {
   const { user } = useAuth();
   const today = todayTashkent();
   const [date, setDate] = useState(() => params.get('date') || today);
+  const [cardOpen, setCardOpen] = useState(false);
   const summary = useApi<Summary>('/summary', { from: date, to: date });
   const list = useApi<PaymentList>('/payments', { from: date, to: date, limit: 500 });
   const t = summary.data?.totals;
@@ -36,12 +37,9 @@ export default function DailyReport({ params }: { params: URLSearchParams }) {
 
       {summary.error && !summary.data ? <Card><ErrorState message={summary.error} onRetry={summary.reload} /></Card> : (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
             <div className="col-span-2 xl:col-span-1"><StatCard label="Jami tushum" value={t?.total || 0} previous={p?.total} hint="oldingi kunga nisbatan" loading={summary.loading} /></div>
-            <StatCard label="Naqd" accent="var(--cash)" value={t?.cash || 0} previous={p?.cash} loading={summary.loading} />
-            <StatCard label="Karta" accent="var(--card)" value={t?.card || 0} previous={p?.card} loading={summary.loading} />
-            <StatCard label="Yandex" accent="var(--yandex)" value={t?.yandex || 0} previous={p?.yandex} loading={summary.loading} />
-            <StatCard label="Pochta" accent="var(--pochta)" value={t?.pochta || 0} previous={p?.pochta} loading={summary.loading} />
+            <MethodStatCards t={t} p={p} loading={summary.loading} />
             <div className="col-span-2 xl:col-span-1"><StatCard label="Operatsiyalar" value={t?.count || 0} previous={p?.count} format={groupDigits} loading={summary.loading} hint={t ? `${t.clients || 0} ta mijoz` : undefined} /></div>
           </div>
 
@@ -56,10 +54,7 @@ export default function DailyReport({ params }: { params: URLSearchParams }) {
                     <tr>
                       <th className={th}>Ishchi</th>
                       <th className={cx(th, 'text-right')}>Operatsiya</th>
-                      <th className={cx(th, 'text-right')}>Naqd</th>
-                      <th className={cx(th, 'text-right')}>Karta</th>
-                      <th className={cx(th, 'text-right')}>Yandex</th>
-                      <th className={cx(th, 'text-right')}>Pochta</th>
+                      <MethodHeads open={cardOpen} onToggle={() => setCardOpen((o) => !o)} />
                       <th className={cx(th, 'text-right')}>Jami</th>
                     </tr>
                   </thead>
@@ -68,10 +63,7 @@ export default function DailyReport({ params }: { params: URLSearchParams }) {
                       <tr key={w.id}>
                         <td className={td}><div className="flex items-center gap-2.5"><Avatar name={w.name} size="sm" />{w.name}</div></td>
                         <td className={cx(td, 'text-right num text-ink-2')}>{w.count}</td>
-                        <td className={cx(td, 'text-right num')}>{money(w.cash)}</td>
-                        <td className={cx(td, 'text-right num')}>{money(w.card)}</td>
-                        <td className={cx(td, 'text-right num')}>{money(w.yandex)}</td>
-                        <td className={cx(td, 'text-right num')}>{money(w.pochta)}</td>
+                        <MethodCells row={w} open={cardOpen} />
                         <td className={cx(td, 'text-right font-semibold num')}>{money(w.total)}</td>
                       </tr>
                     ))}
@@ -80,10 +72,7 @@ export default function DailyReport({ params }: { params: URLSearchParams }) {
                     <tr>
                       <td className={cx(td, 'font-semibold')}>Jami</td>
                       <td className={cx(td, 'text-right font-semibold num')}>{t?.count}</td>
-                      <td className={cx(td, 'text-right font-semibold num')}>{money(t?.cash)}</td>
-                      <td className={cx(td, 'text-right font-semibold num')}>{money(t?.card)}</td>
-                      <td className={cx(td, 'text-right font-semibold num')}>{money(t?.yandex)}</td>
-                      <td className={cx(td, 'text-right font-semibold num')}>{money(t?.pochta)}</td>
+                      <MethodCells row={t} open={cardOpen} bold />
                       <td className={cx(td, 'text-right font-semibold num')}>{money(t?.total)}</td>
                     </tr>
                   </tfoot>

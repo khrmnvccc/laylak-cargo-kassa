@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { useApi } from '../lib/live';
-import { METHODS, addDays, compactMoney, groupDigits, money, rangeLabel } from '../lib/format';
+import { PAY_GROUPS, addDays, compactMoney, groupDigits, money, rangeLabel } from '../lib/format';
 import { href } from '../lib/router';
 import type { Summary } from '../lib/types';
 import { DateRangePicker, presetRange, type Range } from '../components/DateRange';
 import { PaymentsTable } from '../components/PaymentsTable';
 import { Legend, RevenueChart } from '../components/RevenueChart';
-import { Avatar, Card, CardHeader, Delta, EmptyState, ErrorState, PageHeader, SkeletonRows, StatCard } from '../components/ui';
+import { Avatar, Card, CardHeader, Delta, EmptyState, ErrorState, MethodStatCards, PageHeader, SkeletonRows, StatCard } from '../components/ui';
 
 export default function Dashboard() {
   const [range, setRange] = useState<Range>(() => presetRange('today'));
@@ -20,7 +20,6 @@ export default function Dashboard() {
   const p = data?.previous;
   const single = range.from === range.to;
   const compareLabel = single ? 'oldingi kunga nisbatan' : 'oldingi davrga nisbatan';
-  const share = (v: number) => (t && t.total ? Math.round((v / t.total) * 100) : 0);
 
   return (
     <>
@@ -35,21 +34,18 @@ export default function Dashboard() {
       ) : (
         <>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
-            <StatCard label={single ? 'Jami tushum' : 'Davr tushumi'} value={t?.total || 0} previous={p?.total} hint={`Naqd + karta + Yandex + Pochta · ${compareLabel}`} loading={loading} />
+            <StatCard label={single ? 'Jami tushum' : 'Davr tushumi'} value={t?.total || 0} previous={p?.total} hint={`Naqd + karta · ${compareLabel}`} loading={loading} />
             <StatCard label="Operatsiyalar soni" value={t?.count || 0} previous={p?.count} loading={loading} format={(n) => groupDigits(n)}
               hint={t ? `${t.clients || 0} ta mijoz` : undefined} />
           </div>
-          <div className="mt-3 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-            {METHODS.map((m) => (
-              <StatCard key={m.value} label={m.label} accent={m.color} value={t?.[m.value] || 0} previous={p?.[m.value]} loading={loading}
-                hint={t?.total ? `${share(t[m.value])}% ulush` : undefined} />
-            ))}
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:gap-4">
+            <MethodStatCards t={t} p={p} loading={loading} total={t?.total} />
           </div>
 
           {t && t.total > 0 && (
             <div className="mt-3 overflow-hidden rounded-full bg-surface-3" aria-hidden>
               <div className="flex h-1.5">
-                {METHODS.map((m) => <div key={m.value} className="transition-all duration-500" style={{ background: m.color, width: `${(t[m.value] / t.total) * 100}%` }} />)}
+                {PAY_GROUPS.map((m) => <div key={m.value} className="transition-all duration-500" style={{ background: m.color, width: `${(m.sum(t) / t.total) * 100}%` }} />)}
               </div>
             </div>
           )}
@@ -84,7 +80,7 @@ export default function Dashboard() {
                               <span className="text-sm font-semibold text-ink num">{compactMoney(w.total)}</span>
                             </div>
                             <div className="mt-1.5 flex h-1.5 overflow-hidden rounded-full bg-surface-3">
-                              {METHODS.map((m) => <div key={m.value} style={{ background: m.color, width: `${t?.total ? (w[m.value] / t.total) * 100 : 0}%` }} />)}
+                              {PAY_GROUPS.map((m) => <div key={m.value} style={{ background: m.color, width: `${t?.total ? (m.sum(w) / t.total) * 100 : 0}%` }} />)}
                             </div>
                             <div className="mt-1 flex justify-between text-xs text-ink-3 num">
                               <span>{w.count} ta operatsiya</span>

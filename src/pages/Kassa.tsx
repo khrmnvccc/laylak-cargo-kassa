@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Banknote, CheckCircle2, Printer, CreditCard, Loader2, Mail, Navigation, Save, UserCheck, UserPlus } from 'lucide-react';
+import { Banknote, CheckCircle2, ChevronDown, Printer, CreditCard, Loader2, Mail, Navigation, Save, UserCheck, UserPlus } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useApi, useLive } from '../lib/live';
-import { METHODS, dateTime, groupDigits, methodLabel, money, timeOf, todayTashkent } from '../lib/format';
+import { CARD_METHODS, PAY_GROUPS, cardTotal, dateTime, isCardMethod, groupDigits, methodLabel, money, timeOf, todayTashkent } from '../lib/format';
 import type { Method, Payment, PaymentList, Summary } from '../lib/types';
 import { PaymentsTable } from '../components/PaymentsTable';
 import { printPaymentLabel } from '../lib/print';
-import { Alert, Button, Card, CardHeader, EmptyState, Field, Input, MethodBadge, Modal, PageHeader, SkeletonRows, Textarea, cx, useToast } from '../components/ui';
+import { Alert, Button, Card, CardBreakdown, CardHeader, EmptyState, Field, Input, MethodBadge, Modal, PageHeader, SkeletonRows, Textarea, cx, useToast } from '../components/ui';
 
 interface ClientInfo { client: { code: string; full_name: string | null }; stats: { total: number; count: number } }
 const METHOD_ICONS = { cash: Banknote, card: CreditCard, yandex: Navigation, pochta: Mail };
@@ -29,6 +29,7 @@ export default function Kassa() {
   const [clientName, setClientName] = useState('');
   const [amountText, setAmountText] = useState('');
   const [method, setMethod] = useState<Method>('cash');
+  const [cardOpen, setCardOpen] = useState(false);
   const [note, setNote] = useState('');
   const [customTime, setCustomTime] = useState(false);
   const [paidAtLocal, setPaidAtLocal] = useState(nowLocalInput);
@@ -177,13 +178,13 @@ export default function Kassa() {
             </Field>
 
             <Field label="Toʻlov turi" required error={errors.method}>
-              <div role="radiogroup" aria-label="Toʻlov turi" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                {METHODS.map((m) => {
-                  const Icon = METHOD_ICONS[m.value];
-                  const active = method === m.value;
+              <div role="radiogroup" aria-label="Toʻlov turi" className="grid grid-cols-2 gap-2">
+                {PAY_GROUPS.map((m) => {
+                  const Icon = m.value === 'cash' ? Banknote : CreditCard;
+                  const active = m.value === 'cash' ? method === 'cash' : isCardMethod(method);
                   return (
-                    <button key={m.value} type="button" role="radio" aria-checked={active} onClick={() => setMethod(m.value)}
-                      className={cx('flex h-12 items-center justify-center gap-2 rounded-lg border text-sm font-medium transition-colors',
+                    <button key={m.value} type="button" role="radio" aria-checked={active} onClick={() => !active && setMethod(m.value)}
+                      className={cx('flex h-12 items-center justify-center gap-2 rounded-lg border text-base font-medium transition-colors',
                         active ? 'border-transparent text-ink ring-2' : 'border-line bg-surface text-ink-2 hover:bg-surface-2')}
                       style={active ? { background: `color-mix(in srgb, ${m.color} 12%, var(--surface))`, ['--tw-ring-color' as string]: m.color } : undefined}>
                       <Icon className="size-4" style={{ color: m.color }} />{m.label}
@@ -191,6 +192,25 @@ export default function Kassa() {
                   );
                 })}
               </div>
+              {isCardMethod(method) && (
+                <div className="anim-rise mt-2 rounded-lg border border-line bg-surface-2 p-2">
+                  <div className="mb-1.5 px-1 text-xs text-ink-3">Karta orqali qanday keldi?</div>
+                  <div role="radiogroup" aria-label="Karta turi" className="grid grid-cols-3 gap-1.5">
+                    {CARD_METHODS.map((m) => {
+                      const Icon = METHOD_ICONS[m.value];
+                      const active = method === m.value;
+                      return (
+                        <button key={m.value} type="button" role="radio" aria-checked={active} onClick={() => setMethod(m.value)}
+                          className={cx('flex h-10 items-center justify-center gap-1.5 rounded-md border text-sm font-medium transition-colors',
+                            active ? 'border-transparent bg-surface text-ink ring-2' : 'border-transparent text-ink-2 hover:bg-surface')}
+                          style={active ? { ['--tw-ring-color' as string]: m.color } : undefined}>
+                          <Icon className="size-3.5" style={{ color: m.color }} />{m.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </Field>
 
             <Field label="Izoh" htmlFor="note" error={errors.note} hint="Ixtiyoriy">
@@ -236,8 +256,12 @@ export default function Kassa() {
                   <div className="text-2xl font-semibold tracking-tight text-ink num">{money(t?.total || 0)}</div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-sm">
-                  {METHODS.map((m) => <Mini key={m.value} label={m.label} value={money(t?.[m.value] || 0)} color={m.color} />)}
+                  <Mini label="Naqd" value={money(t?.cash || 0)} color="var(--cash)" />
+                  <button type="button" onClick={() => setCardOpen((o) => !o)} aria-expanded={cardOpen} className="text-left">
+                    <Mini label="Karta" value={money(cardTotal(t))} color="var(--card)" open={cardOpen} />
+                  </button>
                 </div>
+                {cardOpen && <CardBreakdown t={t} />}
                 <div className="text-xs text-ink-3">{t?.count || 0} ta operatsiya</div>
               </div>
             )}
@@ -280,10 +304,13 @@ export default function Kassa() {
   );
 }
 
-function Mini({ label, value, color }: { label: string; value: string; color?: string }) {
+function Mini({ label, value, color, open }: { label: string; value: string; color?: string; open?: boolean }) {
   return (
-    <div className="rounded-lg border border-line bg-surface-2 px-2.5 py-2">
-      <div className="flex items-center gap-1.5 text-xs text-ink-3">{color && <span className="size-1.5 rounded-full" style={{ background: color }} />}{label}</div>
+    <div className={cx('rounded-lg border bg-surface-2 px-2.5 py-2', open ? 'border-[var(--card)]' : 'border-line')}>
+      <div className="flex items-center gap-1.5 text-xs text-ink-3">
+        {color && <span className="size-1.5 rounded-full" style={{ background: color }} />}{label}
+        {open !== undefined && <ChevronDown className={cx('ml-auto size-3.5 transition-transform', open && 'rotate-180')} />}
+      </div>
       <div className="mt-0.5 truncate text-[13px] font-semibold text-ink num">{value}</div>
     </div>
   );

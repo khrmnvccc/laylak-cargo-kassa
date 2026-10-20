@@ -1,5 +1,5 @@
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { METHODS, compactMoney, formatDate, formatDateShort, monthLabel, money, weekday } from '../lib/format';
+import { CARD_METHODS, PAY_GROUPS, cardTotal, compactMoney, formatDate, formatDateShort, monthLabel, money, weekday } from '../lib/format';
 
 export interface ChartRow { key: string; cash: number; card: number; yandex: number; pochta: number; total: number; count?: number }
 
@@ -11,7 +11,11 @@ function ChartTooltip({ active, payload, labelMode }: any) {
     <div className="min-w-[200px] rounded-lg border border-line bg-surface px-3 py-2.5 text-[13px] shadow-pop">
       <div className="mb-2 font-medium text-ink">{title}</div>
       <div className="space-y-1">
-        {METHODS.map((m) => <Row key={m.value} color={m.color} label={m.label} value={row[m.value] || 0} />)}
+        <Row color="var(--cash)" label="Naqd" value={row.cash || 0} />
+        <Row color="var(--card)" label="Karta" value={cardTotal(row)} />
+        {(row.yandex > 0 || row.pochta > 0) && CARD_METHODS.map((m) => (
+          <div key={m.value} className="flex justify-between gap-6 pl-4 text-xs text-ink-3"><span>{m.value === 'card' ? 'shundan karta' : m.label}</span><span className="num">{money(row[m.value] || 0)}</span></div>
+        ))}
       </div>
       <div className="mt-2 flex justify-between border-t border-line pt-2 font-medium text-ink num">
         <span>Jami</span><span>{money(row.total)}</span>
@@ -33,7 +37,7 @@ function Row({ color, label, value }: { color: string; label: string; value: num
 export function Legend() {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-2">
-      {METHODS.map((m) => (
+      {PAY_GROUPS.map((m) => (
         <span key={m.value} className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm" style={{ background: m.color }} />{m.label}</span>
       ))}
     </div>
@@ -50,8 +54,8 @@ export function RevenueChart({ data, labelMode = 'day', height = 260 }: { data: 
           <XAxis dataKey="key" tickFormatter={tick} tickLine={false} axisLine={false} tick={{ fill: 'var(--ink-3)', fontSize: 11 }} minTickGap={12} dy={6} />
           <YAxis tickFormatter={compactMoney} tickLine={false} axisLine={false} tick={{ fill: 'var(--ink-3)', fontSize: 11 }} width={58} />
           <Tooltip content={<ChartTooltip labelMode={labelMode} />} cursor={{ fill: 'var(--surface-2)' }} />
-          {METHODS.map((m, i) => (
-            <Bar key={m.value} dataKey={m.value} stackId="a" fill={m.color} maxBarSize={36} radius={i === METHODS.length - 1 ? [4, 4, 0, 0] : undefined}
+          {PAY_GROUPS.map((m, i) => (
+            <Bar key={m.value} dataKey={(r: ChartRow) => m.sum(r)} name={m.label} stackId="a" fill={m.color} maxBarSize={36} radius={i === PAY_GROUPS.length - 1 ? [4, 4, 0, 0] : undefined}
               stroke="var(--surface)" strokeWidth={1} isAnimationActive animationDuration={500} />
           ))}
         </BarChart>
