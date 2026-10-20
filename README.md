@@ -4,11 +4,12 @@ Laylak Cargo uchun kunlik kassa, toʻlovlar va hisobotlar tizimi. Barcha xodimla
 
 ## Imkoniyatlar
 
-- **Dashboard**: tanlangan davr tushumi (naqd + karta = jami), operatsiyalar soni, oldingi davr bilan solishtirish, kunlar boʻyicha grafik, ishchilar tushumi, oxirgi operatsiyalar.
-- **Kassa**: mijoz ID, ism, summa, naqd/karta, izoh, sana va vaqt, kiritgan ishchi. Saqlashdan oldin tekshiruv va tasdiqlash oynasi.
+- **Dashboard**: tanlangan davr tushumi (naqd + karta + Yandex + Pochta = jami), operatsiyalar soni, oldingi davr bilan solishtirish, kunlar boʻyicha grafik, ishchilar tushumi, oxirgi operatsiyalar.
+- **Kassa**: mijoz ID, ism, summa, toʻlov turi (naqd, karta, Yandex, Pochta), izoh, sana va vaqt, kiritgan ishchi. Saqlashdan oldin tekshiruv va tasdiqlash oynasi.
 - **Operatsiyalar**: qidiruv, sana/tur/ishchi/holat filtrlari, sahifalash, CSV (Excel) eksport, admin uchun bekor qilish.
 - **Kunlik**, **haftalik va oylik hisobotlar**: ishchilar kesimi, grafik, chop etish, CSV.
 - **Ishchilar** (faqat admin): xodim qoʻshish, rol, parolni tiklash, oʻchirish, koʻrsatkichlar.
+- **Kassa balansi** (faqat admin): naqd, karta, Yandex va Pochta hisoblarida hozir qancha pul borligi, kunlik harakat (kun boshida, tushum, rasxod, tuzatish, kun oxirida), kunlik rasxodlar va oxirgi 14 kun. Qoldiq = tushumlar − rasxodlar ± tuzatishlar. Boshlangʻich qoldiqni “Qoldiqni tuzatish” orqali kiriting.
 - **Mijozlar**: ID boʻyicha qidiruv va toʻlovlar tarixi.
 - **Sozlamalar**: profil, parol, yorugʻ/qorongʻi rejim, tizim holati va faoliyat jurnali (admin).
 
@@ -30,14 +31,14 @@ Huquqlar serverda tekshiriladi. Toʻlovlarni oʻchirib yoki summasini oʻzgartir
 - `server/` — API marshrutlari, sessiyalar (httpOnly cookie, scrypt parollar, login urinishlarini cheklash), PostgreSQL sxema va migratsiya.
 - `server.ts` — lokal ishga tushirish uchun Express server.
 
-Sxema birinchi soʻrovda avtomatik yaratiladi (`server/db.ts`). Jadvallar: `app_users`, `app_sessions`, `clients`, `payments`, `audit_log`, `legacy_import`, `app_meta`.
+Sxema birinchi soʻrovda avtomatik yaratiladi (`server/db.ts`). Jadvallar: `app_users`, `app_sessions`, `clients`, `payments`, `audit_log`, `expenses`, `balance_adjustments`, `legacy_import`, `app_meta`.
 
 ### Eski maʼlumotlar
 
 Oldingi versiya har bir akkaunt maʼlumotini `kassa_app_data` jadvalida alohida saqlardi, shuning uchun xodimlar bir-birining yozuvlarini koʻrmasdi. Yangi versiya birinchi ishga tushganda:
 
 1. `kassa_app_data` dagi har bir yozuvni oʻzgarishsiz `legacy_import` jadvaliga nusxalaydi;
-2. eski otchyotlardagi naqd va karta summalarini umumiy `payments` jadvaliga koʻchiradi (Yandex, Pochta va reyslar soni izohda saqlanadi, demo va oʻchirilgan yozuvlar koʻchirilmaydi);
+2. eski otchyotlardagi naqd, karta, Yandex va Pochta summalarini umumiy `payments` jadvaliga koʻchiradi (reyslar soni izohda saqlanadi, demo va oʻchirilgan yozuvlar koʻchirilmaydi; Yandex va Pochta 2-migratsiyada qoʻshiladi);
 3. `kassa_app_data` jadvalini **oʻzgartirmaydi va oʻchirmaydi**.
 
 ## Vercel’ga joylash

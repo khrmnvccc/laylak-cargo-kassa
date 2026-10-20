@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ButtonHTMLAttributes, type ComponentProps, type ReactNode, type SelectHTMLAttributes } from 'react';
 import { AlertCircle, ArrowDownRight, ArrowUpRight, CheckCircle2, Inbox, Loader2, Minus, RefreshCw, X } from 'lucide-react';
-import { money, percentChange } from '../lib/format';
+import { methodColor, methodLabel, money, percentChange } from '../lib/format';
 
 export const cx = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
 
@@ -180,11 +180,13 @@ export function Segmented<T extends string>({ value, onChange, options, size = '
 
 // ---------- Feedback ----------
 
-export function Badge({ children, tone = 'neutral', className }: { children: ReactNode; tone?: 'neutral' | 'cash' | 'card' | 'danger' | 'success' | 'warn'; className?: string }) {
+export function Badge({ children, tone = 'neutral', className }: { children: ReactNode; tone?: 'neutral' | 'cash' | 'card' | 'yandex' | 'pochta' | 'danger' | 'success' | 'warn'; className?: string }) {
   const tones = {
     neutral: 'bg-surface-2 text-ink-2 border-line',
     cash: 'bg-[color-mix(in_srgb,var(--cash)_10%,transparent)] text-ink border-[color-mix(in_srgb,var(--cash)_30%,transparent)]',
     card: 'bg-[color-mix(in_srgb,var(--card)_10%,transparent)] text-ink border-[color-mix(in_srgb,var(--card)_30%,transparent)]',
+    yandex: 'bg-[color-mix(in_srgb,var(--yandex)_12%,transparent)] text-ink border-[color-mix(in_srgb,var(--yandex)_35%,transparent)]',
+    pochta: 'bg-[color-mix(in_srgb,var(--pochta)_10%,transparent)] text-ink border-[color-mix(in_srgb,var(--pochta)_30%,transparent)]',
     danger: 'bg-danger-soft text-danger border-[color-mix(in_srgb,var(--danger)_25%,transparent)]',
     success: 'bg-success-soft text-success border-[color-mix(in_srgb,var(--success)_25%,transparent)]',
     warn: 'bg-warn-soft text-warn border-[color-mix(in_srgb,var(--warn)_25%,transparent)]',
@@ -194,9 +196,9 @@ export function Badge({ children, tone = 'neutral', className }: { children: Rea
 
 export function MethodBadge({ method }: { method: string }) {
   return (
-    <Badge tone={method === 'cash' ? 'cash' : 'card'}>
-      <span className="size-1.5 rounded-full" style={{ background: method === 'cash' ? 'var(--cash)' : 'var(--card)' }} />
-      {method === 'cash' ? 'Naqd' : 'Karta'}
+    <Badge tone={(['cash', 'card', 'yandex', 'pochta'].includes(method) ? method : 'neutral') as 'cash'}>
+      <span className="size-1.5 rounded-full" style={{ background: methodColor(method) }} />
+      {methodLabel(method)}
     </Badge>
   );
 }

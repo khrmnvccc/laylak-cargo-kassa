@@ -17,6 +17,7 @@ const pages = {
   daily: lazy(() => import('./pages/DailyReport')),
   periods: lazy(() => import('./pages/PeriodReport')),
   workers: lazy(() => import('./pages/Workers')),
+  balance: lazy(() => import('./pages/Balance')),
   clients: lazy(() => import('./pages/Clients')),
   settings: lazy(() => import('./pages/Settings')),
 };
@@ -86,7 +87,7 @@ export default function App() {
   }
 
   const user = boot.user;
-  const page = route.page === 'workers' && user.role !== 'admin' ? 'dashboard' : route.page;
+  const page = (route.page === 'workers' || route.page === 'balance') && user.role !== 'admin' ? 'dashboard' : route.page;
   const PageComponent = pages[page];
 
   return (
