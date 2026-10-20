@@ -19,9 +19,9 @@ export default function Attendance() {
     <>
       <PageHeader title="Davomat" subtitle={seesAll ? 'Kim qachon kelib-ketgani va qancha ishlagani' : 'Ishga kelish va ketishingiz'} />
       <div className="space-y-4">
-        <div className={cx('grid gap-4', user.role === 'admin' && 'lg:grid-cols-2')}>
+        <div className={cx('grid gap-4', can(user, 'staff.manage') && 'lg:grid-cols-2')}>
           <TodayCard />
-          {user.role === 'admin' && <OfficeCard />}
+          {can(user, 'staff.manage') && <OfficeCard />}
         </div>
         {seesAll ? <TeamReport /> : <MyHistory />}
       </div>
@@ -284,7 +284,7 @@ function TeamReport() {
                   </button>
                   {expanded && (
                     <div className="border-t border-line bg-surface-2/40">
-                      {p.days.length ? <DaysTable days={p.days} onEdit={user.role === 'admin' ? setEditing : undefined} /> : <div className="px-4 py-3 text-sm text-ink-3">Bu davrda belgilanmagan</div>}
+                      {p.days.length ? <DaysTable days={p.days} onEdit={can(user, 'staff.manage') ? setEditing : undefined} /> : <div className="px-4 py-3 text-sm text-ink-3">Bu davrda belgilanmagan</div>}
                     </div>
                   )}
                 </li>
@@ -309,7 +309,7 @@ function TeamReport() {
                   const expanded = openId === p.id;
                   return (
                     <PersonRows key={p.id} expanded={expanded} onToggle={() => setOpenId(expanded ? null : p.id)}
-                      person={p} onEdit={user.role === 'admin' ? setEditing : undefined} />
+                      person={p} onEdit={can(user, 'staff.manage') ? setEditing : undefined} />
                   );
                 })}
               </tbody>

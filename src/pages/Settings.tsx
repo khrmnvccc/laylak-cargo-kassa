@@ -7,7 +7,7 @@ import { dateTime, groupDigits, money } from '../lib/format';
 import { useTheme, type ThemePref } from '../lib/theme';
 import type { User } from '../lib/types';
 import { Alert, Badge, Button, Card, CardHeader, ErrorState, Field, Input, PageHeader, Segmented, SkeletonRows, useToast } from '../components/ui';
-import { roleLabel } from '../lib/perms';
+import { isBoss, roleLabel } from '../lib/perms';
 
 const ACTIONS: Record<string, string> = {
   setup: 'Tizim sozlandi', login: 'Tizimga kirdi', payment_create: 'Toʻlov kiritdi', payment_void: 'Toʻlovni bekor qildi',
@@ -24,9 +24,9 @@ export default function Settings() {
         <Profile />
         <Password />
         <Appearance />
-        {user.role === 'admin' && <SystemInfo />}
+        {isBoss(user) && <SystemInfo />}
       </div>
-      {user.role === 'admin' && <AuditLog />}
+      {isBoss(user) && <AuditLog />}
     </>
   );
 }
@@ -62,7 +62,7 @@ function Profile() {
           <Field label="Login" htmlFor="pf-login"><Input id="pf-login" value={user.username} disabled /></Field>
         </div>
         <div className="flex items-center justify-between gap-3">
-          <Badge tone={user.role === 'admin' ? 'warn' : 'neutral'}>{roleLabel(user)}</Badge>
+          <Badge tone={isBoss(user) ? 'warn' : 'neutral'}>{roleLabel(user)}</Badge>
           <Button type="submit" variant="primary" loading={busy} disabled={fullName.trim() === user.full_name}>Saqlash</Button>
         </div>
         {error && <Alert>{error}</Alert>}

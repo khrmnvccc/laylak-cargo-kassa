@@ -9,7 +9,7 @@ const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1 };
 export const SESSION_COOKIE = 'lk_session';
 const SESSION_DAYS = 30;
 
-export type Role = 'admin' | 'worker';
+export type Role = 'owner' | 'admin' | 'worker';
 export interface AuthUser {
   id: string;
   username: string;

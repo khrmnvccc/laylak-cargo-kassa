@@ -2,6 +2,7 @@ import type pg from 'pg';
 import { HttpError, query, transaction, TZ } from './db.js';
 import {
   AuthUser,
+  Role,
   SESSION_COOKIE,
   assertNotLocked,
   clearLoginFailures,
@@ -18,7 +19,7 @@ import {
   validatePassword,
   verifyPassword,
 } from './auth.js';
-import { PERMISSIONS, isPerm, permsOf, type Perm } from './perms.js';
+import { PERMISSIONS, WORKER_DEFAULT, isPerm, permsOf, type Perm } from './perms.js';
 
 export interface ApiRequest {
   method: string;
@@ -73,7 +74,7 @@ export async function handleApi(req: ApiRequest): Promise<ApiResponse> {
     const secure = (req.headers['x-forwarded-proto'] || '').includes('https');
     const user = r.access === 'public' && !token ? null : await getSessionUser(token);
     if (r.access !== 'public' && !user) return { status: 401, body: { error: 'Tizimga qayta kiring' } };
-    if (r.access === 'admin' && user?.role !== 'admin') return { status: 403, body: { error: 'Bu amal faqat admin uchun' } };
+    if (r.access === 'admin' && user?.role !== 'owner' && user?.role !== 'admin') return { status: 403, body: { error: 'Bu amal faqat admin uchun' } };
     if (isPerm(r.access) && !user?.permissions.includes(r.access)) return { status: 403, body: { error: 'Sizda bu amal uchun ruxsat yoʻq' } };
     const result = await r.handler({ ...req, params, token, secure, user });
     if (result && typeof result === 'object' && 'status' in result && 'body' in result) return result as ApiResponse;
@@ -189,12 +190,12 @@ route('POST', '/setup', 'public', async (ctx) => {
     const count = await db.query(`SELECT COUNT(*)::int AS n FROM app_users`);
     if (count.rows[0].n > 0) throw new HttpError(409, 'Tizim allaqachon sozlangan');
     const inserted = await db.query(
-      `INSERT INTO app_users (username, full_name, role, password_hash) VALUES ($1, $2, 'admin', $3)
+      `INSERT INTO app_users (username, full_name, role, password_hash) VALUES ($1, $2, 'owner', $3)
        RETURNING id, username, full_name, role`,
       [username, fullName, passwordHash],
     );
     await audit(db, inserted.rows[0], 'setup', 'user', inserted.rows[0].id);
-    return { ...inserted.rows[0], permissions: permsOf('admin', null) } as AuthUser;
+    return { ...inserted.rows[0], permissions: permsOf('owner', null) } as AuthUser;
   });
   const session = await createSession(user.id, ctx.headers['user-agent']);
   return { status: 200, body: { user }, cookies: [sessionCookie(session.token, session.maxAge, ctx.secure)] };
@@ -692,12 +693,24 @@ function parsePermissions(value: unknown): Perm[] {
   return PERMISSIONS.filter((p) => value.includes(p));
 }
 
-route('POST', '/staff', 'admin', async (ctx) => {
+const parseRole = (value: unknown): Role => (value === 'owner' || value === 'admin' ? value : 'worker');
+
+// Only the owner manages admins and owners. Anyone else with staff.manage looks after workers
+// and can hand out only the rights they have themselves.
+function checkStaffChange(actor: AuthUser, roles: string[], permissions: Perm[] | null) {
+  if (actor.role === 'owner') return;
+  if (roles.some((r) => r !== 'worker')) throw new HttpError(403, 'Admin va Egani faqat Ega boshqaradi');
+  const extra = (permissions ?? WORKER_DEFAULT).filter((p) => !actor.permissions.includes(p));
+  if (extra.length) throw new HttpError(403, 'Oʻzingizda yoʻq ruxsatni boshqaga bera olmaysiz');
+}
+
+route('POST', '/staff', 'staff.manage', async (ctx) => {
   const username = normalizeUsername(ctx.body?.username);
   const fullName = str(ctx.body?.fullName, 80);
   if (fullName.length < 2) throw new HttpError(400, 'Xodim ismini kiriting');
-  const role = ctx.body?.role === 'admin' ? 'admin' : 'worker';
-  const permissions = role === 'worker' && ctx.body?.permissions !== undefined ? parsePermissions(ctx.body.permissions) : null;
+  const role = parseRole(ctx.body?.role);
+  const permissions = role !== 'owner' && ctx.body?.permissions !== undefined ? parsePermissions(ctx.body.permissions) : null;
+  checkStaffChange(ctx.user!, [role], role === 'worker' ? permissions : null);
   const passwordHash = await hashPassword(validatePassword(ctx.body?.password));
   const exists = await query(`SELECT 1 FROM app_users WHERE username = $1`, [username]);
   if (exists.length) throw new HttpError(409, 'Bu login band. Boshqa login tanlang');
@@ -710,13 +723,16 @@ route('POST', '/staff', 'admin', async (ctx) => {
   return { status: 201, body: { staff: rows[0] } };
 });
 
-route('PATCH', '/staff/:id', 'admin', async (ctx) => {
+route('PATCH', '/staff/:id', 'staff.manage', async (ctx) => {
   const id = ctx.params.id;
   if (!/^[0-9a-f-]{36}$/i.test(id)) throw new HttpError(404, 'Xodim topilmadi');
   const b = ctx.body || {};
   return transaction(async (db) => {
     const current = await db.query(`SELECT id, role, is_active FROM app_users WHERE id = $1 FOR UPDATE`, [id]);
     if (!current.rowCount) throw new HttpError(404, 'Xodim topilmadi');
+    const role = b.role !== undefined ? parseRole(b.role) : current.rows[0].role;
+    const permissions = b.permissions !== undefined ? parsePermissions(b.permissions) : null;
+    checkStaffChange(ctx.user!, [current.rows[0].role, role], b.permissions !== undefined ? permissions : []);
     const sets: string[] = [];
     const params: unknown[] = [id];
     const set = (column: string, value: unknown) => { params.push(value); sets.push(`${column} = $${params.length}`); };
@@ -725,18 +741,22 @@ route('PATCH', '/staff/:id', 'admin', async (ctx) => {
       if (fullName.length < 2) throw new HttpError(400, 'Ism kamida 2 harf bo‘lsin');
       set('full_name', fullName);
     }
-    const demoting = b.role !== undefined && b.role !== current.rows[0].role;
+    const demoting = role !== current.rows[0].role;
     const deactivating = b.isActive === false && current.rows[0].is_active;
     if ((demoting || deactivating) && id === ctx.user!.id) {
-      throw new HttpError(400, 'O‘z akkauntingizning admin huquqini yoki faolligini o‘zgartira olmaysiz');
+      throw new HttpError(400, 'O‘z akkauntingizning rolini yoki faolligini o‘zgartira olmaysiz');
     }
-    if ((demoting || deactivating) && current.rows[0].role === 'admin') {
-      const admins = await db.query(`SELECT COUNT(*)::int AS n FROM app_users WHERE role = 'admin' AND is_active`);
-      if (admins.rows[0].n <= 1) throw new HttpError(400, 'Tizimda kamida bitta faol admin qolishi kerak');
+    if ((demoting || deactivating) && current.rows[0].role === 'owner') {
+      const owners = await db.query(`SELECT COUNT(*)::int AS n FROM app_users WHERE role = 'owner' AND is_active`);
+      if (owners.rows[0].n <= 1) throw new HttpError(400, 'Tizimda kamida bitta faol Ega qolishi kerak');
     }
-    if (b.role !== undefined) set('role', b.role === 'admin' ? 'admin' : 'worker');
+    if (b.role !== undefined) set('role', role);
     if (b.isActive !== undefined) set('is_active', Boolean(b.isActive));
-    if (b.permissions !== undefined) set('permissions', parsePermissions(b.permissions));
+    // A new role starts from that role's defaults unless rights were sent with it; the owner's are never stored.
+    if (role === 'owner') {
+      if (demoting) set('permissions', null);
+    } else if (b.permissions !== undefined) set('permissions', permissions);
+    else if (demoting) set('permissions', null);
     if (b.password !== undefined) set('password_hash', await hashPassword(validatePassword(b.password)));
     if (!sets.length) throw new HttpError(400, 'O‘zgartirish yo‘q');
     sets.push('updated_at = NOW()');
@@ -1109,7 +1129,7 @@ route('GET', '/attendance', 'staff.view', async (ctx) => {
 });
 
 // An admin fixes a forgotten "Ketdim" or a wrong time.
-route('PATCH', '/attendance/:id', 'admin', async (ctx) => {
+route('PATCH', '/attendance/:id', 'staff.manage', async (ctx) => {
   if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Yozuv topilmadi');
   const inAt = Date.parse(ctx.body?.checkInAt);
   const outAt = ctx.body?.checkOutAt ? Date.parse(ctx.body.checkOutAt) : null;
@@ -1129,9 +1149,9 @@ route('PATCH', '/attendance/:id', 'admin', async (ctx) => {
   });
 });
 
-route('GET', '/office', 'admin', async () => ({ office: await getOffice() }));
+route('GET', '/office', 'staff.manage', async () => ({ office: await getOffice() }));
 
-route('PUT', '/office', 'admin', async (ctx) => {
+route('PUT', '/office', 'staff.manage', async (ctx) => {
   const b = ctx.body || {};
   if (b.office === null) {
     await query(`DELETE FROM app_meta WHERE key = 'office'`);

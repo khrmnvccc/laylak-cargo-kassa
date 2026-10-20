@@ -73,7 +73,7 @@ test('setup, roles, shared data, and report math', async () => {
   assert.equal((await admin.call('POST', '/setup', { setupKey: 'wrong', username: 'admin', fullName: 'Admin', password: 'password123' })).status, 403);
   const setup = await admin.call('POST', '/setup', { setupKey: 'test-key', username: 'Admin', fullName: 'Bosh Admin', password: 'password123' });
   assert.equal(setup.status, 200, JSON.stringify(setup.body));
-  assert.equal(setup.body.user.role, 'admin');
+  assert.equal(setup.body.user.role, 'owner');
   assert.equal((await anon.call('POST', '/setup', { setupKey: 'test-key', username: 'xx2', fullName: 'X', password: 'password123' })).status, 409);
 
   for (const [username, fullName] of [['ali', 'Ali Valiyev'], ['vali', 'Vali Aliyev']]) {
@@ -422,4 +422,41 @@ test('attendance: check in and out near the office only, totals for the admin', 
 
 test.after(async () => {
   await getPool().end();
+});
+
+test('roles: the owner manages admins, an admin is limited by the owner and manages only workers', async () => {
+  const owner = new Client();
+  assert.equal((await owner.call('POST', '/auth/login', { username: 'admin', password: 'password123' })).status, 200);
+  const made = await owner.call('POST', '/staff', { username: 'bobur', fullName: 'Bobur Aliyev', password: 'worker123', role: 'admin' });
+  assert.equal(made.status, 201, JSON.stringify(made.body));
+  const adminId = made.body.staff.id;
+  const adm = new Client();
+  const login = await adm.call('POST', '/auth/login', { username: 'bobur', password: 'worker123' });
+  assert.equal(login.body.user.role, 'admin');
+  assert.ok(login.body.user.permissions.includes('staff.manage'), 'a new admin starts with every right');
+
+  // The owner takes the balance away from the admin.
+  const all = login.body.user.permissions.filter((p: string) => p !== 'balance.view');
+  assert.equal((await owner.call('PATCH', `/staff/${adminId}`, { permissions: all })).status, 200);
+  assert.equal((await adm.call('GET', '/balance')).status, 403);
+
+  // The admin manages workers, but cannot give rights they lack, touch admins or the owner, or make admins.
+  const worker = await adm.call('POST', '/staff', { username: 'kamol', fullName: 'Kamol', password: 'worker123', role: 'worker' });
+  assert.equal(worker.status, 201);
+  assert.equal((await adm.call('PATCH', `/staff/${worker.body.staff.id}`, { permissions: ['payments.void'] })).status, 200);
+  assert.equal((await adm.call('PATCH', `/staff/${worker.body.staff.id}`, { permissions: ['balance.view'] })).status, 403);
+  assert.equal((await adm.call('POST', '/staff', { username: 'boss2', fullName: 'Boss', password: 'worker123', role: 'admin' })).status, 403);
+  assert.equal((await adm.call('PATCH', `/staff/${worker.body.staff.id}`, { role: 'owner' })).status, 403);
+  const ownerId = (await owner.call('GET', '/auth/me')).body.user.id;
+  assert.equal((await adm.call('PATCH', `/staff/${ownerId}`, { isActive: false })).status, 403);
+  assert.equal((await adm.call('PUT', '/office', { office: null })).status, 200, 'staff.manage sets the office');
+
+  // The last owner stays an owner.
+  assert.equal((await owner.call('PATCH', `/staff/${ownerId}`, { role: 'admin' })).status, 400);
+  // Promoting to owner gives everything back; demoting again starts from full admin rights.
+  assert.equal((await owner.call('PATCH', `/staff/${adminId}`, { role: 'owner' })).status, 200);
+  assert.equal((await adm.call('GET', '/balance')).status, 200);
+  const back = await owner.call('PATCH', `/staff/${adminId}`, { role: 'admin' });
+  assert.equal(back.status, 200);
+  assert.ok(back.body.staff.permissions.includes('balance.view'));
 });

@@ -1,6 +1,6 @@
 import type { Perm } from './perms';
 
-export type Role = 'admin' | 'worker';
+export type Role = 'owner' | 'admin' | 'worker';
 export type Method = 'cash' | 'card' | 'yandex' | 'pochta';
 
 export interface User {

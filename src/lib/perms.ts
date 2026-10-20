@@ -1,10 +1,10 @@
 import type { Page } from './router';
 import type { User } from './types';
 
-// Mirrors server/perms.ts. Admins always have every right; for workers an admin switches each one on or off.
+// Mirrors server/perms.ts. The owner (Ega) always has every right; for admins and workers each one is switched on or off.
 export type Perm =
   | 'payments.create' | 'payments.backdate' | 'payments.void' | 'payments.import'
-  | 'reports.view' | 'clients.edit' | 'balance.view' | 'staff.view';
+  | 'reports.view' | 'clients.edit' | 'balance.view' | 'staff.view' | 'staff.manage';
 
 export const PERM_INFO: Array<{ perm: Perm; label: string; hint: string }> = [
   { perm: 'payments.create', label: 'Toʻlov kiritish', hint: 'Mijoz toʻlovini kassaga yozadi' },
@@ -15,9 +15,13 @@ export const PERM_INFO: Array<{ perm: Perm; label: string; hint: string }> = [
   { perm: 'clients.edit', label: 'Mijozlarni tahrirlash', hint: 'Mijoz ismi va telefonini oʻzgartiradi, roʻyxat yuklaydi' },
   { perm: 'balance.view', label: 'Kassa balansi va rasxodlar', hint: 'Balansni koʻradi, rasxod va tuzatish kiritadi' },
   { perm: 'staff.view', label: 'Ishchilar va davomatni koʻrish', hint: 'Barcha xodimlar natijasi, kim qachon kelib-ketgani' },
+  { perm: 'staff.manage', label: 'Xodimlarni boshqarish', hint: 'Ishchi va kassir qoʻshadi, ruxsat beradi, davomatni tuzatadi, ishxona joyini belgilaydi' },
 ];
 
-export const can = (user: User, perm: Perm) => user.role === 'admin' || user.permissions?.includes(perm);
+export const can = (user: User, perm: Perm) => user.role === 'owner' || !!user.permissions?.includes(perm);
+
+/** Owner and admins: audit log and system info in Settings. */
+export const isBoss = (user: { role: string }) => user.role === 'owner' || user.role === 'admin';
 
 /** Which right each page needs; pages not listed are open to everyone. */
 const PAGE_PERM: Partial<Record<Page, Perm>> = {
@@ -40,6 +44,6 @@ export const PRESETS: Record<'ishchi' | 'kassir', Perm[]> = {
   kassir: ['payments.create', 'reports.view'],
 };
 
-/** Admin; a worker who enters payments is a Kassir, anyone else an Ishchi. */
+/** Ega, Admin; a worker who enters payments is a Kassir, anyone else an Ishchi. */
 export const roleLabel = (u: { role: string; permissions?: Perm[] }) =>
-  u.role === 'admin' ? 'Admin' : u.permissions?.includes('payments.create') ? 'Kassir' : 'Ishchi';
+  u.role === 'owner' ? 'Ega' : u.role === 'admin' ? 'Admin' : u.permissions?.includes('payments.create') ? 'Kassir' : 'Ishchi';
