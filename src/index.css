@@ -3,7 +3,11 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme inline {
-  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif;
+  --radius-md: 0.625rem;
+  --radius-lg: 0.875rem;
+  --radius-xl: 1.25rem;
+  --radius-2xl: 1.625rem;
   --color-bg: var(--bg);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
@@ -31,66 +35,81 @@
 
 :root {
   color-scheme: light;
-  --bg: #f5f6f8;
-  --surface: #ffffff;
-  --surface-2: #f2f4f7;
-  --surface-3: #e9ecf1;
-  --line: #e4e7ec;
-  --line-strong: #d0d5dd;
-  --ink: #101828;
-  --ink-2: #475467;
-  --ink-3: #8a94a6;
-  --primary: #111827;
+  /* iOS-like: system greys, translucent "material" surfaces over a soft tinted backdrop. */
+  --bg: #f2f2f7;
+  --backdrop:
+    radial-gradient(60rem 40rem at 0% 0%, rgb(0 122 255 / 0.10), transparent 60%),
+    radial-gradient(50rem 36rem at 100% 10%, rgb(175 82 222 / 0.08), transparent 60%),
+    radial-gradient(56rem 40rem at 50% 110%, rgb(52 199 89 / 0.08), transparent 60%),
+    #f2f2f7;
+  --surface: rgb(255 255 255 / 0.68);
+  --surface-2: rgb(118 118 128 / 0.08);
+  --surface-3: rgb(118 118 128 / 0.14);
+  --line: rgb(60 60 67 / 0.10);
+  --line-strong: rgb(60 60 67 / 0.20);
+  --ink: #1c1c1e;
+  --ink-2: rgb(60 60 67 / 0.80);
+  --ink-3: rgb(60 60 67 / 0.55);
+  --primary: #007aff;
   --primary-fg: #ffffff;
-  --cash: #1baf7a;
-  --card: #2a78d6;
-  --yandex: #eda100;
-  --pochta: #6250d6;
-  --up: #067647;
-  --down: #b42318;
-  --danger: #b42318;
-  --danger-soft: #fef3f2;
-  --success: #067647;
-  --success-soft: #ecfdf3;
-  --warn: #b54708;
-  --warn-soft: #fffaeb;
-  --shadow: 0 1px 2px rgb(16 24 40 / 0.04), 0 1px 3px rgb(16 24 40 / 0.06);
-  --shadow-lg: 0 12px 32px -8px rgb(16 24 40 / 0.18), 0 4px 8px -4px rgb(16 24 40 / 0.06);
+  --cash: #34c759;
+  --card: #007aff;
+  --yandex: #ff9f0a;
+  --pochta: #af52de;
+  --up: #248a3d;
+  --down: #d70015;
+  --danger: #ff3b30;
+  --danger-soft: rgb(255 59 48 / 0.10);
+  --success: #248a3d;
+  --success-soft: rgb(52 199 89 / 0.12);
+  --warn: #c93400;
+  --warn-soft: rgb(255 149 0 / 0.12);
+  --glass-edge: rgb(255 255 255 / 0.65);
+  --shadow: 0 0 0 0.5px rgb(0 0 0 / 0.04), 0 2px 6px rgb(0 0 0 / 0.04), 0 8px 24px -6px rgb(0 0 0 / 0.08);
+  --shadow-lg: 0 0 0 0.5px rgb(0 0 0 / 0.06), 0 24px 60px -12px rgb(0 0 0 / 0.25), 0 8px 20px -8px rgb(0 0 0 / 0.10);
 }
 
 .dark {
   color-scheme: dark;
-  --bg: #0b0d10;
-  --surface: #121418;
-  --surface-2: #181b20;
-  --surface-3: #21252c;
-  --line: #23272e;
-  --line-strong: #323741;
-  --ink: #eef0f3;
-  --ink-2: #a3abb8;
-  --ink-3: #6c7483;
-  --primary: #eef0f3;
-  --primary-fg: #0b0d10;
-  --cash: #199e70;
-  --card: #3987e5;
-  --yandex: #c98500;
-  --pochta: #9085e9;
-  --up: #47cd89;
-  --down: #f97066;
-  --danger: #f97066;
-  --danger-soft: #2a1513;
-  --success: #47cd89;
-  --success-soft: #0f2419;
-  --warn: #fdb022;
-  --warn-soft: #2a2010;
-  --shadow: 0 1px 2px rgb(0 0 0 / 0.3);
-  --shadow-lg: 0 16px 40px -8px rgb(0 0 0 / 0.6);
+  --bg: #000000;
+  --backdrop:
+    radial-gradient(60rem 40rem at 0% 0%, rgb(10 132 255 / 0.18), transparent 60%),
+    radial-gradient(50rem 36rem at 100% 10%, rgb(191 90 242 / 0.14), transparent 60%),
+    radial-gradient(56rem 40rem at 50% 110%, rgb(48 209 88 / 0.10), transparent 60%),
+    #000000;
+  --surface: rgb(44 44 46 / 0.62);
+  --surface-2: rgb(118 118 128 / 0.18);
+  --surface-3: rgb(118 118 128 / 0.26);
+  --line: rgb(84 84 88 / 0.40);
+  --line-strong: rgb(84 84 88 / 0.65);
+  --ink: #f5f5f7;
+  --ink-2: rgb(235 235 245 / 0.72);
+  --ink-3: rgb(235 235 245 / 0.45);
+  --primary: #0a84ff;
+  --primary-fg: #ffffff;
+  --cash: #30d158;
+  --card: #0a84ff;
+  --yandex: #ff9f0a;
+  --pochta: #bf5af2;
+  --up: #30d158;
+  --down: #ff453a;
+  --danger: #ff453a;
+  --danger-soft: rgb(255 69 58 / 0.16);
+  --success: #30d158;
+  --success-soft: rgb(48 209 88 / 0.14);
+  --warn: #ffd60a;
+  --warn-soft: rgb(255 214 10 / 0.12);
+  --glass-edge: rgb(255 255 255 / 0.08);
+  --shadow: 0 0 0 0.5px rgb(255 255 255 / 0.04), 0 8px 24px -8px rgb(0 0 0 / 0.6);
+  --shadow-lg: 0 0 0 0.5px rgb(255 255 255 / 0.06), 0 24px 60px -12px rgb(0 0 0 / 0.8);
 }
 
 @layer base {
   html { -webkit-text-size-adjust: 100%; }
   body {
-    background: var(--bg);
+    background: var(--backdrop);
+    background-attachment: fixed;
+    letter-spacing: -0.01em;
     color: var(--ink);
     font-family: var(--font-sans);
     font-feature-settings: 'cv11', 'ss01';
@@ -104,6 +123,15 @@
 
 .shadow-soft { box-shadow: var(--shadow); }
 .shadow-pop { box-shadow: var(--shadow-lg); }
+/* Frosted "material": anything sitting on a translucent surface blurs what is behind it. */
+.glass, .shadow-soft.bg-surface, .shadow-pop.bg-surface, .shadow-pop.bg-bg {
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+}
+.glass, .shadow-soft.bg-surface, .shadow-pop.bg-surface { box-shadow: inset 0 0.5px 0 var(--glass-edge), var(--shadow); }
+.shadow-pop.bg-surface { box-shadow: inset 0 0.5px 0 var(--glass-edge), var(--shadow-lg); }
+button, a { -webkit-tap-highlight-color: transparent; }
+button:not(:disabled):active { transform: scale(0.98); transition: transform 80ms ease-out; }
 
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes rise-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
@@ -128,6 +156,7 @@
 @media print {
   .no-print { display: none !important; }
   body { background: #fff; }
+  .glass, .shadow-soft.bg-surface, .shadow-pop.bg-surface { backdrop-filter: none !important; background: #fff !important; }
   .print-plain { box-shadow: none !important; border-color: #ddd !important; }
   main { padding: 0 !important; }
 }

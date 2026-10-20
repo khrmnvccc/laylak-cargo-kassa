@@ -121,6 +121,14 @@ function UserCard({ user, onLogout }: { user: User; onLogout: () => void }) {
   );
 }
 
+function Credit() {
+  return (
+    <a href="https://t.me/khrmnvccc" target="_blank" rel="noopener noreferrer" className="mt-2 block text-center text-[11px] text-ink-3 hover:text-ink">
+      by <span className="font-medium">@khrmnvccc</span>
+    </a>
+  );
+}
+
 export function Layout({ page, user, onLogout, children }: { page: Page; user: User; onLogout: () => void; children: ReactNode }) {
   const [drawer, setDrawer] = useState(false);
   const theme = useTheme();
@@ -142,29 +150,31 @@ export function Layout({ page, user, onLogout, children }: { page: Page; user: U
   return (
     <div className="min-h-screen">
       {/* Desktop sidebar */}
-      <aside className="no-print fixed inset-y-0 left-0 z-30 hidden w-[248px] flex-col border-r border-line bg-bg px-3 py-5 lg:flex">
+      <aside className="no-print fixed inset-y-0 left-0 z-30 hidden w-[248px] flex-col border-r border-line bg-surface glass px-3 py-5 lg:flex">
         <div className="px-2"><Logo /></div>
         <div className="mt-7 flex-1 overflow-y-auto scrollbar-thin"><NavLinks page={page} user={user} /></div>
         <UserCard user={user} onLogout={onLogout} />
+        <Credit />
       </aside>
 
       {/* Mobile drawer */}
       {drawer && (
         <div className="no-print fixed inset-0 z-50 lg:hidden">
           <div className="absolute inset-0 bg-black/40 anim-fade" onClick={() => setDrawer(false)} />
-          <div className="absolute inset-y-0 left-0 flex w-[280px] flex-col bg-bg px-3 py-5 shadow-pop anim-rise">
+          <div className="absolute inset-y-0 left-0 flex w-[280px] flex-col bg-surface glass px-3 py-5 shadow-pop anim-rise">
             <div className="flex items-center justify-between px-2">
               <Logo />
               <IconButton label="Yopish" onClick={() => setDrawer(false)}><X className="size-5" /></IconButton>
             </div>
             <div className="mt-7 flex-1 overflow-y-auto"><NavLinks page={page} user={user} onNavigate={() => setDrawer(false)} /></div>
             <UserCard user={user} onLogout={onLogout} />
+            <Credit />
           </div>
         </div>
       )}
 
       <div className="lg:pl-[248px]">
-        <header className="no-print sticky top-0 z-20 border-b border-line bg-[color-mix(in_srgb,var(--bg)_85%,transparent)] backdrop-blur-md">
+        <header className="no-print sticky top-0 z-20 border-b border-line bg-surface glass">
           <div className="mx-auto flex h-14 max-w-[1400px] items-center gap-3 px-4 sm:px-6 lg:h-16 lg:px-8">
             <IconButton label="Menyu" className="-ml-2 lg:hidden" onClick={() => setDrawer(true)}><Menu className="size-5" /></IconButton>
             <div className="min-w-0 flex-1">
@@ -189,7 +199,7 @@ export function Layout({ page, user, onLogout, children }: { page: Page; user: U
       </div>
 
       {/* Mobile bottom navigation */}
-      <nav className="no-print fixed inset-x-0 bottom-0 z-30 border-t border-line bg-[color-mix(in_srgb,var(--surface)_92%,transparent)] pb-[env(safe-area-inset-bottom)] backdrop-blur-md lg:hidden">
+      <nav className="no-print fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface glass pb-[env(safe-area-inset-bottom)] lg:hidden">
         <div className="mx-auto grid h-16 max-w-md grid-cols-5">
           {mobileTabs.map((tab) => {
             const active = tab.page === page;

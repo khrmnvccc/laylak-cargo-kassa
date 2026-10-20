@@ -202,7 +202,7 @@ export function Field({ label, error, hint, children, required, htmlFor }: { lab
   );
 }
 
-const controlBase = 'rounded-lg border bg-surface px-3 text-sm text-ink placeholder:text-ink-3 transition-colors outline-none focus:border-ink-3 focus:ring-4 focus:ring-[color-mix(in_srgb,var(--card)_15%,transparent)] disabled:bg-surface-2 disabled:text-ink-3';
+const controlBase = 'rounded-lg border bg-surface-2 px-3 text-sm text-ink placeholder:text-ink-3 transition-colors outline-none focus:bg-surface focus:border-[var(--card)] focus:ring-4 focus:ring-[color-mix(in_srgb,var(--card)_15%,transparent)] disabled:bg-surface-2 disabled:text-ink-3';
 
 export function Input({ invalid, className, ...rest }: ComponentProps<'input'> & { invalid?: boolean }) {
   return <input {...rest} className={cx(controlBase, 'w-full h-10', invalid ? 'border-danger' : 'border-line', className)} />;
@@ -350,7 +350,7 @@ export function Modal({ open, onClose, title, description, children, footer, siz
   // Portal to <body> so page wrappers (transforms, z-index) and the mobile tab bar never cover the dialog.
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] anim-fade" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/25 backdrop-blur-sm anim-fade" onClick={onClose} />
       <div
         ref={ref}
         role="dialog"
