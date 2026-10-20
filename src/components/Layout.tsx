@@ -121,6 +121,14 @@ function UserCard({ user, onLogout }: { user: User; onLogout: () => void }) {
   );
 }
 
+function Credit() {
+  return (
+    <a href="https://t.me/khrmnvccc" target="_blank" rel="noopener noreferrer" className="mt-2 block text-center text-[11px] text-ink-3 hover:text-ink">
+      by <span className="font-medium">@khrmnvccc</span>
+    </a>
+  );
+}
+
 export function Layout({ page, user, onLogout, children }: { page: Page; user: User; onLogout: () => void; children: ReactNode }) {
   const [drawer, setDrawer] = useState(false);
   const theme = useTheme();
@@ -146,6 +154,7 @@ export function Layout({ page, user, onLogout, children }: { page: Page; user: U
         <div className="px-2"><Logo /></div>
         <div className="mt-7 flex-1 overflow-y-auto scrollbar-thin"><NavLinks page={page} user={user} /></div>
         <UserCard user={user} onLogout={onLogout} />
+        <Credit />
       </aside>
 
       {/* Mobile drawer */}
@@ -159,6 +168,7 @@ export function Layout({ page, user, onLogout, children }: { page: Page; user: U
             </div>
             <div className="mt-7 flex-1 overflow-y-auto"><NavLinks page={page} user={user} onNavigate={() => setDrawer(false)} /></div>
             <UserCard user={user} onLogout={onLogout} />
+            <Credit />
           </div>
         </div>
       )}
