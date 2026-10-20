@@ -106,7 +106,7 @@ export function StatCard({ label, value, previous, hint, accent, loading, format
       {loading ? (
         <div className="skeleton mt-3 h-7 w-3/4" />
       ) : (
-        <div className="mt-2 text-[22px] font-semibold tracking-tight text-ink num sm:text-2xl">{format(value)}</div>
+        <div className="mt-2 text-lg font-semibold tracking-tight text-ink num min-[420px]:text-[22px] sm:text-2xl">{format(value)}</div>
       )}
       <div className="mt-1.5 flex min-h-5 items-center gap-2 text-xs text-ink-3">
         {!loading && previous !== undefined && <Delta current={value} previous={previous} />}
@@ -167,7 +167,7 @@ export function Segmented<T extends string>({ value, onChange, options, size = '
           aria-checked={value === o.value}
           onClick={() => onChange(o.value)}
           className={cx(
-            'flex flex-1 items-center justify-center gap-2 rounded-md px-3 font-medium transition-all duration-150',
+            'flex flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 font-medium transition-all duration-150',
             size === 'lg' ? 'h-10 text-sm' : 'h-8 text-[13px]',
             value === o.value ? 'bg-surface text-ink shadow-soft' : 'text-ink-3 hover:text-ink',
           )}

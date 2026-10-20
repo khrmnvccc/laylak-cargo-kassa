@@ -240,6 +240,40 @@ test('yandex/pochta payments, expenses and kassa balance', async () => {
   await assert.rejects(getPool().query(`UPDATE balance_adjustments SET amount = 1 WHERE id = $1`, [opening.body.adjustment.id]));
 });
 
+test('client list sorting and admin import', async () => {
+  const admin = new Client();
+  assert.equal((await admin.call('POST', '/auth/login', { username: 'admin', password: 'password123' })).status, 200);
+  const worker = new Client();
+  assert.equal((await worker.call('POST', '/auth/login', { username: 'sardor', password: 'worker123' })).status, 200);
+
+  assert.equal((await worker.call('POST', '/clients/import', { rows: [{ code: 'X1' }] })).status, 403);
+  const imp = await admin.call('POST', '/clients/import', { rows: [
+    { code: 'lc 500', name: 'Jasur', phone: '+998901112233' },
+    { code: 'LC-777', name: '', phone: '+998907770000' },
+    { code: 'bad id!', name: 'X' },
+  ] });
+  assert.equal(imp.status, 200, JSON.stringify(imp.body));
+  assert.equal(imp.body.created, 1);
+  assert.equal(imp.body.updated, 1);
+  assert.equal(imp.body.skipped, 1);
+  const karim = (await admin.call('GET', '/clients/LC-777')).body.client;
+  assert.equal(karim.full_name, 'Karim', 'empty name must not erase the existing one');
+  assert.equal(karim.phone, '+998907770000');
+
+  const most = (await worker.call('GET', '/clients', undefined, { sort: 'most' })).body;
+  const totals = most.items.map((c: any) => c.total);
+  assert.deepEqual(totals, [...totals].sort((a: number, b: number) => b - a));
+  for (const c of most.items) assert.equal(c.cash + c.card, c.total);
+  assert.equal(most.cash + most.card, most.total);
+  const least = (await worker.call('GET', '/clients', undefined, { sort: 'least' })).body;
+  assert.equal(least.items[0].code, 'LC500');
+  assert.equal(least.items[0].total, 0);
+  const active = (await worker.call('GET', '/clients', undefined, { sort: 'active' })).body;
+  const counts = active.items.map((c: any) => c.count);
+  assert.deepEqual(counts, [...counts].sort((a: number, b: number) => b - a));
+  assert.equal((await worker.call('GET', '/clients', undefined, { q: 'jasur' })).body.items[0].code, 'LC500');
+});
+
 test.after(async () => {
   await getPool().end();
 });

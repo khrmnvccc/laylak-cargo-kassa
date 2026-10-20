@@ -459,27 +459,87 @@ route('GET', '/periods', 'user', async (ctx) => {
 
 // ---------- clients ----------
 
+const CLIENT_SORTS: Record<string, string> = {
+  active: 'count DESC, last_paid_at DESC NULLS LAST, c.code',
+  most: 'total DESC, count DESC, c.code',
+  least: 'total ASC, count ASC, c.code',
+  recent: 'last_paid_at DESC NULLS LAST, c.code',
+};
+
 route('GET', '/clients', 'user', async (ctx) => {
   const term = str(ctx.query.q, 60);
+  const sort = CLIENT_SORTS[ctx.query.sort || ''] ? ctx.query.sort! : 'active';
+  const limit = Math.min(Math.max(Number(ctx.query.limit) || 50, 1), 200);
+  const offset = Math.max(Number(ctx.query.offset) || 0, 0);
   const params: unknown[] = [];
   let where = '';
   if (term) {
     params.push(`%${term.replace(/[%_\\]/g, '\\$&')}%`);
     where = `WHERE c.code ILIKE $1 OR COALESCE(c.full_name, '') ILIKE $1 OR COALESCE(c.phone, '') ILIKE $1`;
   }
-  const rows = await query(
-    `SELECT c.code, c.full_name, c.phone,
-            COALESCE(SUM(p.amount) FILTER (WHERE p.voided_at IS NULL), 0)::bigint AS total,
-            COUNT(p.id) FILTER (WHERE p.voided_at IS NULL)::bigint AS count,
-            MAX(p.paid_at) FILTER (WHERE p.voided_at IS NULL) AS last_paid_at
-       FROM clients c LEFT JOIN payments p ON p.client_code = c.code
-       ${where}
-      GROUP BY c.code
-      ORDER BY (upper(c.code) = upper(${term ? '$2' : "''"})) DESC, last_paid_at DESC NULLS LAST
-      LIMIT 100`,
-    term ? [...params, term] : params,
-  );
-  return { items: rows };
+  const base = `
+    SELECT c.code, c.full_name, c.phone,
+           COALESCE(SUM(p.amount), 0)::bigint AS total,
+           COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'cash'), 0)::bigint AS cash,
+           COALESCE(SUM(p.amount) FILTER (WHERE p.method <> 'cash'), 0)::bigint AS card,
+           COALESCE(SUM(p.amount) FILTER (WHERE p.method IN ('yandex', 'pochta')), 0)::bigint AS online,
+           COUNT(p.id)::bigint AS count,
+           MAX(p.paid_at) AS last_paid_at
+      FROM clients c LEFT JOIN payments p ON p.client_code = c.code AND p.voided_at IS NULL
+      ${where}
+     GROUP BY c.code`;
+  const exactFirst = term ? `(upper(c.code) = upper($${params.length + 1})) DESC, ` : '';
+  const [items, summary] = await Promise.all([
+    query(
+      `${base} ORDER BY ${exactFirst}${CLIENT_SORTS[sort]} LIMIT ${limit} OFFSET ${offset}`,
+      term ? [...params, term] : params,
+    ),
+    query(
+      `SELECT COUNT(*)::bigint AS clients,
+              COUNT(*) FILTER (WHERE last_paid_at >= NOW() - INTERVAL '30 days')::bigint AS active30,
+              COALESCE(SUM(total), 0)::bigint AS total,
+              COALESCE(SUM(cash), 0)::bigint AS cash,
+              COALESCE(SUM(card), 0)::bigint AS card
+         FROM (${base}) t`,
+      params,
+    ),
+  ]);
+  return { items, sort, limit, offset, ...summary[0] };
+});
+
+// Admin bulk import of an existing customer list: adds new IDs, fills in names/phones.
+route('POST', '/clients/import', 'admin', async (ctx) => {
+  const rows = Array.isArray(ctx.body?.rows) ? ctx.body.rows : null;
+  if (!rows || !rows.length) throw new HttpError(400, 'Fayldan mijozlar topilmadi');
+  if (rows.length > 5000) throw new HttpError(400, 'Bir martada 5000 tadan ko‘p mijoz yuklab bo‘lmaydi');
+  const errors: Array<{ row: number; error: string }> = [];
+  const clean = new Map<string, { code: string; name: string; phone: string }>();
+  rows.forEach((r: any, index: number) => {
+    const code = str(r?.code, 40).replace(/\s+/g, '').toUpperCase();
+    if (!code) return errors.push({ row: index + 1, error: 'ID yo‘q' });
+    if (!/^[A-Z0-9-]{1,40}$/.test(code)) return errors.push({ row: index + 1, error: `ID noto‘g‘ri: ${code}` });
+    clean.set(code, { code, name: str(r?.name, 80), phone: str(r?.phone, 30) });
+  });
+  if (!clean.size) return { status: 400, body: { error: 'Yaroqli mijoz topilmadi', errors: errors.slice(0, 50) } };
+  const list = [...clean.values()];
+  const result = await transaction(async (db) => {
+    const inserted = await db.query(
+      `INSERT INTO clients (code, full_name, phone)
+       SELECT code, NULLIF(name, ''), NULLIF(phone, '') FROM jsonb_to_recordset($1::jsonb) AS x(code text, name text, phone text)
+       ON CONFLICT (code) DO UPDATE SET
+         full_name = COALESCE(EXCLUDED.full_name, clients.full_name),
+         phone = COALESCE(EXCLUDED.phone, clients.phone),
+         updated_at = CASE WHEN EXCLUDED.full_name IS DISTINCT FROM clients.full_name OR EXCLUDED.phone IS DISTINCT FROM clients.phone
+                           THEN NOW() ELSE clients.updated_at END
+       RETURNING (xmax = 0) AS created`,
+      [JSON.stringify(list)],
+    );
+    const created = inserted.rows.filter((r) => r.created).length;
+    const summary = { created, updated: inserted.rows.length - created, skipped: errors.length };
+    await audit(db, ctx.user, 'client_import', 'client', null, summary);
+    return summary;
+  });
+  return { ...result, errors: errors.slice(0, 50) };
 });
 
 route('GET', '/clients/:code', 'user', async (ctx) => {
