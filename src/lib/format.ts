@@ -25,6 +25,19 @@ const L = {
 }[LANG];
 const NBSP = '\u00a0';
 
+// Difference between this device's clock and the server's. A computer whose clock is wrong would
+// otherwise show the wrong "today" and the wrong current time; the server clock is the reference.
+let clockSkew = 0;
+export const nowMs = () => Date.now() + clockSkew;
+export const nowIso = () => new Date(nowMs()).toISOString();
+/** Called with each API response's Date header; differences under 30 s are just latency. */
+export function syncClock(serverDate: string | null) {
+  const t = serverDate ? Date.parse(serverDate) : NaN;
+  if (!Number.isFinite(t)) return;
+  const skew = t - Date.now();
+  clockSkew = Math.abs(skew) > 30_000 ? skew : 0;
+}
+
 export function groupDigits(value: number): string {
   const sign = value < 0 ? '−' : '';
   return sign + Math.round(Math.abs(value)).toString().replace(/\B(?=(\d{3})+(?!\d))/g, NBSP);
@@ -101,7 +114,7 @@ export function relativeDay(iso: string): string {
 }
 
 export function todayTashkent(): string {
-  return new Date(Date.now() + 5 * 3600_000).toISOString().slice(0, 10);
+  return new Date(nowMs() + 5 * 3600_000).toISOString().slice(0, 10);
 }
 
 export function addDays(date: string, days: number): string {
