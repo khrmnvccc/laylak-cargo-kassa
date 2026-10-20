@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import {
-  BarChart3, CalendarDays, LayoutDashboard, ListOrdered, LogOut, Menu, Moon, Plus, Settings, Sun, UserSearch, Users, Wallet, X,
+  BarChart3, Landmark, CalendarDays, LayoutDashboard, ListOrdered, LogOut, Menu, Moon, Plus, Settings, Sun, UserSearch, Users, Wallet, X,
 } from 'lucide-react';
 import { href, type Page } from '../lib/router';
 import { useLive } from '../lib/live';
@@ -24,6 +24,7 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
     items: [
       { page: 'daily', label: 'Kunlik hisobot', icon: CalendarDays },
       { page: 'periods', label: 'Haftalik va oylik', icon: BarChart3 },
+      { page: 'balance', label: 'Kassa balansi', icon: Landmark, adminOnly: true },
     ],
   },
   {
@@ -38,7 +39,7 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
 
 export const PAGE_TITLES: Record<Page, string> = {
   dashboard: 'Dashboard', kassa: 'Kassa', operations: 'Operatsiyalar', daily: 'Kunlik hisobot',
-  periods: 'Haftalik va oylik hisobot', workers: 'Ishchilar', clients: 'Mijozlar', settings: 'Sozlamalar',
+  periods: 'Haftalik va oylik hisobot', workers: 'Ishchilar', clients: 'Mijozlar', balance: 'Kassa balansi', settings: 'Sozlamalar',
 };
 
 function Logo() {

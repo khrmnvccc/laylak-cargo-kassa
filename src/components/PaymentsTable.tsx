@@ -3,7 +3,7 @@ import { Ban, ChevronRight } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useLive } from '../lib/live';
-import { dateTime, money, relativeDay } from '../lib/format';
+import { dateTime, methodColor, methodLabel, money, relativeDay } from '../lib/format';
 import { href } from '../lib/router';
 import type { Payment } from '../lib/types';
 import { Alert, Avatar, Badge, Button, Field, MethodBadge, Modal, Textarea, cx, td, th, useToast } from './ui';
@@ -59,7 +59,7 @@ export function PaymentsTable({ items, showDate = true, compact = false, list = 
         {items.map((p) => (
           <li key={p.id}>
             <button onClick={() => setSelected(p)} className={cx('flex w-full items-center gap-3 px-4 py-3 text-left active:bg-surface-2', p.voided_at && 'opacity-55')}>
-              <span className="size-2 shrink-0 rounded-full" style={{ background: p.method === 'cash' ? 'var(--cash)' : 'var(--card)' }} />
+              <span className="size-2 shrink-0 rounded-full" style={{ background: methodColor(p.method) }} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="truncate text-sm font-medium text-ink num">{p.client_code}</span>
@@ -69,7 +69,7 @@ export function PaymentsTable({ items, showDate = true, compact = false, list = 
               </div>
               <div className="text-right">
                 <div className={cx('text-sm font-semibold text-ink num', p.voided_at && 'line-through')}>{money(p.amount)}</div>
-                <div className="text-xs text-ink-3">{p.voided_at ? 'Bekor qilingan' : p.method === 'cash' ? 'Naqd' : 'Karta'}</div>
+                <div className="text-xs text-ink-3">{p.voided_at ? 'Bekor qilingan' : methodLabel(p.method)}</div>
               </div>
             </button>
           </li>

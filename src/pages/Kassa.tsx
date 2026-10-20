@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Banknote, CheckCircle2, CreditCard, Loader2, Save, UserCheck, UserPlus } from 'lucide-react';
+import { Banknote, CheckCircle2, CreditCard, Loader2, Mail, Navigation, Save, UserCheck, UserPlus } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useApi, useLive } from '../lib/live';
-import { dateTime, groupDigits, money, timeOf, todayTashkent } from '../lib/format';
+import { METHODS, dateTime, groupDigits, methodLabel, money, timeOf, todayTashkent } from '../lib/format';
 import type { Method, Payment, PaymentList, Summary } from '../lib/types';
 import { PaymentsTable } from '../components/PaymentsTable';
-import { Alert, Button, Card, CardHeader, EmptyState, Field, Input, MethodBadge, Modal, PageHeader, Segmented, SkeletonRows, Textarea, useToast } from '../components/ui';
+import { Alert, Button, Card, CardHeader, EmptyState, Field, Input, MethodBadge, Modal, PageHeader, SkeletonRows, Textarea, cx, useToast } from '../components/ui';
 
 interface ClientInfo { client: { code: string; full_name: string | null }; stats: { total: number; count: number } }
+const METHOD_ICONS = { cash: Banknote, card: CreditCard, yandex: Navigation, pochta: Mail };
+
 type Errors = Partial<Record<'clientCode' | 'clientName' | 'amount' | 'method' | 'paidAt' | 'note', string>>;
 
 function nowLocalInput(): string {
@@ -107,7 +109,7 @@ export default function Kassa() {
       });
       setConfirming(false);
       setLastSaved(payment);
-      toast({ tone: 'success', title: 'Toʻlov saqlandi', description: `${payment.client_code} · ${money(payment.amount)} · ${payment.method === 'cash' ? 'Naqd' : 'Karta'}` });
+      toast({ tone: 'success', title: 'Toʻlov saqlandi', description: `${payment.client_code} · ${money(payment.amount)} · ${methodLabel(payment.method)}` });
       setClientCode(''); setClientName(''); setAmountText(''); setNote(''); setErrors({}); setCustomTime(false);
       setLookup({ state: 'idle' });
       bump();
@@ -137,7 +139,7 @@ export default function Kassa() {
                 <div className="min-w-0 flex-1 text-sm">
                   <div className="font-medium text-ink">Toʻlov muvaffaqiyatli saqlandi</div>
                   <div className="mt-0.5 text-ink-2 num">
-                    {lastSaved.client_code}{lastSaved.client_name ? ` · ${lastSaved.client_name}` : ''} · {money(lastSaved.amount)} · {lastSaved.method === 'cash' ? 'Naqd' : 'Karta'} · {timeOf(lastSaved.paid_at)}
+                    {lastSaved.client_code}{lastSaved.client_name ? ` · ${lastSaved.client_name}` : ''} · {money(lastSaved.amount)} · {methodLabel(lastSaved.method)} · {timeOf(lastSaved.paid_at)}
                   </div>
                 </div>
                 <button type="button" className="text-xs font-medium text-ink-3 hover:text-ink" onClick={() => setLastSaved(null)}>Yopish</button>
@@ -168,11 +170,20 @@ export default function Kassa() {
             </Field>
 
             <Field label="Toʻlov turi" required error={errors.method}>
-              <Segmented size="lg" className="flex w-full" value={method} onChange={setMethod}
-                options={[
-                  { value: 'cash', label: <><Banknote className="size-4" style={{ color: 'var(--cash)' }} />Naqd</> },
-                  { value: 'card', label: <><CreditCard className="size-4" style={{ color: 'var(--card)' }} />Karta</> },
-                ]} />
+              <div role="radiogroup" aria-label="Toʻlov turi" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {METHODS.map((m) => {
+                  const Icon = METHOD_ICONS[m.value];
+                  const active = method === m.value;
+                  return (
+                    <button key={m.value} type="button" role="radio" aria-checked={active} onClick={() => setMethod(m.value)}
+                      className={cx('flex h-12 items-center justify-center gap-2 rounded-lg border text-sm font-medium transition-colors',
+                        active ? 'border-transparent text-ink ring-2' : 'border-line bg-surface text-ink-2 hover:bg-surface-2')}
+                      style={active ? { background: `color-mix(in srgb, ${m.color} 12%, var(--surface))`, ['--tw-ring-color' as string]: m.color } : undefined}>
+                      <Icon className="size-4" style={{ color: m.color }} />{m.label}
+                    </button>
+                  );
+                })}
+              </div>
             </Field>
 
             <Field label="Izoh" htmlFor="note" error={errors.note} hint="Ixtiyoriy">
@@ -215,8 +226,7 @@ export default function Kassa() {
                   <div className="text-2xl font-semibold tracking-tight text-ink num">{money(t?.total || 0)}</div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-sm">
-                  <Mini label="Naqd" value={money(t?.cash || 0)} color="var(--cash)" />
-                  <Mini label="Karta" value={money(t?.card || 0)} color="var(--card)" />
+                  {METHODS.map((m) => <Mini key={m.value} label={m.label} value={money(t?.[m.value] || 0)} color={m.color} />)}
                 </div>
                 <div className="text-xs text-ink-3">{t?.count || 0} ta operatsiya</div>
               </div>

@@ -60,6 +60,7 @@ test('legacy data is copied into shared tables without touching the old table', 
   assert.deepEqual(pays.rows, [
     { legacy_id: 'r-a1:card', amount: 250000, method: 'card', day: '2026-10-05' },
     { legacy_id: 'r-a1:cash', amount: 150000, method: 'cash', day: '2026-10-05' },
+    { legacy_id: 'r-a1:yandex', amount: 10000, method: 'yandex', day: '2026-10-05' },
     { legacy_id: 'r-b1:card', amount: 300000, method: 'card', day: '2026-10-06' },
   ]);
 });
@@ -125,9 +126,10 @@ test('setup, roles, shared data, and report math', async () => {
 
   // Range totals include migrated legacy payments and match the per-day series.
   const month = (await admin.call('GET', '/summary', undefined, { from: '2026-10-01', to: today })).body;
-  assert.equal(month.totals.total, 250000 + 700000);
+  assert.equal(month.totals.total, 250000 + 710000);
+  assert.equal(month.totals.yandex, 10000);
   assert.equal(month.byDay.reduce((s: number, d: any) => s + d.total, 0), month.totals.total);
-  assert.equal(month.byDay.reduce((s: number, d: any) => s + d.cash + d.card, 0), month.totals.total);
+  assert.equal(month.byDay.reduce((s: number, d: any) => s + d.cash + d.card + d.yandex + d.pochta, 0), month.totals.total);
 
   const weeks = (await admin.call('GET', '/periods', undefined, { group: 'week', from: '2026-10-01', to: today })).body;
   assert.equal(weeks.rows.reduce((s: number, r: any) => s + r.total, 0), weeks.totals.total);
@@ -171,6 +173,69 @@ test('setup, roles, shared data, and report math', async () => {
   const brute = new Client();
   for (let i = 0; i < 5; i++) await brute.call('POST', '/auth/login', { username: 'ali', password: 'bad' });
   assert.equal((await brute.call('POST', '/auth/login', { username: 'ali', password: 'worker123' })).status, 429);
+});
+
+test('yandex/pochta payments, expenses and kassa balance', async () => {
+  const admin = new Client();
+  assert.equal((await admin.call('POST', '/auth/login', { username: 'admin', password: 'password123' })).status, 200);
+  // 'ali' is locked out by the previous test, so use a fresh worker.
+  assert.equal((await admin.call('POST', '/staff', { username: 'sardor', fullName: 'Sardor', password: 'worker123', role: 'worker' })).status, 201);
+  const ali = new Client();
+  assert.equal((await ali.call('POST', '/auth/login', { username: 'sardor', password: 'worker123' })).status, 200);
+
+  const before = (await admin.call('GET', '/balance', undefined, { date: today })).body;
+  const cur = (src: string, b = before) => b.sources.find((s: any) => s.source === src);
+
+  assert.equal((await ali.call('POST', '/payments', { clientCode: 'LC-1', amount: 40000, method: 'yandex' })).status, 201);
+  assert.equal((await ali.call('POST', '/payments', { clientCode: 'LC-1', amount: 25000, method: 'pochta' })).status, 201);
+  const summary = (await ali.call('GET', '/summary', undefined, { from: today, to: today })).body;
+  assert.equal(summary.totals.yandex, 40000);
+  assert.equal(summary.totals.pochta, 25000);
+  assert.equal(summary.totals.cash + summary.totals.card + summary.totals.yandex + summary.totals.pochta, summary.totals.total);
+  const filtered = (await ali.call('GET', '/payments', undefined, { from: today, to: today, method: 'pochta' })).body;
+  assert.equal(filtered.count, 1);
+
+  // Workers cannot see or change the balance.
+  assert.equal((await ali.call('GET', '/balance')).status, 403);
+  assert.equal((await ali.call('POST', '/expenses', { amount: 1000, source: 'cash', category: 'paket' })).status, 403);
+  assert.equal((await ali.call('POST', '/adjustments', { amount: 1000, source: 'cash', note: 'test' })).status, 403);
+
+  const bad = await admin.call('POST', '/expenses', { amount: 0, source: 'yandex', category: 'boshqa', note: '' });
+  assert.equal(bad.status, 400);
+  assert.deepEqual(Object.keys(bad.body.fields).sort(), ['amount', 'note', 'source']);
+
+  const opening = await admin.call('POST', '/adjustments', { amount: 500000, source: 'cash', note: 'Boshlangʻich qoldiq' });
+  assert.equal(opening.status, 201, JSON.stringify(opening.body));
+  const e1 = await admin.call('POST', '/expenses', { amount: 30000, source: 'cash', category: 'paket', note: '200 ta paket' });
+  assert.equal(e1.status, 201, JSON.stringify(e1.body));
+  const e2 = await admin.call('POST', '/expenses', { amount: 15000, source: 'card', category: 'kommunal' });
+  assert.equal(e2.status, 201);
+  const e3 = await admin.call('POST', '/expenses', { amount: 99000, source: 'cash', category: 'boshqa', note: 'xato' });
+  assert.equal((await admin.call('POST', `/expenses/${e3.body.expense.id}/void`, { reason: 'Ikki marta yozilgan' })).status, 200);
+  assert.equal((await admin.call('POST', `/expenses/${e3.body.expense.id}/void`, { reason: 'Ikki marta yozilgan' })).status, 404);
+
+  const after = (await admin.call('GET', '/balance', undefined, { date: today })).body;
+  assert.equal(cur('cash', after).current, cur('cash').current + 500000 - 30000);
+  assert.equal(cur('card', after).current, cur('card').current - 15000);
+  assert.equal(cur('yandex', after).current, cur('yandex').current + 40000);
+  assert.equal(cur('pochta', after).current, cur('pochta').current + 25000);
+  for (const s of after.sources) assert.equal(s.closing, s.opening + s.income - s.expense + s.adjustment);
+  assert.equal(cur('cash', after).expense, 30000);
+  assert.equal(after.expenses.length, 3);
+  assert.equal(after.adjustments.length, 1);
+  assert.equal(after.recent.length, 14);
+  assert.equal(after.recent[0].day, today);
+  assert.equal(after.recent[0].expense, 45000);
+
+  // Yesterday's closing equals today's opening.
+  const yesterday = new Date(Date.parse(today) - 86400_000).toISOString().slice(0, 10);
+  const prev = (await admin.call('GET', '/balance', undefined, { date: yesterday })).body;
+  for (const s of after.sources) assert.equal(prev.sources.find((p: any) => p.source === s.source).closing, s.opening);
+
+  // Ledger rows cannot be deleted or rewritten.
+  await assert.rejects(getPool().query(`DELETE FROM expenses WHERE id = $1`, [e1.body.expense.id]));
+  await assert.rejects(getPool().query(`UPDATE expenses SET amount = 1 WHERE id = $1`, [e1.body.expense.id]));
+  await assert.rejects(getPool().query(`UPDATE balance_adjustments SET amount = 1 WHERE id = $1`, [opening.body.adjustment.id]));
 });
 
 test.after(async () => {

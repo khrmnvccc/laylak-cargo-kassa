@@ -47,6 +47,8 @@ export default function Workers() {
                   <th className={cx(th, 'text-right')}>Operatsiya</th>
                   <th className={cx(th, 'text-right')}>Naqd</th>
                   <th className={cx(th, 'text-right')}>Karta</th>
+                  <th className={cx(th, 'text-right')}>Yandex</th>
+                  <th className={cx(th, 'text-right')}>Pochta</th>
                   <th className={cx(th, 'text-right')}>Jami</th>
                   <th className={th}>Ulush</th>
                   <th className={th}>Oxirgi kirish</th>
@@ -76,6 +78,8 @@ export default function Workers() {
                       <td className={cx(td, 'text-right num text-ink-2')}>{groupDigits(w.count)}</td>
                       <td className={cx(td, 'text-right num')}>{money(w.cash)}</td>
                       <td className={cx(td, 'text-right num')}>{money(w.card)}</td>
+                      <td className={cx(td, 'text-right num')}>{money(w.yandex)}</td>
+                      <td className={cx(td, 'text-right num')}>{money(w.pochta)}</td>
                       <td className={cx(td, 'text-right font-semibold num')}>{money(w.total)}</td>
                       <td className={cx(td, 'min-w-[120px]')}>
                         <div className="flex items-center gap-2">

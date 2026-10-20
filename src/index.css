@@ -17,6 +17,8 @@
   --color-primary-fg: var(--primary-fg);
   --color-cash: var(--cash);
   --color-card: var(--card);
+  --color-yandex: var(--yandex);
+  --color-pochta: var(--pochta);
   --color-up: var(--up);
   --color-down: var(--down);
   --color-danger: var(--danger);
@@ -42,6 +44,8 @@
   --primary-fg: #ffffff;
   --cash: #1baf7a;
   --card: #2a78d6;
+  --yandex: #eda100;
+  --pochta: #6250d6;
   --up: #067647;
   --down: #b42318;
   --danger: #b42318;
@@ -69,6 +73,8 @@
   --primary-fg: #0b0d10;
   --cash: #199e70;
   --card: #3987e5;
+  --yandex: #c98500;
+  --pochta: #9085e9;
   --up: #47cd89;
   --down: #f97066;
   --danger: #f97066;

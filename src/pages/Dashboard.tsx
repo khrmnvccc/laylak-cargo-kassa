@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { useApi } from '../lib/live';
-import { addDays, compactMoney, groupDigits, money, rangeLabel } from '../lib/format';
+import { METHODS, addDays, compactMoney, groupDigits, money, rangeLabel } from '../lib/format';
 import { href } from '../lib/router';
 import type { Summary } from '../lib/types';
 import { DateRangePicker, presetRange, type Range } from '../components/DateRange';
@@ -20,7 +20,7 @@ export default function Dashboard() {
   const p = data?.previous;
   const single = range.from === range.to;
   const compareLabel = single ? 'oldingi kunga nisbatan' : 'oldingi davrga nisbatan';
-  const cashShare = t && t.total ? Math.round((t.cash / t.total) * 100) : 0;
+  const share = (v: number) => (t && t.total ? Math.round((v / t.total) * 100) : 0);
 
   return (
     <>
@@ -34,23 +34,22 @@ export default function Dashboard() {
         <Card><ErrorState message={error} onRetry={reload} /></Card>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-            <div className="col-span-2 xl:col-span-1">
-              <StatCard label={single ? 'Jami tushum' : 'Davr tushumi'} value={t?.total || 0} previous={p?.total} hint={compareLabel} loading={loading} />
-            </div>
-            <StatCard label="Naqd tushum" accent="var(--cash)" value={t?.cash || 0} previous={p?.cash} loading={loading} hint={t?.total ? `${cashShare}% ulush` : undefined} />
-            <StatCard label="Karta tushumi" accent="var(--card)" value={t?.card || 0} previous={p?.card} loading={loading} hint={t?.total ? `${100 - cashShare}% ulush` : undefined} />
-            <div className="col-span-2 xl:col-span-1">
-              <StatCard label="Operatsiyalar soni" value={t?.count || 0} previous={p?.count} loading={loading} format={(n) => groupDigits(n)}
-                hint={t ? `${t.clients || 0} ta mijoz` : undefined} />
-            </div>
+          <div className="grid gap-3 sm:grid-cols-2 sm:gap-4">
+            <StatCard label={single ? 'Jami tushum' : 'Davr tushumi'} value={t?.total || 0} previous={p?.total} hint={`Naqd + karta + Yandex + Pochta · ${compareLabel}`} loading={loading} />
+            <StatCard label="Operatsiyalar soni" value={t?.count || 0} previous={p?.count} loading={loading} format={(n) => groupDigits(n)}
+              hint={t ? `${t.clients || 0} ta mijoz` : undefined} />
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+            {METHODS.map((m) => (
+              <StatCard key={m.value} label={m.label} accent={m.color} value={t?.[m.value] || 0} previous={p?.[m.value]} loading={loading}
+                hint={t?.total ? `${share(t[m.value])}% ulush` : undefined} />
+            ))}
           </div>
 
           {t && t.total > 0 && (
             <div className="mt-3 overflow-hidden rounded-full bg-surface-3" aria-hidden>
               <div className="flex h-1.5">
-                <div className="bg-cash transition-all duration-500" style={{ width: `${cashShare}%` }} />
-                <div className="bg-card transition-all duration-500" style={{ width: `${100 - cashShare}%` }} />
+                {METHODS.map((m) => <div key={m.value} className="transition-all duration-500" style={{ background: m.color, width: `${(t[m.value] / t.total) * 100}%` }} />)}
               </div>
             </div>
           )}
@@ -63,7 +62,7 @@ export default function Dashboard() {
                 action={<Legend />}
               />
               {chart.loading ? <div className="skeleton h-[260px]" /> : chart.error ? <ErrorState message={chart.error} onRetry={chart.reload} /> : (
-                <RevenueChart data={(chart.data?.byDay || []).map((d) => ({ key: d.day, cash: d.cash, card: d.card, total: d.total, count: d.count }))} />
+                <RevenueChart data={(chart.data?.byDay || []).map((d) => ({ key: d.day, cash: d.cash, card: d.card, yandex: d.yandex, pochta: d.pochta, total: d.total, count: d.count }))} />
               )}
             </Card>
 
@@ -85,8 +84,7 @@ export default function Dashboard() {
                               <span className="text-sm font-semibold text-ink num">{compactMoney(w.total)}</span>
                             </div>
                             <div className="mt-1.5 flex h-1.5 overflow-hidden rounded-full bg-surface-3">
-                              <div className="bg-cash" style={{ width: `${t?.total ? (w.cash / t.total) * 100 : 0}%` }} />
-                              <div className="bg-card" style={{ width: `${t?.total ? (w.card / t.total) * 100 : 0}%` }} />
+                              {METHODS.map((m) => <div key={m.value} style={{ background: m.color, width: `${t?.total ? (w[m.value] / t.total) * 100 : 0}%` }} />)}
                             </div>
                             <div className="mt-1 flex justify-between text-xs text-ink-3 num">
                               <span>{w.count} ta operatsiya</span>

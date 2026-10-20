@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { ChevronLeft, ChevronRight, Download, Search, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { useApi } from '../lib/live';
-import { dateOf, downloadCsv, money, rangeLabel, timeOf } from '../lib/format';
-import type { PaymentList, Summary } from '../lib/types';
+import { METHODS, dateOf, downloadCsv, methodLabel, money, rangeLabel, timeOf } from '../lib/format';
+import type { Method, PaymentList, Summary } from '../lib/types';
 import { DateRangePicker, presetRange, type Range } from '../components/DateRange';
 import { PaymentsTable } from '../components/PaymentsTable';
 import { Button, Card, EmptyState, ErrorState, IconButton, Input, PageHeader, Segmented, Select, SkeletonRows, useToast } from '../components/ui';
@@ -13,7 +13,7 @@ const PAGE_SIZE = 50;
 export default function Operations({ params }: { params: URLSearchParams }) {
   const toast = useToast();
   const [range, setRange] = useState<Range>(() => presetRange(params.get('client') ? '30d' : '7d'));
-  const [method, setMethod] = useState<'all' | 'cash' | 'card'>('all');
+  const [method, setMethod] = useState<'all' | Method>('all');
   const [worker, setWorker] = useState('');
   const [status, setStatus] = useState<'active' | 'voided' | 'all'>('active');
   const [search, setSearch] = useState(params.get('client') || '');
@@ -46,7 +46,7 @@ export default function Operations({ params }: { params: URLSearchParams }) {
       for (let offset = 0; ; offset += 500) {
         const chunk = await api<PaymentList>('/payments', { query: { ...filters, limit: 500, offset } });
         for (const p of chunk.items) {
-          rows.push([dateOf(p.paid_at), timeOf(p.paid_at), p.client_code, p.client_name || '', p.method === 'cash' ? 'Naqd' : 'Karta', p.amount,
+          rows.push([dateOf(p.paid_at), timeOf(p.paid_at), p.client_code, p.client_name || '', methodLabel(p.method), p.amount,
             p.created_by_name, p.note || '', p.voided_at ? `Bekor qilingan: ${p.void_reason || ''}` : 'Faol']);
         }
         if (chunk.items.length < 500) break;
@@ -78,7 +78,7 @@ export default function Operations({ params }: { params: URLSearchParams }) {
           </div>
           <div className="flex flex-wrap items-center gap-2 xl:ml-auto">
             <DateRangePicker value={range} onChange={setRange} />
-            <Segmented value={method} onChange={setMethod} options={[{ value: 'all', label: 'Hammasi' }, { value: 'cash', label: 'Naqd' }, { value: 'card', label: 'Karta' }]} />
+            <Segmented value={method} onChange={setMethod} options={[{ value: 'all', label: 'Hammasi' }, ...METHODS.map((m) => ({ value: m.value, label: m.label }))]} />
             <Select value={worker} onChange={(e) => setWorker(e.target.value)} className="w-auto min-w-[150px]" aria-label="Ishchi">
               <option value="">Barcha ishchilar</option>
               {workerOptions.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
@@ -91,12 +91,11 @@ export default function Operations({ params }: { params: URLSearchParams }) {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-px border-b border-line bg-line sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-px border-b border-line bg-line sm:grid-cols-3 lg:grid-cols-6">
           {[
             ['Operatsiyalar', data ? String(data.count) : '—'],
             ['Jami', data ? money(data.total) : '—'],
-            ['Naqd', data ? money(data.cash) : '—'],
-            ['Karta', data ? money(data.card) : '—'],
+            ...METHODS.map((m) => [m.label, data ? money(data[m.value]) : '—']),
           ].map(([k, v]) => (
             <div key={k} className="bg-surface px-4 py-3">
               <div className="text-xs text-ink-3">{k}</div>

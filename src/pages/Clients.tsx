@@ -11,7 +11,7 @@ import { Alert, Button, Card, EmptyState, ErrorState, Field, IconButton, Input, 
 
 interface ClientDetail {
   client: { code: string; full_name: string | null; phone: string | null; created_at: string };
-  stats: { total: number; cash: number; card: number; count: number; first_paid_at: string | null; last_paid_at: string | null };
+  stats: { total: number; cash: number; card: number; yandex: number; pochta: number; count: number; first_paid_at: string | null; last_paid_at: string | null };
   payments: Payment[];
 }
 
@@ -92,10 +92,12 @@ function ClientView({ code }: { code: string }) {
             subtitle={data ? [data.client.full_name || 'Ismi kiritilmagan', data.client.phone].filter(Boolean).join(' · ') : ' '}
             actions={user.role === 'admin' && data ? <Button icon={<Pencil className="size-4" />} onClick={() => setEditing(true)}>Tahrirlash</Button> : undefined}
           />
-          <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
             <div className="col-span-2 xl:col-span-1"><StatCard label="Jami toʻlangan" value={s?.total || 0} loading={loading} hint={s ? `${s.count} ta toʻlov` : undefined} /></div>
             <StatCard label="Naqd" accent="var(--cash)" value={s?.cash || 0} loading={loading} />
             <StatCard label="Karta" accent="var(--card)" value={s?.card || 0} loading={loading} />
+            <StatCard label="Yandex" accent="var(--yandex)" value={s?.yandex || 0} loading={loading} />
+            <StatCard label="Pochta" accent="var(--pochta)" value={s?.pochta || 0} loading={loading} />
             <div className="col-span-2 xl:col-span-1">
               <Card className="h-full">
                 <div className="text-[13px] font-medium text-ink-2">Faollik</div>

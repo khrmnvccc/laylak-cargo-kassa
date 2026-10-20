@@ -32,10 +32,12 @@ export default function DailyReport({ params }: { params: URLSearchParams }) {
 
       {summary.error && !summary.data ? <Card><ErrorState message={summary.error} onRetry={summary.reload} /></Card> : (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
             <div className="col-span-2 xl:col-span-1"><StatCard label="Jami tushum" value={t?.total || 0} previous={p?.total} hint="oldingi kunga nisbatan" loading={summary.loading} /></div>
             <StatCard label="Naqd" accent="var(--cash)" value={t?.cash || 0} previous={p?.cash} loading={summary.loading} />
             <StatCard label="Karta" accent="var(--card)" value={t?.card || 0} previous={p?.card} loading={summary.loading} />
+            <StatCard label="Yandex" accent="var(--yandex)" value={t?.yandex || 0} previous={p?.yandex} loading={summary.loading} />
+            <StatCard label="Pochta" accent="var(--pochta)" value={t?.pochta || 0} previous={p?.pochta} loading={summary.loading} />
             <div className="col-span-2 xl:col-span-1"><StatCard label="Operatsiyalar" value={t?.count || 0} previous={p?.count} format={groupDigits} loading={summary.loading} hint={t ? `${t.clients || 0} ta mijoz` : undefined} /></div>
           </div>
 
@@ -52,6 +54,8 @@ export default function DailyReport({ params }: { params: URLSearchParams }) {
                       <th className={cx(th, 'text-right')}>Operatsiya</th>
                       <th className={cx(th, 'text-right')}>Naqd</th>
                       <th className={cx(th, 'text-right')}>Karta</th>
+                      <th className={cx(th, 'text-right')}>Yandex</th>
+                      <th className={cx(th, 'text-right')}>Pochta</th>
                       <th className={cx(th, 'text-right')}>Jami</th>
                     </tr>
                   </thead>
@@ -62,6 +66,8 @@ export default function DailyReport({ params }: { params: URLSearchParams }) {
                         <td className={cx(td, 'text-right num text-ink-2')}>{w.count}</td>
                         <td className={cx(td, 'text-right num')}>{money(w.cash)}</td>
                         <td className={cx(td, 'text-right num')}>{money(w.card)}</td>
+                        <td className={cx(td, 'text-right num')}>{money(w.yandex)}</td>
+                        <td className={cx(td, 'text-right num')}>{money(w.pochta)}</td>
                         <td className={cx(td, 'text-right font-semibold num')}>{money(w.total)}</td>
                       </tr>
                     ))}
@@ -72,6 +78,8 @@ export default function DailyReport({ params }: { params: URLSearchParams }) {
                       <td className={cx(td, 'text-right font-semibold num')}>{t?.count}</td>
                       <td className={cx(td, 'text-right font-semibold num')}>{money(t?.cash)}</td>
                       <td className={cx(td, 'text-right font-semibold num')}>{money(t?.card)}</td>
+                      <td className={cx(td, 'text-right font-semibold num')}>{money(t?.yandex)}</td>
+                      <td className={cx(td, 'text-right font-semibold num')}>{money(t?.pochta)}</td>
                       <td className={cx(td, 'text-right font-semibold num')}>{money(t?.total)}</td>
                     </tr>
                   </tfoot>

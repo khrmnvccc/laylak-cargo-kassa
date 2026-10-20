@@ -111,7 +111,15 @@ export function rangeLabel(from: string, to: string): string {
   return `${formatDate(from)} – ${formatDate(to)}`;
 }
 
-export const methodLabel = (m: string) => (m === 'cash' ? 'Naqd' : 'Karta');
+export const METHODS = [
+  { value: 'cash', label: 'Naqd', color: 'var(--cash)' },
+  { value: 'card', label: 'Karta', color: 'var(--card)' },
+  { value: 'yandex', label: 'Yandex', color: 'var(--yandex)' },
+  { value: 'pochta', label: 'Pochta', color: 'var(--pochta)' },
+] as const;
+
+export const methodLabel = (m: string) => METHODS.find((x) => x.value === m)?.label ?? m;
+export const methodColor = (m: string) => METHODS.find((x) => x.value === m)?.color ?? 'var(--ink-3)';
 
 export function initials(name: string): string {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join('') || '?';

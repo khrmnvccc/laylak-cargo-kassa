@@ -176,7 +176,67 @@ DROP TRIGGER IF EXISTS payments_no_delete_trg ON payments;
 CREATE TRIGGER payments_no_delete_trg BEFORE DELETE ON payments FOR EACH ROW EXECUTE FUNCTION payments_no_delete();
 `;
 
-const SCHEMA_VERSION = 1;
+// v2: Yandex and Pochta payment types, expenses (rasxod) and balance adjustments.
+const SCHEMA_V2_SQL = `
+ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_method_check;
+ALTER TABLE payments ADD CONSTRAINT payments_method_check CHECK (method IN ('cash', 'card', 'yandex', 'pochta'));
+
+CREATE TABLE IF NOT EXISTS expenses (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  amount BIGINT NOT NULL CHECK (amount > 0 AND amount <= 10000000000),
+  source TEXT NOT NULL CHECK (source IN ('cash', 'card')),
+  category TEXT NOT NULL CHECK (category IN ('tovar', 'paket', 'yetkazish', 'yoqilgi', 'ijara', 'oylik', 'kommunal', 'inkassa', 'boshqa')),
+  note TEXT,
+  spent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by UUID REFERENCES app_users(id) ON DELETE SET NULL,
+  created_by_name TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  voided_at TIMESTAMPTZ,
+  voided_by_name TEXT,
+  void_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS expenses_spent_at_idx ON expenses(spent_at DESC);
+ALTER TABLE expenses ENABLE ROW LEVEL SECURITY;
+
+-- Signed corrections to a balance: the opening balance, a cash count difference, money moved out.
+CREATE TABLE IF NOT EXISTS balance_adjustments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  source TEXT NOT NULL CHECK (source IN ('cash', 'card', 'yandex', 'pochta')),
+  amount BIGINT NOT NULL CHECK (amount <> 0 AND abs(amount) <= 100000000000),
+  note TEXT NOT NULL,
+  at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by UUID REFERENCES app_users(id) ON DELETE SET NULL,
+  created_by_name TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS balance_adjustments_at_idx ON balance_adjustments(at DESC);
+ALTER TABLE balance_adjustments ENABLE ROW LEVEL SECURITY;
+
+CREATE OR REPLACE FUNCTION expenses_guard() RETURNS trigger AS $$
+BEGIN
+  IF NEW.amount <> OLD.amount OR NEW.source <> OLD.source OR NEW.spent_at <> OLD.spent_at OR NEW.created_by IS DISTINCT FROM OLD.created_by THEN
+    RAISE EXCEPTION 'expenses are append-only; void instead of editing';
+  END IF;
+  NEW.updated_at := NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS expenses_guard_trg ON expenses;
+CREATE TRIGGER expenses_guard_trg BEFORE UPDATE ON expenses FOR EACH ROW EXECUTE FUNCTION expenses_guard();
+
+CREATE OR REPLACE FUNCTION ledger_no_delete() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'ledger rows cannot be deleted';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS expenses_no_delete_trg ON expenses;
+CREATE TRIGGER expenses_no_delete_trg BEFORE DELETE ON expenses FOR EACH ROW EXECUTE FUNCTION ledger_no_delete();
+DROP TRIGGER IF EXISTS adjustments_no_change_trg ON balance_adjustments;
+CREATE TRIGGER adjustments_no_change_trg BEFORE UPDATE OR DELETE ON balance_adjustments FOR EACH ROW EXECUTE FUNCTION ledger_no_delete();
+`;
+
+const SCHEMA_VERSION = 2;
 
 export function ensureSchema(): Promise<void> {
   if (!globalForPool.__kassaSchema) {
@@ -201,14 +261,17 @@ async function migrate() {
       current = Number(row.rows[0]?.value) || 0;
     }
     if (current < SCHEMA_VERSION) {
-      await client.query(SCHEMA_SQL);
+      if (current < 1) await client.query(SCHEMA_SQL);
+      if (current < 2) await client.query(SCHEMA_V2_SQL);
       await client.query(
         `INSERT INTO app_meta (key, value) VALUES ('schema_version', $1::jsonb)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
         [JSON.stringify(SCHEMA_VERSION)],
       );
     }
-    await importLegacyData(client);
+    await importLegacyData(client, 'legacy_import_v1', ['cash', 'card']);
+    // Yandex and Pochta amounts became payment types in v2; v1 kept them only in the note.
+    await importLegacyData(client, 'legacy_import_v2', ['yandex', 'pochta']);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);
@@ -230,8 +293,8 @@ const LEGACY_SAMPLE_IDS = new Set([
  * One-time copy of the old per-account JSON storage (kassa_app_data) into the shared tables.
  * The old table is only read, never modified or dropped.
  */
-async function importLegacyData(client: pg.PoolClient) {
-  const done = await client.query(`SELECT 1 FROM app_meta WHERE key = 'legacy_import_v1'`);
+async function importLegacyData(client: pg.PoolClient, metaKey: string, methods: readonly string[]) {
+  const done = await client.query(`SELECT 1 FROM app_meta WHERE key = $1`, [metaKey]);
   if (done.rowCount) return;
   const exists = await client.query(`SELECT to_regclass('public.kassa_app_data') AS t`);
   const summary = { owners: 0, records: 0, paymentsCreated: 0, skippedDeleted: 0, skippedSamples: 0 };
@@ -263,15 +326,13 @@ async function importLegacyData(client: pg.PoolClient) {
         const createdAt = Date.parse(report.createdAt || '');
         const extras: string[] = [];
         if (Number(report.tripsCount) > 0) extras.push(`Reyslar: ${Number(report.tripsCount)}`);
-        if (Number(report.yandex) > 0) extras.push(`Yandex: ${Math.round(Number(report.yandex))} so‘m`);
-        if (Number(report.pochta) > 0) extras.push(`Pochta: ${Math.round(Number(report.pochta))} so‘m`);
         if (report.note) extras.push(String(report.note));
         const note = `Eski tizimdan ko‘chirildi. ${extras.join('. ')}`.trim().slice(0, 500);
         await client.query(
           `INSERT INTO clients (code) VALUES ($1) ON CONFLICT (code) DO NOTHING`,
           [code],
         );
-        for (const method of ['cash', 'card'] as const) {
+        for (const method of methods) {
           const amount = Math.round(Number(report[method]) || 0);
           if (amount <= 0) continue;
           const inserted = await client.query(
@@ -290,7 +351,7 @@ async function importLegacyData(client: pg.PoolClient) {
     }
   }
   await client.query(
-    `INSERT INTO app_meta (key, value) VALUES ('legacy_import_v1', $1::jsonb) ON CONFLICT (key) DO NOTHING`,
-    [JSON.stringify({ ...summary, at: new Date().toISOString(), sourceTableFound: Boolean(exists.rows[0].t) })],
+    `INSERT INTO app_meta (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO NOTHING`,
+    [metaKey, JSON.stringify({ ...summary, at: new Date().toISOString(), sourceTableFound: Boolean(exists.rows[0].t) })],
   );
 }

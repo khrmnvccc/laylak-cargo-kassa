@@ -1,5 +1,5 @@
 export type Role = 'admin' | 'worker';
-export type Method = 'cash' | 'card';
+export type Method = 'cash' | 'card' | 'yandex' | 'pochta';
 
 export interface User {
   id: string;
@@ -29,6 +29,8 @@ export interface Totals {
   total: number;
   cash: number;
   card: number;
+  yandex: number;
+  pochta: number;
   count: number;
   clients?: number;
 }
@@ -84,4 +86,47 @@ export interface ClientRow {
   total: number;
   count: number;
   last_paid_at: string | null;
+}
+
+export type Source = Method;
+export type ExpenseCategory = 'tovar' | 'paket' | 'yetkazish' | 'yoqilgi' | 'ijara' | 'oylik' | 'kommunal' | 'inkassa' | 'boshqa';
+
+export interface SourceBalance {
+  source: Source;
+  opening: number;
+  income: number;
+  expense: number;
+  adjustment: number;
+  closing: number;
+  current: number;
+}
+
+export interface Expense {
+  id: string;
+  amount: number;
+  source: 'cash' | 'card';
+  category: ExpenseCategory;
+  note: string | null;
+  spent_at: string;
+  created_by_name: string;
+  voided_at: string | null;
+  voided_by_name: string | null;
+  void_reason: string | null;
+}
+
+export interface Adjustment {
+  id: string;
+  source: Source;
+  amount: number;
+  note: string;
+  at: string;
+  created_by_name: string;
+}
+
+export interface BalanceReport {
+  date: string;
+  sources: SourceBalance[];
+  expenses: Expense[];
+  adjustments: Adjustment[];
+  recent: Array<{ day: string; income: number; expense: number; cash_expense: number; card_expense: number }>;
 }

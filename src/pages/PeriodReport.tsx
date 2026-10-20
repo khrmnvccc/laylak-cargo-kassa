@@ -23,16 +23,16 @@ export default function PeriodReport() {
   const { data, error, loading, reload } = useApi<PeriodsResponse>('/periods', { group, ...range });
 
   const label = (period: string) => (group === 'month' ? monthLabel(period) : `${formatDate(period, false)} – ${formatDate(addDays(period, 6))}`);
-  const chartData = useMemo(() => [...(data?.rows || [])].reverse().map((r) => ({ key: r.period, cash: r.cash, card: r.card, total: r.total, count: r.count })), [data]);
+  const chartData = useMemo(() => [...(data?.rows || [])].reverse().map((r) => ({ key: r.period, cash: r.cash, card: r.card, yandex: r.yandex, pochta: r.pochta, total: r.total, count: r.count })), [data]);
   const best = data?.rows.reduce<PeriodRow | null>((b, r) => (!b || r.total > b.total ? r : b), null);
   const avg = data && data.rows.length ? Math.round(data.totals.total / data.rows.length) : 0;
 
   function exportCsv() {
     if (!data) return;
     downloadCsv(`hisobot_${group === 'week' ? 'haftalik' : 'oylik'}_${range.from}_${range.to}.csv`, [
-      ['Davr', 'Operatsiyalar', 'Mijozlar', 'Naqd (soʻm)', 'Karta (soʻm)', 'Jami (soʻm)'],
-      ...data.rows.map((r) => [label(r.period), r.count, r.clients, r.cash, r.card, r.total]),
-      ['Jami', data.totals.count, '', data.totals.cash, data.totals.card, data.totals.total],
+      ['Davr', 'Operatsiyalar', 'Mijozlar', 'Naqd (soʻm)', 'Karta (soʻm)', 'Yandex (soʻm)', 'Pochta (soʻm)', 'Jami (soʻm)'],
+      ...data.rows.map((r) => [label(r.period), r.count, r.clients, r.cash, r.card, r.yandex, r.pochta, r.total]),
+      ['Jami', data.totals.count, '', data.totals.cash, data.totals.card, data.totals.yandex, data.totals.pochta, data.totals.total],
     ]);
   }
 
@@ -50,10 +50,12 @@ export default function PeriodReport() {
 
       {error && !data ? <Card><ErrorState message={error} onRetry={reload} /></Card> : (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
             <div className="col-span-2 xl:col-span-1"><StatCard label="Davr boʻyicha jami" value={data?.totals.total || 0} loading={loading} hint={data ? `${groupDigits(data.totals.count)} ta operatsiya` : undefined} /></div>
             <StatCard label="Naqd" accent="var(--cash)" value={data?.totals.cash || 0} loading={loading} />
             <StatCard label="Karta" accent="var(--card)" value={data?.totals.card || 0} loading={loading} />
+            <StatCard label="Yandex" accent="var(--yandex)" value={data?.totals.yandex || 0} loading={loading} />
+            <StatCard label="Pochta" accent="var(--pochta)" value={data?.totals.pochta || 0} loading={loading} />
             <div className="col-span-2 xl:col-span-1">
               <StatCard label={group === 'week' ? 'Oʻrtacha haftalik' : 'Oʻrtacha oylik'} value={avg} loading={loading} hint={best ? `Eng yaxshi: ${label(best.period)}` : undefined} />
             </div>
@@ -75,6 +77,8 @@ export default function PeriodReport() {
                       <th className={cx(th, 'text-right')}>Mijoz</th>
                       <th className={cx(th, 'text-right')}>Naqd</th>
                       <th className={cx(th, 'text-right')}>Karta</th>
+                      <th className={cx(th, 'text-right')}>Yandex</th>
+                      <th className={cx(th, 'text-right')}>Pochta</th>
                       <th className={cx(th, 'text-right')}>Jami</th>
                       <th className={cx(th, 'text-right')}>Oʻzgarish</th>
                     </tr>
@@ -89,6 +93,8 @@ export default function PeriodReport() {
                           <td className={cx(td, 'text-right num text-ink-2')}>{groupDigits(r.clients)}</td>
                           <td className={cx(td, 'text-right num')}>{money(r.cash)}</td>
                           <td className={cx(td, 'text-right num')}>{money(r.card)}</td>
+                          <td className={cx(td, 'text-right num')}>{money(r.yandex)}</td>
+                          <td className={cx(td, 'text-right num')}>{money(r.pochta)}</td>
                           <td className={cx(td, 'text-right font-semibold num')}>{money(r.total)}</td>
                           <td className={cx(td, 'text-right')}>{prev ? <Delta current={r.total} previous={prev.total} /> : <span className="text-xs text-ink-3">—</span>}</td>
                         </tr>
@@ -102,6 +108,8 @@ export default function PeriodReport() {
                       <td className={cx(td, 'text-right font-semibold num')}>{groupDigits(data.totals.clients || 0)}</td>
                       <td className={cx(td, 'text-right font-semibold num')}>{money(data.totals.cash)}</td>
                       <td className={cx(td, 'text-right font-semibold num')}>{money(data.totals.card)}</td>
+                      <td className={cx(td, 'text-right font-semibold num')}>{money(data.totals.yandex)}</td>
+                      <td className={cx(td, 'text-right font-semibold num')}>{money(data.totals.pochta)}</td>
                       <td className={cx(td, 'text-right font-semibold num')}>{money(data.totals.total)}</td>
                       <td />
                     </tr>

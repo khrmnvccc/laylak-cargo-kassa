@@ -97,6 +97,8 @@ function sameOrigin(headers: Record<string, string | undefined>): boolean {
 
 // ---------- helpers ----------
 
+const METHODS = ['cash', 'card', 'yandex', 'pochta'];
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function todayTashkent(): string {
@@ -147,6 +149,8 @@ async function totalsFor(from: string, to: string) {
     `SELECT COALESCE(SUM(p.amount), 0)::bigint AS total,
             COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'cash'), 0)::bigint AS cash,
             COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'card'), 0)::bigint AS card,
+            COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'yandex'), 0)::bigint AS yandex,
+            COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'pochta'), 0)::bigint AS pochta,
             COUNT(*)::bigint AS count,
             COUNT(DISTINCT p.client_code)::bigint AS clients
        FROM payments p
@@ -258,7 +262,10 @@ route('GET', '/version', 'user', async () => {
     `SELECT (SELECT COUNT(*) FROM payments)::text || ':' ||
             COALESCE((SELECT EXTRACT(EPOCH FROM MAX(updated_at)) FROM payments), 0)::text || ':' ||
             COALESCE((SELECT EXTRACT(EPOCH FROM MAX(updated_at)) FROM clients), 0)::text || ':' ||
-            COALESCE((SELECT EXTRACT(EPOCH FROM MAX(updated_at)) FROM app_users), 0)::text AS version`,
+            COALESCE((SELECT EXTRACT(EPOCH FROM MAX(updated_at)) FROM app_users), 0)::text || ':' ||
+            (SELECT COUNT(*) FROM expenses)::text || ':' ||
+            COALESCE((SELECT EXTRACT(EPOCH FROM MAX(updated_at)) FROM expenses), 0)::text || ':' ||
+            (SELECT COUNT(*) FROM balance_adjustments)::text AS version`,
   );
   return { version: rows[0].version, today: todayTashkent() };
 });
@@ -277,7 +284,7 @@ route('POST', '/payments', 'user', async (ctx) => {
   else if (!/^[A-Z0-9-]{1,40}$/.test(clientCode)) errors.clientCode = 'ID faqat harf, raqam va "-" dan iborat bo‘lsin';
   if (!Number.isInteger(amount) || amount <= 0) errors.amount = 'Summa musbat butun son bo‘lishi kerak';
   else if (amount > 10_000_000_000) errors.amount = 'Summa juda katta';
-  if (method !== 'cash' && method !== 'card') errors.method = 'To‘lov turini tanlang';
+  if (!METHODS.includes(method)) errors.method = 'To‘lov turini tanlang';
 
   let paidAt: string | null = null;
   if (b.paidAt) {
@@ -322,7 +329,7 @@ route('GET', '/payments', 'user', async (ctx) => {
   const where = ['1=1', RANGE_SQL(1, 2)];
   const params: unknown[] = [from, to];
   const add = (sql: string, value: unknown) => { params.push(value); where.push(sql.replace('?', `$${params.length}`)); };
-  if (q.method === 'cash' || q.method === 'card') add('p.method = ?', q.method);
+  if (METHODS.includes(q.method as string)) add('p.method = ?', q.method);
   if (q.worker && /^[0-9a-f-]{36}$/i.test(q.worker)) add('p.created_by = ?', q.worker);
   if (q.client) add('p.client_code = ?', q.client.toUpperCase());
   if (q.q) {
@@ -346,7 +353,9 @@ route('GET', '/payments', 'user', async (ctx) => {
       `SELECT COUNT(*)::bigint AS count,
               COALESCE(SUM(p.amount) FILTER (WHERE p.voided_at IS NULL), 0)::bigint AS total,
               COALESCE(SUM(p.amount) FILTER (WHERE p.voided_at IS NULL AND p.method = 'cash'), 0)::bigint AS cash,
-              COALESCE(SUM(p.amount) FILTER (WHERE p.voided_at IS NULL AND p.method = 'card'), 0)::bigint AS card
+              COALESCE(SUM(p.amount) FILTER (WHERE p.voided_at IS NULL AND p.method = 'card'), 0)::bigint AS card,
+              COALESCE(SUM(p.amount) FILTER (WHERE p.voided_at IS NULL AND p.method = 'yandex'), 0)::bigint AS yandex,
+              COALESCE(SUM(p.amount) FILTER (WHERE p.voided_at IS NULL AND p.method = 'pochta'), 0)::bigint AS pochta
          FROM payments p LEFT JOIN clients c ON c.code = p.client_code WHERE ${whereSql}`,
       params,
     ),
@@ -387,6 +396,8 @@ route('GET', '/summary', 'user', async (ctx) => {
               COALESCE(SUM(p.amount), 0)::bigint AS total,
               COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'cash'), 0)::bigint AS cash,
               COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'card'), 0)::bigint AS card,
+              COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'yandex'), 0)::bigint AS yandex,
+              COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'pochta'), 0)::bigint AS pochta,
               COUNT(*)::bigint AS count
          FROM payments p LEFT JOIN app_users u ON u.id = p.created_by
         WHERE p.voided_at IS NULL AND ${RANGE_SQL(1, 2)}
@@ -398,6 +409,8 @@ route('GET', '/summary', 'user', async (ctx) => {
               COALESCE(SUM(p.amount), 0)::bigint AS total,
               COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'cash'), 0)::bigint AS cash,
               COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'card'), 0)::bigint AS card,
+              COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'yandex'), 0)::bigint AS yandex,
+              COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'pochta'), 0)::bigint AS pochta,
               COUNT(*)::bigint AS count
          FROM payments p
         WHERE p.voided_at IS NULL AND ${RANGE_SQL(1, 2)}
@@ -414,7 +427,7 @@ route('GET', '/summary', 'user', async (ctx) => {
   const byDay = [];
   if (span <= 400) {
     for (let d = from; d <= to; d = addDays(d, 1)) {
-      byDay.push(byDayMap.get(d) || { day: d, total: 0, cash: 0, card: 0, count: 0 });
+      byDay.push(byDayMap.get(d) || { day: d, total: 0, cash: 0, card: 0, yandex: 0, pochta: 0, count: 0 });
     }
   } else {
     byDay.push(...byDayRows);
@@ -431,6 +444,8 @@ route('GET', '/periods', 'user', async (ctx) => {
             COALESCE(SUM(p.amount), 0)::bigint AS total,
             COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'cash'), 0)::bigint AS cash,
             COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'card'), 0)::bigint AS card,
+            COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'yandex'), 0)::bigint AS yandex,
+            COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'pochta'), 0)::bigint AS pochta,
             COUNT(*)::bigint AS count,
             COUNT(DISTINCT p.client_code)::bigint AS clients,
             COUNT(DISTINCT (p.paid_at AT TIME ZONE '${TZ}')::date)::bigint AS active_days
@@ -476,6 +491,8 @@ route('GET', '/clients/:code', 'user', async (ctx) => {
       `SELECT COALESCE(SUM(amount), 0)::bigint AS total,
               COALESCE(SUM(amount) FILTER (WHERE method = 'cash'), 0)::bigint AS cash,
               COALESCE(SUM(amount) FILTER (WHERE method = 'card'), 0)::bigint AS card,
+              COALESCE(SUM(amount) FILTER (WHERE method = 'yandex'), 0)::bigint AS yandex,
+              COALESCE(SUM(amount) FILTER (WHERE method = 'pochta'), 0)::bigint AS pochta,
               COUNT(*)::bigint AS count, MIN(paid_at) AS first_paid_at, MAX(paid_at) AS last_paid_at
          FROM payments WHERE client_code = $1 AND voided_at IS NULL`,
       [code],
@@ -510,6 +527,8 @@ route('GET', '/staff', 'admin', async (ctx) => {
             COALESCE(SUM(p.amount), 0)::bigint AS total,
             COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'cash'), 0)::bigint AS cash,
             COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'card'), 0)::bigint AS card,
+            COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'yandex'), 0)::bigint AS yandex,
+            COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'pochta'), 0)::bigint AS pochta,
             COUNT(p.id)::bigint AS count
        FROM app_users u
        LEFT JOIN payments p ON p.created_by = u.id AND p.voided_at IS NULL AND ${RANGE_SQL(1, 2)}
@@ -595,4 +614,137 @@ route('GET', '/system', 'admin', async () => {
                   (SELECT COUNT(*) FROM legacy_import)::bigint AS legacy_records`),
   ]);
   return { meta: Object.fromEntries(meta.map((m: any) => [m.key, m.value])), counts: counts[0] };
+});
+
+// ---------- kassa balance, expenses (admin) ----------
+
+const EXPENSE_CATEGORIES = ['tovar', 'paket', 'yetkazish', 'yoqilgi', 'ijara', 'oylik', 'kommunal', 'inkassa', 'boshqa'];
+const SOURCES = ['cash', 'card', 'yandex', 'pochta'];
+
+function parseAt(value: unknown, errors: Record<string, string>): string | null {
+  if (!value) return null;
+  const t = Date.parse(String(value));
+  if (!Number.isFinite(t)) { errors.at = 'Sana noto‘g‘ri'; return null; }
+  if (t > Date.now() + 5 * 60_000) { errors.at = 'Kelajakdagi sana kiritib bo‘lmaydi'; return null; }
+  return new Date(t).toISOString();
+}
+
+// Every money movement per source: income (payments), expenses, signed adjustments.
+const LEDGER_SQL = `
+  SELECT method AS source, amount AS income, 0::bigint AS expense, 0::bigint AS adjustment, paid_at AS at FROM payments WHERE voided_at IS NULL
+  UNION ALL SELECT source, 0, amount, 0, spent_at FROM expenses WHERE voided_at IS NULL
+  UNION ALL SELECT source, 0, 0, amount, at FROM balance_adjustments`;
+
+route('GET', '/balance', 'admin', async (ctx) => {
+  const date = ctx.query.date && DATE_RE.test(ctx.query.date) ? ctx.query.date : todayTashkent();
+  const start = `($1::date)::timestamp AT TIME ZONE '${TZ}'`;
+  const end = `($1::date + 1)::timestamp AT TIME ZONE '${TZ}'`;
+  const [rows, expenses, adjustments, recent] = await Promise.all([
+    query(
+      `SELECT source,
+              COALESCE(SUM(income - expense + adjustment) FILTER (WHERE at < ${start}), 0)::bigint AS opening,
+              COALESCE(SUM(income) FILTER (WHERE at >= ${start} AND at < ${end}), 0)::bigint AS income,
+              COALESCE(SUM(expense) FILTER (WHERE at >= ${start} AND at < ${end}), 0)::bigint AS expense,
+              COALESCE(SUM(adjustment) FILTER (WHERE at >= ${start} AND at < ${end}), 0)::bigint AS adjustment,
+              COALESCE(SUM(income - expense + adjustment) FILTER (WHERE at < ${end}), 0)::bigint AS closing,
+              COALESCE(SUM(income - expense + adjustment), 0)::bigint AS current
+         FROM (${LEDGER_SQL}) l GROUP BY source`,
+      [date],
+    ),
+    query(
+      `SELECT id, amount, source, category, note, spent_at, created_by_name, voided_at, voided_by_name, void_reason
+         FROM expenses WHERE spent_at >= ${start} AND spent_at < ${end} ORDER BY spent_at DESC`,
+      [date],
+    ),
+    query(
+      `SELECT id, amount, source, note, at, created_by_name FROM balance_adjustments
+        WHERE at >= ${start} AND at < ${end} ORDER BY at DESC`,
+      [date],
+    ),
+    query(
+      `SELECT (at AT TIME ZONE '${TZ}')::date AS day,
+              COALESCE(SUM(income), 0)::bigint AS income,
+              COALESCE(SUM(expense), 0)::bigint AS expense,
+              COALESCE(SUM(expense) FILTER (WHERE source = 'cash'), 0)::bigint AS cash_expense,
+              COALESCE(SUM(expense) FILTER (WHERE source = 'card'), 0)::bigint AS card_expense
+         FROM (${LEDGER_SQL}) l
+        WHERE at >= ($1::date - 13)::timestamp AT TIME ZONE '${TZ}' AND at < ${end}
+        GROUP BY 1 ORDER BY 1 DESC`,
+      [date],
+    ),
+  ]);
+  const zero = { opening: 0, income: 0, expense: 0, adjustment: 0, closing: 0, current: 0 };
+  const bySource = Object.fromEntries(SOURCES.map((src) => [src, { ...zero, ...(rows.find((r: any) => r.source === src) || {}), source: src }]));
+  const recentMap = new Map(recent.map((r: any) => [r.day, r]));
+  const days = [];
+  for (let i = 0; i < 14; i++) {
+    const day = addDays(date, -i);
+    days.push(recentMap.get(day) || { day, income: 0, expense: 0, cash_expense: 0, card_expense: 0 });
+  }
+  return { date, sources: SOURCES.map((src) => bySource[src]), expenses, adjustments, recent: days };
+});
+
+route('POST', '/expenses', 'admin', async (ctx) => {
+  const b = ctx.body || {};
+  const errors: Record<string, string> = {};
+  const amount = Number(b.amount);
+  if (!Number.isInteger(amount) || amount <= 0) errors.amount = 'Summa musbat butun son bo‘lishi kerak';
+  else if (amount > 10_000_000_000) errors.amount = 'Summa juda katta';
+  if (b.source !== 'cash' && b.source !== 'card') errors.source = 'Qaysi hisobdan to‘langanini tanlang';
+  if (!EXPENSE_CATEGORIES.includes(b.category)) errors.category = 'Toifani tanlang';
+  const note = str(b.note, 300);
+  if (b.category === 'boshqa' && note.length < 3) errors.note = '“Boshqa” uchun izoh yozing';
+  const at = parseAt(b.spentAt, errors);
+  if (Object.keys(errors).length) return { status: 400, body: { error: 'Ma’lumotlarni tekshiring', fields: errors } };
+  const expense = await transaction(async (db) => {
+    const inserted = await db.query(
+      `INSERT INTO expenses (amount, source, category, note, spent_at, created_by, created_by_name)
+       VALUES ($1, $2, $3, NULLIF($4, ''), COALESCE($5::timestamptz, NOW()), $6, $7)
+       RETURNING id, amount, source, category, note, spent_at, created_by_name, voided_at`,
+      [amount, b.source, b.category, note, at, ctx.user!.id, ctx.user!.full_name],
+    );
+    await audit(db, ctx.user, 'expense_create', 'expense', inserted.rows[0].id, { amount, source: b.source, category: b.category });
+    return inserted.rows[0];
+  });
+  return { status: 201, body: { expense } };
+});
+
+route('POST', '/expenses/:id/void', 'admin', async (ctx) => {
+  const reason = str(ctx.body?.reason, 300);
+  if (reason.length < 3) throw new HttpError(400, 'Bekor qilish sababini yozing');
+  if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Rasxod topilmadi');
+  return transaction(async (db) => {
+    const updated = await db.query(
+      `UPDATE expenses SET voided_at = NOW(), voided_by_name = $2, void_reason = $3
+        WHERE id = $1 AND voided_at IS NULL RETURNING id, amount, source, category`,
+      [ctx.params.id, ctx.user!.full_name, reason],
+    );
+    if (!updated.rowCount) throw new HttpError(404, 'Rasxod topilmadi yoki allaqachon bekor qilingan');
+    await audit(db, ctx.user, 'expense_void', 'expense', ctx.params.id, { ...updated.rows[0], reason });
+    return { expense: updated.rows[0] };
+  });
+});
+
+route('POST', '/adjustments', 'admin', async (ctx) => {
+  const b = ctx.body || {};
+  const errors: Record<string, string> = {};
+  const amount = Number(b.amount);
+  if (!Number.isInteger(amount) || amount === 0) errors.amount = 'Summa noldan farqli butun son bo‘lsin';
+  else if (Math.abs(amount) > 100_000_000_000) errors.amount = 'Summa juda katta';
+  if (!SOURCES.includes(b.source)) errors.source = 'Hisobni tanlang';
+  const note = str(b.note, 300);
+  if (note.length < 3) errors.note = 'Sababini yozing';
+  const at = parseAt(b.at, errors);
+  if (Object.keys(errors).length) return { status: 400, body: { error: 'Ma’lumotlarni tekshiring', fields: errors } };
+  const adjustment = await transaction(async (db) => {
+    const inserted = await db.query(
+      `INSERT INTO balance_adjustments (source, amount, note, at, created_by, created_by_name)
+       VALUES ($1, $2, $3, COALESCE($4::timestamptz, NOW()), $5, $6)
+       RETURNING id, source, amount, note, at, created_by_name`,
+      [b.source, amount, note, at, ctx.user!.id, ctx.user!.full_name],
+    );
+    await audit(db, ctx.user, 'balance_adjust', 'adjustment', inserted.rows[0].id, { source: b.source, amount, note });
+    return inserted.rows[0];
+  });
+  return { status: 201, body: { adjustment } };
 });
