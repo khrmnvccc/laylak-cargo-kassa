@@ -34,7 +34,7 @@ export default function Dashboard() {
         <Card><ErrorState message={error} onRetry={reload} /></Card>
       ) : (
         <>
-          <div className="grid gap-3 sm:grid-cols-2 sm:gap-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
             <StatCard label={single ? 'Jami tushum' : 'Davr tushumi'} value={t?.total || 0} previous={p?.total} hint={`Naqd + karta + Yandex + Pochta · ${compareLabel}`} loading={loading} />
             <StatCard label="Operatsiyalar soni" value={t?.count || 0} previous={p?.count} loading={loading} format={(n) => groupDigits(n)}
               hint={t ? `${t.clients || 0} ta mijoz` : undefined} />

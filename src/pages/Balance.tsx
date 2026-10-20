@@ -145,7 +145,7 @@ export default function Balance() {
                       <td className={cx(td, 'font-semibold')}>Jami</td>
                       <td className={cx(td, 'text-right font-semibold num')}>{money(sum('opening'))}</td>
                       <td className={cx(td, 'text-right font-semibold text-up num')}>+{money(sum('income'))}</td>
-                      <td className={cx(td, 'text-right font-semibold text-down num')}>−{money(sum('expense'))}</td>
+                      <td className={cx(td, 'text-right font-semibold num', sum('expense') ? 'text-down' : 'text-ink-3')}>{sum('expense') ? `−${money(sum('expense'))}` : money(0)}</td>
                       <td className={cx(td, 'text-right font-semibold num')}>{signed(sum('adjustment'))}</td>
                       <td className={cx(td, 'text-right font-semibold num')}>{money(sum('closing'))}</td>
                     </tr>
