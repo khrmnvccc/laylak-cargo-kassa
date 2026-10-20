@@ -263,7 +263,15 @@ CREATE INDEX IF NOT EXISTS attendance_in_idx ON attendance(check_in_at DESC);
 ALTER TABLE attendance ENABLE ROW LEVEL SECURITY;
 `;
 
-const SCHEMA_VERSION = 3;
+// Three levels: owner (Ega, can do everything), admin and worker. Everyone who was an admin so far
+// keeps full control by becoming an owner; the owner can then make others plain admins.
+const SCHEMA_V4_SQL = `
+ALTER TABLE app_users DROP CONSTRAINT IF EXISTS app_users_role_check;
+UPDATE app_users SET role = 'owner' WHERE role = 'admin';
+ALTER TABLE app_users ADD CONSTRAINT app_users_role_check CHECK (role IN ('owner', 'admin', 'worker'));
+`;
+
+const SCHEMA_VERSION = 4;
 
 export function ensureSchema(): Promise<void> {
   if (!globalForPool.__kassaSchema) {
@@ -291,6 +299,7 @@ async function migrate() {
       if (current < 1) await client.query(SCHEMA_SQL);
       if (current < 2) await client.query(SCHEMA_V2_SQL);
       if (current < 3) await client.query(SCHEMA_V3_SQL);
+      if (current < 4) await client.query(SCHEMA_V4_SQL);
       await client.query(
         `INSERT INTO app_meta (key, value) VALUES ('schema_version', $1::jsonb)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,

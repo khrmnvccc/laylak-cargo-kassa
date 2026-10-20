@@ -623,4 +623,13 @@ export const ENTRIES: Array<[string, string, string]> = [
   ['Ishchilar va davomatni koʻrish', 'Просмотр сотрудников и посещаемости', '查看员工和考勤'],
   ['Barcha xodimlar natijasi, kim qachon kelib-ketgani', 'Результаты всех сотрудников, кто когда пришёл и ушёл', '所有员工业绩及到岗离岗时间'],
   ['{0} kun', '{0} дн.', '{0} 天'],
+  ['Ega', 'Владелец', '所有者'],
+  ['Xodimlarni boshqarish', 'Управление сотрудниками', '管理员工'],
+  ['Ishchi va kassir qoʻshadi, ruxsat beradi, davomatni tuzatadi, ishxona joyini belgilaydi', 'Добавляет работников и кассиров, выдаёт права, исправляет посещаемость, задаёт место офиса', '添加员工和收银员、授予权限、修正考勤、设定办公地点'],
+  ['Hamma narsani qiladi, adminlarni ham boshqaradi. Uni cheklab boʻlmaydi', 'Может всё, управляет и админами. Его нельзя ограничить', '可执行一切操作，也管理管理员。不可限制'],
+  ['Barcha ruxsatlar bilan boshlanadi. Keraksizini pastda olib tashlang', 'Начинает со всеми правами. Лишние снимите ниже', '默认拥有全部权限。请在下方取消不需要的'],
+  ['Admin va Egani faqat Ega boshqaradi', 'Админами и владельцем управляет только владелец', '只有所有者可以管理管理员和所有者'],
+  ['Oʻzingizda yoʻq ruxsatni boshqaga bera olmaysiz', 'Нельзя выдать право, которого нет у вас', '不能授予您自己没有的权限'],
+  ['Tizimda kamida bitta faol Ega qolishi kerak', 'В системе должен остаться хотя бы один активный владелец', '系统中至少要保留一名活跃的所有者'],
+  ['O‘z akkauntingizning rolini yoki faolligini o‘zgartira olmaysiz', 'Нельзя менять роль или активность своего аккаунта', '不能更改自己账户的角色或状态'],
 ];

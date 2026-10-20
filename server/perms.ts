@@ -1,5 +1,5 @@
-// What a worker may do. Admins can always do everything (so nobody can lock the system out);
-// for workers each right is switched on or off by an admin on the Ishchilar page.
+// What a person may do. The owner (Ega) can always do everything, so nobody can lock the system out;
+// for admins and workers each right is switched on or off on the Ishchilar page.
 export const PERMISSIONS = [
   'payments.create', // enter payments on the Toʻlov kiritish page
   'payments.backdate', // enter a payment with an earlier date and time
@@ -9,6 +9,7 @@ export const PERMISSIONS = [
   'clients.edit', // edit client names and phones, upload the client list
   'balance.view', // cash balance, expenses and corrections
   'staff.view', // staff list with their totals, and everyone's attendance
+  'staff.manage', // add and edit workers and cashiers, fix attendance, set the office location
 ] as const;
 export type Perm = (typeof PERMISSIONS)[number];
 
@@ -17,7 +18,8 @@ export const WORKER_DEFAULT: Perm[] = ['payments.create', 'reports.view'];
 
 export const isPerm = (p: unknown): p is Perm => (PERMISSIONS as readonly unknown[]).includes(p);
 
+/** Owner: everything, always. Admin: everything until the owner takes rights away. Worker: WORKER_DEFAULT until changed. */
 export function permsOf(role: string, stored: string[] | null | undefined): Perm[] {
-  if (role === 'admin') return [...PERMISSIONS];
+  if (role === 'owner' || (role === 'admin' && !stored)) return [...PERMISSIONS];
   return stored ? stored.filter(isPerm) : [...WORKER_DEFAULT];
 }
