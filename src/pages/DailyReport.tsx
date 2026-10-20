@@ -1,12 +1,16 @@
 import { useState } from 'react';
-import { ChevronLeft, ChevronRight, Printer } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useApi } from '../lib/live';
 import { addDays, formatDate, groupDigits, money, todayTashkent, weekday } from '../lib/format';
 import type { PaymentList, Summary } from '../lib/types';
 import { PaymentsTable } from '../components/PaymentsTable';
+import { PrintButton } from '../components/PrintButton';
+import { useAuth } from '../lib/auth';
+import { printDailyReport } from '../lib/reports';
 import { Avatar, Button, Card, CardHeader, EmptyState, ErrorState, IconButton, Input, PageHeader, SkeletonRows, StatCard, cx, td, th } from '../components/ui';
 
 export default function DailyReport({ params }: { params: URLSearchParams }) {
+  const { user } = useAuth();
   const today = todayTashkent();
   const [date, setDate] = useState(() => params.get('date') || today);
   const summary = useApi<Summary>('/summary', { from: date, to: date });
@@ -26,7 +30,7 @@ export default function DailyReport({ params }: { params: URLSearchParams }) {
             <IconButton label="Keyingi kun" className="size-8 disabled:opacity-40" disabled={date >= today} onClick={() => setDate(addDays(date, 1))}><ChevronRight className="size-4" /></IconButton>
           </div>
           {date !== today && <Button onClick={() => setDate(today)}>Bugun</Button>}
-          <Button icon={<Printer className="size-4" />} onClick={() => window.print()}>Chop etish</Button>
+          <PrintButton run={() => printDailyReport(date, user.full_name)} />
         </>}
       />
 

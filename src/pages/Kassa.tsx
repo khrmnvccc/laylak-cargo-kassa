@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Banknote, CheckCircle2, CreditCard, Loader2, Mail, Navigation, Save, UserCheck, UserPlus } from 'lucide-react';
+import { Banknote, CheckCircle2, Printer, CreditCard, Loader2, Mail, Navigation, Save, UserCheck, UserPlus } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useApi, useLive } from '../lib/live';
 import { METHODS, dateTime, groupDigits, methodLabel, money, timeOf, todayTashkent } from '../lib/format';
 import type { Method, Payment, PaymentList, Summary } from '../lib/types';
 import { PaymentsTable } from '../components/PaymentsTable';
+import { printPaymentLabel } from '../lib/print';
 import { Alert, Button, Card, CardHeader, EmptyState, Field, Input, MethodBadge, Modal, PageHeader, SkeletonRows, Textarea, cx, useToast } from '../components/ui';
 
 interface ClientInfo { client: { code: string; full_name: string | null }; stats: { total: number; count: number } }
@@ -36,6 +37,8 @@ export default function Kassa() {
   const [confirming, setConfirming] = useState(false);
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Payment | null>(null);
+  const [autoLabel, setAutoLabel] = useState(() => { try { return localStorage.getItem('lk-auto-label') === '1'; } catch { return false; } });
+  const toggleAutoLabel = (on: boolean) => { setAutoLabel(on); try { localStorage.setItem('lk-auto-label', on ? '1' : '0'); } catch { /* ignore */ } };
   const [lookup, setLookup] = useState<{ state: 'idle' | 'loading' | 'found' | 'new'; info?: ClientInfo }>({ state: 'idle' });
   const [now, setNow] = useState(() => new Date().toISOString());
   const codeRef = useRef<HTMLInputElement>(null);
@@ -109,6 +112,7 @@ export default function Kassa() {
       });
       setConfirming(false);
       setLastSaved(payment);
+      if (autoLabel) printPaymentLabel(payment);
       toast({ tone: 'success', title: 'Toʻlov saqlandi', description: `${payment.client_code} · ${money(payment.amount)} · ${methodLabel(payment.method)}` });
       setClientCode(''); setClientName(''); setAmountText(''); setNote(''); setErrors({}); setCustomTime(false);
       setLookup({ state: 'idle' });
@@ -142,7 +146,10 @@ export default function Kassa() {
                     {lastSaved.client_code}{lastSaved.client_name ? ` · ${lastSaved.client_name}` : ''} · {money(lastSaved.amount)} · {methodLabel(lastSaved.method)} · {timeOf(lastSaved.paid_at)}
                   </div>
                 </div>
-                <button type="button" className="text-xs font-medium text-ink-3 hover:text-ink" onClick={() => setLastSaved(null)}>Yopish</button>
+                <div className="flex shrink-0 flex-col items-end gap-1.5">
+                  <Button size="sm" icon={<Printer className="size-4" />} onClick={() => printPaymentLabel(lastSaved)}>Yorliq</Button>
+                  <button type="button" className="text-xs font-medium text-ink-3 hover:text-ink" onClick={() => setLastSaved(null)}>Yopish</button>
+                </div>
               </div>
             )}
             {formError && <Alert>{formError}</Alert>}
@@ -210,7 +217,10 @@ export default function Kassa() {
             </div>
 
             <div className="flex flex-col-reverse gap-2 border-t border-line pt-5 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-xs text-ink-3">Saqlashdan oldin maʼlumotlar tekshiriladi va tasdiqlash soʻraladi.</p>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-2">
+                <input type="checkbox" className="size-4 accent-[var(--primary)]" checked={autoLabel} onChange={(e) => toggleAutoLabel(e.target.checked)} />
+                Saqlagach yorliqni chop etish (76×130)
+              </label>
               <Button type="submit" variant="primary" size="lg" icon={<Save className="size-4" />} className="sm:min-w-[200px]">Toʻlovni saqlash</Button>
             </div>
           </form>

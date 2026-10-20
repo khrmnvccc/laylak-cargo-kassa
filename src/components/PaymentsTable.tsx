@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Ban, ChevronRight } from 'lucide-react';
+import { Ban, ChevronRight, Printer } from 'lucide-react';
+import { printPaymentLabel } from '../lib/print';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useLive } from '../lib/live';
@@ -136,6 +137,7 @@ function PaymentDetail({ payment, onClose }: { payment: Payment | null; onClose:
             {user.role === 'admin' && !payment.voided_at && (
               <Button variant="ghost" className="text-danger hover:text-danger sm:mr-auto" onClick={() => setVoiding(true)} icon={<Ban className="size-4" />}>Bekor qilish</Button>
             )}
+            <Button icon={<Printer className="size-4" />} onClick={() => printPaymentLabel(payment)}>Yorliq (76×130)</Button>
             <Button onClick={close} data-autofocus>Yopish</Button>
           </>
         )

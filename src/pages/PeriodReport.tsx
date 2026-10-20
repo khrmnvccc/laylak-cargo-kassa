@@ -5,6 +5,9 @@ import { addDays, downloadCsv, formatDate, groupDigits, money, monthLabel, range
 import type { PeriodRow, Totals } from '../lib/types';
 import { DateRangePicker, type Range } from '../components/DateRange';
 import { Legend, RevenueChart } from '../components/RevenueChart';
+import { PrintButton } from '../components/PrintButton';
+import { useAuth } from '../lib/auth';
+import { printPeriodReport } from '../lib/reports';
 import { Button, Card, CardHeader, Delta, EmptyState, ErrorState, PageHeader, Segmented, SkeletonRows, StatCard, cx, td, th } from '../components/ui';
 
 interface PeriodsResponse { group: 'week' | 'month'; from: string; to: string; rows: PeriodRow[]; totals: Totals }
@@ -18,6 +21,7 @@ function defaultRange(group: 'week' | 'month'): Range {
 }
 
 export default function PeriodReport() {
+  const { user } = useAuth();
   const [group, setGroup] = useState<'week' | 'month'>('week');
   const [range, setRange] = useState<Range>(() => defaultRange('week'));
   const { data, error, loading, reload } = useApi<PeriodsResponse>('/periods', { group, ...range });
@@ -45,6 +49,7 @@ export default function PeriodReport() {
           <Segmented value={group} onChange={(g) => { setGroup(g); setRange(defaultRange(g)); }} options={[{ value: 'week', label: 'Haftalik' }, { value: 'month', label: 'Oylik' }]} />
           <DateRangePicker value={range} onChange={setRange} />
           <Button icon={<Download className="size-4" />} onClick={exportCsv} disabled={!data?.rows.length}>CSV</Button>
+          <PrintButton disabled={!data?.rows.length} run={() => data && printPeriodReport({ group, from: data.from, to: data.to, rows: data.rows, totals: data.totals, label, printedBy: user.full_name })} />
         </>}
       />
 
