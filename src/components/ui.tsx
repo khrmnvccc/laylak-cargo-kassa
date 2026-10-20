@@ -98,7 +98,7 @@ export function StatCard({ label, value, previous, hint, accent, loading, format
   label: string; value: number; previous?: number; hint?: ReactNode; accent?: string; loading?: boolean; format?: (n: number) => string;
 }) {
   return (
-    <Card className="anim-rise">
+    <Card className="anim-rise min-w-0">
       <div className="flex items-center gap-2 text-[13px] font-medium text-ink-2">
         {accent && <span className="size-2 rounded-full" style={{ background: accent }} />}
         {label}
