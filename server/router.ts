@@ -323,6 +323,87 @@ route('POST', '/payments', 'user', async (ctx) => {
   return { status: 201, body: { payment } };
 });
 
+// Admin import of payments from an old Excel report (CSV: sana, id, turi, summa, izoh).
+// A row is skipped when the same payment (client, day, type, amount) is already in the
+// kassa — typed in by hand or loaded by an earlier import — so the file can be uploaded
+// again safely. With dryRun the counts are returned and nothing is written.
+const IMPORT_SOURCE = 'Excel hisobot';
+route('POST', '/payments/import', 'admin', async (ctx) => {
+  const rows = Array.isArray(ctx.body?.rows) ? ctx.body.rows : null;
+  const dryRun = ctx.body?.dryRun === true;
+  if (!rows || !rows.length) throw new HttpError(400, 'Fayldan toʻlov topilmadi');
+  if (rows.length > 5000) throw new HttpError(400, 'Bir martada 5000 tadan koʻp toʻlov yuklab boʻlmaydi');
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(new Date());
+  const errors: Array<{ row: number; error: string }> = [];
+  const clean: Array<{ date: string; code: string; method: string; amount: number; note: string; key: string }> = [];
+  rows.forEach((r: any, index: number) => {
+    const row = index + 1;
+    const date = str(r?.date, 10);
+    const code = str(r?.code, 40).replace(/\s+/g, '').toUpperCase();
+    const method = str(r?.method, 10);
+    const amount = Number(r?.amount);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) return errors.push({ row, error: 'Sana notoʻgʻri' });
+    if (date > today) return errors.push({ row, error: 'Kelajakdagi sana' });
+    if (!/^[A-Z0-9-]{1,40}$/.test(code)) return errors.push({ row, error: code ? `ID notoʻgʻri: ${code}` : 'ID yoʻq' });
+    if (!METHODS.includes(method)) return errors.push({ row, error: 'Toʻlov turi notoʻgʻri' });
+    if (!Number.isInteger(amount) || amount <= 0 || amount > 10_000_000_000) return errors.push({ row, error: 'Summa notoʻgʻri' });
+    clean.push({ date, code, method, amount, note: str(r?.note, 500), key: `${date}|${code}|${method}|${amount}` });
+  });
+  if (!clean.length) return { status: 400, body: { error: 'Yaroqli toʻlov topilmadi', errors: errors.slice(0, 50) } };
+
+  return transaction(async (db) => {
+    const dates = clean.map((r) => r.date).sort();
+    // Active payments already in the kassa for the same client/day/type/amount.
+    const existing = await db.query(
+      `SELECT to_char(p.paid_at AT TIME ZONE '${TZ}', 'YYYY-MM-DD') || '|' || p.client_code || '|' || p.method || '|' || p.amount AS key,
+              COUNT(*)::int AS n
+         FROM payments p
+        WHERE p.voided_at IS NULL AND p.client_code = ANY($3::text[])
+          AND p.paid_at >= ($1::date)::timestamp AT TIME ZONE '${TZ}' AND p.paid_at < ($2::date + 1)::timestamp AT TIME ZONE '${TZ}'
+        GROUP BY 1`,
+      [dates[0], dates[dates.length - 1], [...new Set(clean.map((r) => r.code))]],
+    );
+    const have = new Map<string, number>(existing.rows.map((r) => [r.key, r.n]));
+    const seen = new Map<string, number>();
+    const toAdd = clean.filter((r) => {
+      const n = (seen.get(r.key) || 0) + 1;
+      seen.set(r.key, n);
+      return n > (have.get(r.key) || 0);
+    });
+    const total = (list: typeof clean) => {
+      const t: Record<string, number> = { cash: 0, card: 0, yandex: 0, pochta: 0 };
+      list.forEach((r) => { t[r.method] += r.amount; });
+      return { ...t, total: list.reduce((s, r) => s + r.amount, 0), count: list.length };
+    };
+    const summary = {
+      dryRun, from: dates[0], to: dates[dates.length - 1],
+      adding: total(toAdd), alreadyInKassa: clean.length - toAdd.length, invalid: errors.length,
+      newClients: 0, errors: errors.slice(0, 50),
+    };
+    const codes = [...new Set(toAdd.map((r) => r.code))];
+    const known = await db.query(`SELECT code FROM clients WHERE code = ANY($1::text[])`, [codes]);
+    summary.newClients = codes.length - known.rowCount!;
+    if (dryRun || !toAdd.length) return summary;
+
+    await db.query(`INSERT INTO clients (code) SELECT unnest($1::text[]) ON CONFLICT (code) DO NOTHING`, [codes]);
+    const occurrence = new Map<string, number>();
+    const payload = toAdd.map((r) => {
+      const n = (occurrence.get(r.key) || 0) + 1;
+      occurrence.set(r.key, n);
+      return { ...r, legacy_id: `xls:${r.key}|${(have.get(r.key) || 0) + n}` };
+    });
+    await db.query(
+      `INSERT INTO payments (client_code, amount, method, note, paid_at, created_by, created_by_name, legacy_id)
+       SELECT x.code, x.amount, x.method, NULLIF(x.note, ''), (x.date::date + time '12:00') AT TIME ZONE '${TZ}', $2, $3, x.legacy_id
+         FROM jsonb_to_recordset($1::jsonb) AS x(code text, amount bigint, method text, note text, date text, legacy_id text)
+       ON CONFLICT (legacy_id) DO NOTHING`,
+      [JSON.stringify(payload), null, IMPORT_SOURCE],
+    );
+    await audit(db, ctx.user, 'payment_import', 'payment', null, { from: summary.from, to: summary.to, ...summary.adding, alreadyInKassa: summary.alreadyInKassa });
+    return summary;
+  });
+});
+
 route('GET', '/payments', 'user', async (ctx) => {
   const q = ctx.query;
   const { from, to } = parseRange(q, 6);

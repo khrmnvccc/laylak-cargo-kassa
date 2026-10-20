@@ -117,7 +117,7 @@ function PaymentDetail({ payment, onClose }: { payment: Payment | null; onClose:
     ['Kiritgan ishchi', payment.created_by_name],
     ['Izoh', payment.note || '—'],
   ];
-  if (payment.is_legacy) rows.push(['Manba', 'Eski tizimdan koʻchirilgan']);
+  if (payment.is_legacy) rows.push(['Manba', payment.created_by_name === 'Excel hisobot' ? 'Excel hisobotdan yuklangan' : 'Eski tizimdan koʻchirilgan']);
   if (payment.voided_at) {
     rows.push(['Bekor qilgan', `${payment.voided_by_name || '—'}, ${dateTime(payment.voided_at)}`]);
     rows.push(['Sabab', payment.void_reason || '—']);
