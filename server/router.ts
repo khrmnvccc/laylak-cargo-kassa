@@ -829,6 +829,99 @@ route('GET', '/balance', 'admin', async (ctx) => {
   return { date, sources: SOURCES.map((src) => bySource[src]), expenses, adjustments, recent: days };
 });
 
+// Admin import of a cash book (kassa daftari): expenses, plus an optional opening balance per
+// account. An expense matching one already recorded (same day, account, category and amount) is
+// skipped; the opening balance becomes the one adjustment that makes the balance at the start of
+// that day equal the given amount, so re-uploading the same file changes nothing.
+route('POST', '/expenses/import', 'admin', async (ctx) => {
+  const rows = Array.isArray(ctx.body?.rows) ? ctx.body.rows : null;
+  const dryRun = ctx.body?.dryRun === true;
+  if (!rows || !rows.length) throw new HttpError(400, 'Fayldan maʼlumot topilmadi');
+  if (rows.length > 2000) throw new HttpError(400, 'Bir martada 2000 tadan koʻp qator yuklab boʻlmaydi');
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(new Date());
+  const errors: Array<{ row: number; error: string }> = [];
+  const expenses: Array<{ date: string; source: string; category: string; amount: number; note: string; key: string }> = [];
+  const openings = new Map<string, { date: string; source: string; amount: number }>();
+  rows.forEach((r: any, index: number) => {
+    const row = index + 1;
+    const date = str(r?.date, 10);
+    const source = str(r?.source, 10);
+    const amount = Number(r?.amount);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) return errors.push({ row, error: 'Sana notoʻgʻri' });
+    if (date > today) return errors.push({ row, error: 'Kelajakdagi sana' });
+    if (!SOURCES.includes(source)) return errors.push({ row, error: 'Hisob notoʻgʻri' });
+    if (!Number.isInteger(amount) || Math.abs(amount) > 100_000_000_000) return errors.push({ row, error: 'Summa notoʻgʻri' });
+    if (r?.kind === 'opening') {
+      if (openings.has(source)) return errors.push({ row, error: 'Bu hisob uchun boshlangʻich qoldiq ikki marta yozilgan' });
+      return void openings.set(source, { date, source, amount });
+    }
+    const category = str(r?.category, 20);
+    const note = str(r?.note, 300);
+    if (amount <= 0) return errors.push({ row, error: 'Summa notoʻgʻri' });
+    if (!EXPENSE_CATEGORIES.includes(category)) return errors.push({ row, error: 'Toifa notoʻgʻri' });
+    if (category === 'boshqa' && note.length < 3) return errors.push({ row, error: '“Boshqa” uchun izoh kerak' });
+    expenses.push({ date, source, category, amount, note, key: `${date}|${source}|${category}|${amount}` });
+  });
+  if (!expenses.length && !openings.size) return { status: 400, body: { error: 'Yaroqli qator topilmadi', errors: errors.slice(0, 50) } };
+
+  return transaction(async (db) => {
+    let toAdd: typeof expenses = [];
+    if (expenses.length) {
+      const dates = expenses.map((r) => r.date).sort();
+      const existing = await db.query(
+        `SELECT to_char(spent_at AT TIME ZONE '${TZ}', 'YYYY-MM-DD') || '|' || source || '|' || category || '|' || amount AS key, COUNT(*)::int AS n
+           FROM expenses
+          WHERE voided_at IS NULL
+            AND spent_at >= ($1::date)::timestamp AT TIME ZONE '${TZ}' AND spent_at < ($2::date + 1)::timestamp AT TIME ZONE '${TZ}'
+          GROUP BY 1`,
+        [dates[0], dates[dates.length - 1]],
+      );
+      const have = new Map<string, number>(existing.rows.map((r) => [r.key, r.n]));
+      const seen = new Map<string, number>();
+      toAdd = expenses.filter((r) => {
+        const n = (seen.get(r.key) || 0) + 1;
+        seen.set(r.key, n);
+        return n > (have.get(r.key) || 0);
+      });
+    }
+    // Opening balances: the adjustment is placed one second before the day starts.
+    const opening: Array<{ source: string; date: string; target: number; before: number; adjustment: number }> = [];
+    for (const o of openings.values()) {
+      const bal = await db.query(
+        `SELECT COALESCE(SUM(income - expense + adjustment), 0)::bigint AS balance
+           FROM (${LEDGER_SQL}) l WHERE source = $1 AND at < ($2::date)::timestamp AT TIME ZONE '${TZ}'`,
+        [o.source, o.date],
+      );
+      const before = Number(bal.rows[0].balance);
+      opening.push({ source: o.source, date: o.date, target: o.amount, before, adjustment: o.amount - before });
+    }
+    const summary = {
+      dryRun,
+      adding: { count: toAdd.length, total: toAdd.reduce((s, r) => s + r.amount, 0), items: toAdd.map(({ key: _k, ...r }) => r) },
+      alreadyRecorded: expenses.length - toAdd.length, invalid: errors.length, opening, errors: errors.slice(0, 50),
+    };
+    if (dryRun) return summary;
+
+    for (const r of toAdd) {
+      await db.query(
+        `INSERT INTO expenses (amount, source, category, note, spent_at, created_by, created_by_name)
+         VALUES ($1, $2, $3, NULLIF($4, ''), ($5::date + time '12:00') AT TIME ZONE '${TZ}', $6, $7)`,
+        [r.amount, r.source, r.category, r.note, r.date, ctx.user!.id, ctx.user!.full_name],
+      );
+    }
+    for (const o of opening) {
+      if (!o.adjustment) continue;
+      await db.query(
+        `INSERT INTO balance_adjustments (source, amount, note, at, created_by, created_by_name)
+         VALUES ($1, $2, $3, ($4::date)::timestamp AT TIME ZONE '${TZ}' - interval '1 second', $5, $6)`,
+        [o.source, o.adjustment, `Boshlangʻich qoldiq: ${o.target} soʻm (kassa daftaridan)`, o.date, ctx.user!.id, ctx.user!.full_name],
+      );
+    }
+    await audit(db, ctx.user, 'expense_import', 'expense', null, { added: toAdd.length, total: summary.adding.total, opening });
+    return summary;
+  });
+});
+
 route('POST', '/expenses', 'admin', async (ctx) => {
   const b = ctx.body || {};
   const errors: Record<string, string> = {};

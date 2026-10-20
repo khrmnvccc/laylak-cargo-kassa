@@ -314,6 +314,34 @@ test('payment import from a report skips what the kassa already has', async () =
   assert.equal(again.body.alreadyInKassa, 5);
 });
 
+test('cash book import: opening balance and expenses, safe to repeat', async () => {
+  const admin = new Client();
+  assert.equal((await admin.call('POST', '/auth/login', { username: 'admin', password: 'password123' })).status, 200);
+  const rows = [
+    { date: '2026-10-01', kind: 'opening', source: 'cash', amount: 370000 },
+    { date: '2026-10-01', source: 'cash', category: 'tovar', amount: 200000, note: 'tovarga' },
+    { date: '2026-10-03', source: 'cash', category: 'boshqa', amount: 5000, note: "tog'amga" },
+    { date: '2026-10-03', source: 'cash', category: 'boshqa', amount: 5000, note: '' },
+    { date: '2026-10-03', source: 'cash', category: 'nimadir', amount: 5000 },
+  ];
+  const dry = await admin.call('POST', '/expenses/import', { rows, dryRun: true });
+  assert.equal(dry.status, 200, JSON.stringify(dry.body));
+  assert.equal(dry.body.adding.count, 2);
+  assert.equal(dry.body.invalid, 2);
+  assert.equal(dry.body.opening[0].target, 370000);
+
+  await admin.call('POST', '/expenses/import', { rows });
+  const oct1 = (await admin.call('GET', '/balance', undefined, { date: '2026-10-01' })).body;
+  const cash = oct1.sources.find((s: any) => s.source === 'cash');
+  assert.equal(cash.opening, 370000, 'day opens with the cash book amount');
+  assert.equal(cash.expense, 200000);
+
+  const again = await admin.call('POST', '/expenses/import', { rows });
+  assert.equal(again.body.adding.count, 0);
+  assert.equal(again.body.opening[0].adjustment, 0, 'second upload needs no correction');
+  assert.equal((await admin.call('GET', '/balance', undefined, { date: '2026-10-01' })).body.sources.find((s: any) => s.source === 'cash').opening, 370000);
+});
+
 test.after(async () => {
   await getPool().end();
 });
