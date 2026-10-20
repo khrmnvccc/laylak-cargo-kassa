@@ -1,5 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { ArrowLeft, ChevronLeft, ChevronRight, Pencil, Search, Upload, X } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Pencil, Search, Tag, Upload, X } from 'lucide-react';
+import { PrintButton } from '../components/PrintButton';
+import { printClientLabel } from '../lib/print';
+import { printClientStatement } from '../lib/reports';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useApi, useLive } from '../lib/live';
@@ -249,7 +252,11 @@ function ClientView({ code }: { code: string }) {
           <PageHeader
             title={`Mijoz ${code.toUpperCase()}`}
             subtitle={data ? [data.client.full_name || 'Ismi kiritilmagan', data.client.phone].filter(Boolean).join(' · ') : ' '}
-            actions={user.role === 'admin' && data ? <Button icon={<Pencil className="size-4" />} onClick={() => setEditing(true)}>Tahrirlash</Button> : undefined}
+            actions={data ? <>
+              <Button icon={<Tag className="size-4" />} onClick={() => printClientLabel({ code: data.client.code, name: data.client.full_name, phone: data.client.phone })}>Yorliq (76×130)</Button>
+              <PrintButton run={() => printClientStatement(data, user.full_name)} />
+              {user.role === 'admin' && <Button icon={<Pencil className="size-4" />} onClick={() => setEditing(true)}>Tahrirlash</Button>}
+            </> : undefined}
           />
           <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
             <div className="col-span-2 xl:col-span-1"><StatCard label="Jami toʻlangan" value={s?.total || 0} loading={loading} hint={s ? `${s.count} ta toʻlov` : undefined} /></div>
