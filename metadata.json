@@ -1,6 +1,5 @@
 {
-  "name": "CargoGo Kassa & Hisobot Tizimi",
-  "description": "CargoGo shaxsiy kassa boshqaruvi, kunlik otchyotlar, naqd/karta, 10 kunlik va oylik hisobotlar hamda Excel import/export tizimi.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "name": "Laylak Cargo Kassa",
+  "description": "Laylak Cargo kunlik kassa, toʻlovlar va hisobotlar tizimi: barcha xodimlar uchun umumiy PostgreSQL baza, rollar, dashboard va hisobotlar.",
+  "requestFramePermissions": []
 }
