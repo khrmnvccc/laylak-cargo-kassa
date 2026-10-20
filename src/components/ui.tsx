@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ButtonHTMLAttributes, type ComponentProps, type ReactNode, type SelectHTMLAttributes } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertCircle, ArrowDownRight, ArrowUpRight, CheckCircle2, Inbox, Loader2, Minus, RefreshCw, X } from 'lucide-react';
 import { methodColor, methodLabel, money, percentChange } from '../lib/format';
 
@@ -275,7 +276,8 @@ export function Modal({ open, onClose, title, description, children, footer, siz
     };
   }, [open, onClose]);
   if (!open) return null;
-  return (
+  // Portal to <body> so page wrappers (transforms, z-index) and the mobile tab bar never cover the dialog.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] anim-fade" onClick={onClose} />
       <div
@@ -284,7 +286,7 @@ export function Modal({ open, onClose, title, description, children, footer, siz
         aria-modal="true"
         aria-label={title}
         className={cx(
-          'relative flex max-h-[92vh] w-full flex-col rounded-t-2xl border border-line bg-surface shadow-pop anim-pop sm:rounded-2xl',
+          'relative flex max-h-[92vh] max-h-[92dvh] w-full flex-col rounded-t-2xl border border-line bg-surface shadow-pop anim-pop sm:rounded-2xl',
           size === 'sm' && 'sm:max-w-sm', size === 'md' && 'sm:max-w-md', size === 'lg' && 'sm:max-w-2xl',
         )}
       >
@@ -295,10 +297,11 @@ export function Modal({ open, onClose, title, description, children, footer, siz
           </div>
           <IconButton label="Yopish" onClick={onClose} className="-mr-2 -mt-1"><X className="size-4" /></IconButton>
         </div>
-        <div className="overflow-y-auto px-5 py-4">{children}</div>
-        {footer && <div className="flex flex-col-reverse gap-2 border-t border-line px-5 py-3.5 sm:flex-row sm:justify-end">{footer}</div>}
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4">{children}</div>
+        {footer && <div className="flex flex-col-reverse gap-2 border-t border-line px-5 py-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] sm:flex-row sm:justify-end">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

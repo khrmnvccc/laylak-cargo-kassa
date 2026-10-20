@@ -216,9 +216,11 @@ test('yandex/pochta payments, expenses and kassa balance', async () => {
 
   const after = (await admin.call('GET', '/balance', undefined, { date: today })).body;
   assert.equal(cur('cash', after).current, cur('cash').current + 500000 - 30000);
-  assert.equal(cur('card', after).current, cur('card').current - 15000);
-  assert.equal(cur('yandex', after).current, cur('yandex').current + 40000);
-  assert.equal(cur('pochta', after).current, cur('pochta').current + 25000);
+  // Yandex and Pochta money counts into the card balance.
+  assert.equal(cur('card', after).current, cur('card').current - 15000 + 40000 + 25000);
+  assert.deepEqual(after.sources.map((s: any) => s.source), ['cash', 'card']);
+  assert.equal(cur('card', after).income_yandex, 40000);
+  assert.equal(cur('card', after).income_pochta, 25000);
   for (const s of after.sources) assert.equal(s.closing, s.opening + s.income - s.expense + s.adjustment);
   assert.equal(cur('cash', after).expense, 30000);
   assert.equal(after.expenses.length, 3);
