@@ -261,9 +261,13 @@ export function Modal({ open, onClose, title, description, children, footer, siz
   open: boolean; onClose: () => void; title: string; description?: ReactNode; children: ReactNode; footer?: ReactNode; size?: 'sm' | 'md' | 'lg';
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  // Callers pass a new onClose on every render; reading it through a ref keeps the effect below
+  // from re-running (and stealing focus back to the first field) while the user types.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && closeRef.current();
     document.addEventListener('keydown', onKey);
     const previous = document.activeElement as HTMLElement | null;
     const first = ref.current?.querySelector<HTMLElement>('input, select, textarea, button[data-autofocus]');
@@ -274,7 +278,7 @@ export function Modal({ open, onClose, title, description, children, footer, siz
       document.body.style.overflow = '';
       previous?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
   if (!open) return null;
   // Portal to <body> so page wrappers (transforms, z-index) and the mobile tab bar never cover the dialog.
   return createPortal(
