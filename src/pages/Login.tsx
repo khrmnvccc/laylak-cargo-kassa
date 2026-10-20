@@ -3,6 +3,7 @@ import { Eye, EyeOff, Lock, ShieldCheck } from 'lucide-react';
 import { api } from '../lib/api';
 import type { User } from '../lib/types';
 import { Alert, Button, Field, Input } from '../components/ui';
+import { LangSwitch } from '../components/Layout';
 
 export function LoginPage({ needsSetup, setupKeyConfigured, onAuthenticated }: {
   needsSetup: boolean; setupKeyConfigured: boolean; onAuthenticated: (u: User) => void;
@@ -57,6 +58,7 @@ export function LoginPage({ needsSetup, setupKeyConfigured, onAuthenticated }: {
 
       <div className="flex items-center justify-center px-5 py-10 sm:px-10">
         <form onSubmit={submit} className="w-full max-w-sm anim-rise" noValidate>
+          <div className="mb-6 ml-auto w-44"><LangSwitch /></div>
           <div className="mb-8 lg:hidden">
             <div className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-fg">
               <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M7 5v14h11" /></svg>
