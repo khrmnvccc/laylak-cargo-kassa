@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { Ban, ChevronLeft, ChevronRight, Minus, Plus, Scale, Wallet } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import { useApi, useLive } from '../lib/live';
-import { METHODS, addDays, dateTime, formatDate, groupDigits, methodColor, methodLabel, money, timeOf, todayTashkent, weekday } from '../lib/format';
-import type { BalanceReport, Expense, ExpenseCategory, Source, SourceBalance } from '../lib/types';
+import { addDays, dateTime, formatDate, groupDigits, methodColor, methodLabel, money, timeOf, todayTashkent, weekday } from '../lib/format';
+import type { BalanceReport, Expense, ExpenseCategory, SourceBalance } from '../lib/types';
 import {
   Alert, Badge, Button, Card, CardHeader, EmptyState, ErrorState, Field, IconButton, Input, MethodBadge, Modal, PageHeader, Segmented, Select,
   SkeletonRows, Textarea, cx, td, th, useToast,
@@ -20,6 +20,12 @@ export const EXPENSE_CATEGORIES: Array<{ value: ExpenseCategory; label: string }
   { value: 'inkassa', label: 'Inkassa (pul topshirildi)' },
   { value: 'boshqa', label: 'Boshqa' },
 ];
+const ACCOUNTS = [
+  { value: 'cash', label: 'Naqd (kassada)', color: 'var(--cash)', hint: 'Hozirgi qoldiq' },
+  { value: 'card', label: 'Kartada', color: 'var(--card)', hint: 'Karta + Yandex + Pochta' },
+] as const;
+const accountLabel = (s: string) => (s === 'cash' ? 'Naqd' : 'Karta');
+
 const categoryLabel = (c: string) => EXPENSE_CATEGORIES.find((x) => x.value === c)?.label ?? c;
 
 const signed = (n: number) => (n > 0 ? `+${money(n)}` : n < 0 ? `−${money(-n)}` : money(0));
@@ -61,17 +67,17 @@ export default function Balance() {
                 <p className="mt-2 text-xs leading-relaxed text-ink-3">Barcha tushumlar − rasxodlar ± tuzatishlar. Bekor qilingan yozuvlar hisobga olinmaydi.</p>
               </Card>
               <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                {METHODS.map((m) => {
+                {ACCOUNTS.map((m) => {
                   const row = sources.find((s) => s.source === m.value);
                   return (
                     <Card key={m.value} className="anim-rise">
                       <div className="flex items-center gap-2 text-[13px] font-medium text-ink-2">
-                        <span className="size-2 rounded-full" style={{ background: m.color }} />{m.value === 'cash' ? 'Naqd (kassada)' : m.value === 'card' ? 'Kartada' : m.label}
+                        <span className="size-2 rounded-full" style={{ background: m.color }} />{m.label}
                       </div>
                       {loading && !data ? <div className="skeleton mt-3 h-7 w-3/4" /> : (
                         <div className={cx('mt-1.5 text-xl font-semibold tracking-tight num sm:text-2xl', (row?.current || 0) < 0 ? 'text-danger' : 'text-ink')}>{money(row?.current || 0)}</div>
                       )}
-                      <div className="mt-1 text-xs text-ink-3">Hozirgi qoldiq</div>
+                      <div className="mt-1 text-xs text-ink-3">{m.hint}</div>
                     </Card>
                   );
                 })}
@@ -108,9 +114,19 @@ export default function Balance() {
                   <tbody className="divide-y divide-line">
                     {sources.map((r) => (
                       <tr key={r.source}>
-                        <td className={td}><span className="flex items-center gap-2 font-medium"><span className="size-2 rounded-full" style={{ background: methodColor(r.source) }} />{methodLabel(r.source)}</span></td>
+                        <td className={td}>
+                          <span className="flex items-center gap-2 font-medium"><span className="size-2 rounded-full" style={{ background: methodColor(r.source) }} />{accountLabel(r.source)}</span>
+                          {r.source === 'card' && <span className="ml-4 block text-xs text-ink-3">Yandex va Pochta ham shu yerga</span>}
+                        </td>
                         <td className={cx(td, 'text-right text-ink-2 num')}>{money(r.opening)}</td>
-                        <td className={cx(td, 'text-right num', r.income ? 'text-up' : 'text-ink-3')}>{r.income ? `+${money(r.income)}` : '—'}</td>
+                        <td className={cx(td, 'text-right num', r.income ? 'text-up' : 'text-ink-3')}>
+                          {r.income ? `+${money(r.income)}` : '—'}
+                          {r.source === 'card' && (r.income_yandex > 0 || r.income_pochta > 0) && (
+                            <span className="block text-xs text-ink-3">
+                              {[['Karta', r.income - r.income_yandex - r.income_pochta], ['Yandex', r.income_yandex], ['Pochta', r.income_pochta]].filter(([, v]) => Number(v) > 0).map(([k, v]) => `${k} ${money(Number(v))}`).join(' · ')}
+                            </span>
+                          )}
+                        </td>
                         <td className={cx(td, 'text-right num', r.expense ? 'text-down' : 'text-ink-3')}>{r.expense ? `−${money(r.expense)}` : '—'}</td>
                         <td className={cx(td, 'text-right num', r.adjustment ? 'text-ink' : 'text-ink-3')}>{r.adjustment ? signed(r.adjustment) : '—'}</td>
                         <td className={cx(td, 'text-right font-semibold num', r.closing < 0 && 'text-danger')}>{money(r.closing)}</td>
@@ -132,7 +148,7 @@ export default function Balance() {
             </div>
           </Card>
 
-          <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_480px]">
+          <div className="mt-4 grid items-start gap-4 xl:grid-cols-2">
             <Card padded={false}>
               <div className="flex items-start justify-between gap-3 px-4 pt-4 sm:px-5">
                 <div>
@@ -169,7 +185,7 @@ export default function Balance() {
                     <ul className="space-y-1.5">
                       {data.adjustments.map((a) => (
                         <li key={a.id} className="flex items-center justify-between gap-3 text-sm">
-                          <span className="min-w-0 truncate text-ink-2">{timeOf(a.at)} · {methodLabel(a.source)} · {a.note} · {a.created_by_name}</span>
+                          <span className="min-w-0 truncate text-ink-2">{timeOf(a.at)} · {accountLabel(a.source)} · {a.note} · {a.created_by_name}</span>
                           <span className="font-medium text-ink num">{signed(a.amount)}</span>
                         </li>
                       ))}
@@ -289,7 +305,7 @@ function ExpenseForm({ date, onClose }: { date: string; onClose: () => void }) {
 function AdjustForm({ sources, onClose }: { sources: SourceBalance[]; onClose: () => void }) {
   const { bump } = useLive();
   const toast = useToast();
-  const [source, setSource] = useState<Source>('cash');
+  const [source, setSource] = useState<'cash' | 'card'>('cash');
   const [mode, setMode] = useState<'actual' | 'plus' | 'minus'>('actual');
   const [amountText, setAmountText] = useState('');
   const [note, setNote] = useState('');
@@ -310,7 +326,7 @@ function AdjustForm({ sources, onClose }: { sources: SourceBalance[]; onClose: (
     setBusy(true);
     try {
       await api('/adjustments', { method: 'POST', body: { source, amount: delta, note: note.trim() } });
-      toast({ tone: 'success', title: 'Qoldiq tuzatildi', description: `${methodLabel(source)} · ${signed(delta)}` });
+      toast({ tone: 'success', title: 'Qoldiq tuzatildi', description: `${accountLabel(source)} · ${signed(delta)}` });
       bump();
       onClose();
     } catch (e) {
@@ -326,8 +342,9 @@ function AdjustForm({ sources, onClose }: { sources: SourceBalance[]; onClose: (
       footer={<><Button onClick={onClose} disabled={busy}>Bekor</Button><Button variant="primary" loading={busy} onClick={save}>Saqlash</Button></>}>
       <div className="space-y-4">
         <Field label="Hisob" required htmlFor="adj-src">
-          <Select id="adj-src" value={source} onChange={(e) => setSource(e.target.value as Source)} className="w-full">
-            {METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+          <Select id="adj-src" value={source} onChange={(e) => setSource(e.target.value as 'cash' | 'card')} className="w-full">
+            <option value="cash">Naqd (kassa)</option>
+            <option value="card">Karta (Yandex va Pochta bilan)</option>
           </Select>
         </Field>
         <div className="flex items-center justify-between rounded-lg border border-line bg-surface-2 px-3 py-2.5 text-sm">

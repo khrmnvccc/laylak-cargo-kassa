@@ -619,7 +619,8 @@ route('GET', '/system', 'admin', async () => {
 // ---------- kassa balance, expenses (admin) ----------
 
 const EXPENSE_CATEGORIES = ['tovar', 'paket', 'yetkazish', 'yoqilgi', 'ijara', 'oylik', 'kommunal', 'inkassa', 'boshqa'];
-const SOURCES = ['cash', 'card', 'yandex', 'pochta'];
+// Yandex and Pochta money lands on the card, so the balance has two accounts.
+const SOURCES = ['cash', 'card'];
 
 function parseAt(value: unknown, errors: Record<string, string>): string | null {
   if (!value) return null;
@@ -631,9 +632,10 @@ function parseAt(value: unknown, errors: Record<string, string>): string | null 
 
 // Every money movement per source: income (payments), expenses, signed adjustments.
 const LEDGER_SQL = `
-  SELECT method AS source, amount AS income, 0::bigint AS expense, 0::bigint AS adjustment, paid_at AS at FROM payments WHERE voided_at IS NULL
-  UNION ALL SELECT source, 0, amount, 0, spent_at FROM expenses WHERE voided_at IS NULL
-  UNION ALL SELECT source, 0, 0, amount, at FROM balance_adjustments`;
+  SELECT CASE WHEN method = 'cash' THEN 'cash' ELSE 'card' END AS source, method,
+         amount AS income, 0::bigint AS expense, 0::bigint AS adjustment, paid_at AS at FROM payments WHERE voided_at IS NULL
+  UNION ALL SELECT source, NULL, 0, amount, 0, spent_at FROM expenses WHERE voided_at IS NULL
+  UNION ALL SELECT CASE WHEN source = 'cash' THEN 'cash' ELSE 'card' END, NULL, 0, 0, amount, at FROM balance_adjustments`;
 
 route('GET', '/balance', 'admin', async (ctx) => {
   const date = ctx.query.date && DATE_RE.test(ctx.query.date) ? ctx.query.date : todayTashkent();
@@ -644,6 +646,8 @@ route('GET', '/balance', 'admin', async (ctx) => {
       `SELECT source,
               COALESCE(SUM(income - expense + adjustment) FILTER (WHERE at < ${start}), 0)::bigint AS opening,
               COALESCE(SUM(income) FILTER (WHERE at >= ${start} AND at < ${end}), 0)::bigint AS income,
+              COALESCE(SUM(income) FILTER (WHERE method = 'yandex' AND at >= ${start} AND at < ${end}), 0)::bigint AS income_yandex,
+              COALESCE(SUM(income) FILTER (WHERE method = 'pochta' AND at >= ${start} AND at < ${end}), 0)::bigint AS income_pochta,
               COALESCE(SUM(expense) FILTER (WHERE at >= ${start} AND at < ${end}), 0)::bigint AS expense,
               COALESCE(SUM(adjustment) FILTER (WHERE at >= ${start} AND at < ${end}), 0)::bigint AS adjustment,
               COALESCE(SUM(income - expense + adjustment) FILTER (WHERE at < ${end}), 0)::bigint AS closing,
@@ -673,7 +677,7 @@ route('GET', '/balance', 'admin', async (ctx) => {
       [date],
     ),
   ]);
-  const zero = { opening: 0, income: 0, expense: 0, adjustment: 0, closing: 0, current: 0 };
+  const zero = { opening: 0, income: 0, income_yandex: 0, income_pochta: 0, expense: 0, adjustment: 0, closing: 0, current: 0 };
   const bySource = Object.fromEntries(SOURCES.map((src) => [src, { ...zero, ...(rows.find((r: any) => r.source === src) || {}), source: src }]));
   const recentMap = new Map(recent.map((r: any) => [r.day, r]));
   const days = [];

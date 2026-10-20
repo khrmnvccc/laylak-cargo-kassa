@@ -92,9 +92,11 @@ export type Source = Method;
 export type ExpenseCategory = 'tovar' | 'paket' | 'yetkazish' | 'yoqilgi' | 'ijara' | 'oylik' | 'kommunal' | 'inkassa' | 'boshqa';
 
 export interface SourceBalance {
-  source: Source;
+  source: 'cash' | 'card';
   opening: number;
   income: number;
+  income_yandex: number;
+  income_pochta: number;
   expense: number;
   adjustment: number;
   closing: number;
