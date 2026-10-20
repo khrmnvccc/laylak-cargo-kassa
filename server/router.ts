@@ -20,6 +20,9 @@ import {
   verifyPassword,
 } from './auth.js';
 import { PERMISSIONS, WORKER_DEFAULT, isPerm, permsOf, type Perm } from './perms.js';
+import { escapeHtml, getTelegram, notify, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
+import { gzipSync } from 'node:zlib';
+import { randomInt } from 'node:crypto';
 
 export interface ApiRequest {
   method: string;
@@ -43,7 +46,7 @@ interface Ctx extends ApiRequest {
 }
 
 type Handler = (ctx: Ctx) => Promise<ApiResponse | unknown>;
-type Access = 'public' | 'user' | 'admin' | Perm;
+type Access = 'public' | 'user' | 'owner' | 'admin' | Perm;
 
 const routes: Array<{ method: string; pattern: RegExp; keys: string[]; access: Access; handler: Handler }> = [];
 
@@ -74,6 +77,7 @@ export async function handleApi(req: ApiRequest): Promise<ApiResponse> {
     const secure = (req.headers['x-forwarded-proto'] || '').includes('https');
     const user = r.access === 'public' && !token ? null : await getSessionUser(token);
     if (r.access !== 'public' && !user) return { status: 401, body: { error: 'Tizimga qayta kiring' } };
+    if (r.access === 'owner' && user?.role !== 'owner') return { status: 403, body: { error: 'Bu amal faqat Ega uchun' } };
     if (r.access === 'admin' && user?.role !== 'owner' && user?.role !== 'admin') return { status: 403, body: { error: 'Bu amal faqat admin uchun' } };
     if (isPerm(r.access) && !user?.permissions.includes(r.access)) return { status: 403, body: { error: 'Sizda bu amal uchun ruxsat yoʻq' } };
     const result = await r.handler({ ...req, params, token, secure, user });
@@ -466,6 +470,8 @@ route('POST', '/payments/:id/void', 'payments.void', async (ctx) => {
     await audit(db, ctx.user, 'payment_void', 'payment', ctx.params.id, { ...updated.rows[0], reason });
     return updated.rows[0];
   });
+  await notify(`⚠️ <b>Toʻlov bekor qilindi</b>\n${escapeHtml(payment.client_code)} · ${som(payment.amount)} · ${METHOD_LABEL[payment.method] || payment.method}\n`
+    + `Kim: ${escapeHtml(ctx.user!.full_name)}\nSabab: ${escapeHtml(reason)}`);
   return { payment };
 });
 
@@ -790,7 +796,8 @@ route('GET', '/system', 'admin', async () => {
                   (SELECT COUNT(*) FROM app_users)::bigint AS users,
                   (SELECT COUNT(*) FROM legacy_import)::bigint AS legacy_records`),
   ]);
-  return { meta: Object.fromEntries(meta.map((m: any) => [m.key, m.value])), counts: counts[0] };
+  // The Telegram bot token stays on the server.
+  return { meta: Object.fromEntries(meta.filter((m: any) => m.key !== 'telegram').map((m: any) => [m.key, m.value])), counts: counts[0] };
 });
 
 // ---------- kassa balance, expenses (admin) ----------
@@ -1171,4 +1178,161 @@ route('PUT', '/office', 'staff.manage', async (ctx) => {
   );
   await audit(null, ctx.user, 'office_set', 'office', null, office);
   return { office };
+});
+
+// ---------- Telegram: daily report and nightly backup (owner) ----------
+
+const METHOD_LABEL: Record<string, string> = { cash: 'Naqd', card: 'Karta', yandex: 'Yandex', pochta: 'Pochta' };
+const MONTHS = ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'];
+const som = (n: number | string) => `${String(Math.round(Number(n))).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} soʻm`;
+const dayLabel = (date: string) => `${Number(date.slice(8))}-${MONTHS[Number(date.slice(5, 7)) - 1]}, ${date.slice(0, 4)}`;
+const clock = (iso: string | Date) => new Date(new Date(iso).getTime() + 5 * 3600_000).toISOString().slice(11, 16);
+const hoursText = (min: number) => `${Math.floor(min / 60)} soat ${min % 60} daq`;
+const tashkentHour = () => new Date(Date.now() + 5 * 3600_000).getUTCHours();
+
+async function dailyReportText(date: string): Promise<string> {
+  const start = `($1::date)::timestamp AT TIME ZONE '${TZ}'`;
+  const end = `($1::date + 1)::timestamp AT TIME ZONE '${TZ}'`;
+  const [totals, cashiers, voided, expenses, balance, attendance, staff] = await Promise.all([
+    totalsFor(date, date),
+    query(`SELECT created_by_name AS name, SUM(amount)::bigint AS total, COUNT(*)::int AS n FROM payments p
+            WHERE voided_at IS NULL AND ${RANGE_SQL(1, 2)} GROUP BY 1 ORDER BY 2 DESC`, [date, date]),
+    query(`SELECT COUNT(*)::int AS n, COALESCE(SUM(amount), 0)::bigint AS total FROM payments
+            WHERE voided_at >= ${start} AND voided_at < ${end}`, [date]),
+    query(`SELECT COALESCE(SUM(amount), 0)::bigint AS total FROM expenses
+            WHERE voided_at IS NULL AND spent_at >= ${start} AND spent_at < ${end}`, [date]),
+    query(`SELECT source, COALESCE(SUM(income - expense + adjustment), 0)::bigint AS closing
+             FROM (${LEDGER_SQL}) l WHERE at < ${end} GROUP BY source`, [date]),
+    query(`SELECT ${ATT_COLUMNS} FROM attendance a JOIN app_users u ON u.id = a.user_id
+            WHERE a.check_in_at >= ${start} AND a.check_in_at < ${end} ORDER BY a.check_in_at`, [date]),
+    query(`SELECT id, full_name FROM app_users WHERE is_active AND role <> 'owner' ORDER BY full_name`),
+  ]);
+  const lines = [`📊 <b>Laylak Cargo · ${dayLabel(date)}</b>`, ''];
+  lines.push(`💰 Jami: <b>${som(totals.total)}</b> (${totals.count} ta toʻlov, ${totals.clients} mijoz)`);
+  for (const m of ['cash', 'card', 'yandex', 'pochta']) if (Number(totals[m])) lines.push(`   ${METHOD_LABEL[m]}: ${som(totals[m])}`);
+  if (Number(expenses[0].total)) lines.push(`💸 Rasxod: ${som(expenses[0].total)}`);
+  if (voided[0].n) lines.push(`⚠️ Bekor qilingan: ${voided[0].n} ta, ${som(voided[0].total)}`);
+  const bal = Object.fromEntries(balance.map((b: any) => [b.source, b.closing]));
+  if (balance.length) lines.push(`🏦 Kun oxiridagi qoldiq: naqd ${som(bal.cash || 0)}, karta ${som(bal.card || 0)}`);
+  if (cashiers.length) {
+    lines.push('', '<b>Kim qancha kiritdi</b>');
+    for (const c of cashiers) lines.push(`• ${escapeHtml(c.name || '—')}: ${som(c.total)} (${c.n} ta)`);
+  }
+  lines.push('', '<b>Davomat</b>');
+  const byUser = new Map<string, any[]>();
+  for (const a of attendance) byUser.set(a.user_id, [...(byUser.get(a.user_id) || []), a]);
+  if (!attendance.length) lines.push('Bugun hech kim “Keldim” bosmagan');
+  for (const rows of byUser.values()) {
+    const first = rows[0];
+    const last = rows[rows.length - 1];
+    const minutes = rows.reduce((sum, r) => sum + (r.check_out_at ? Math.round((Date.parse(r.check_out_at) - Date.parse(r.check_in_at)) / 60_000) : 0), 0);
+    const out = last.check_out_at && !last.forgot_out ? clock(last.check_out_at) : 'ketmagan';
+    lines.push(`• ${escapeHtml(first.user_name)}: ${clock(first.check_in_at)} – ${out}${minutes ? ` (${hoursText(minutes)})` : ''}`);
+  }
+  const absent = staff.filter((u: any) => !byUser.has(u.id)).map((u: any) => escapeHtml(u.full_name));
+  if (absent.length) lines.push(`Kelmadi: ${absent.join(', ')}`);
+  return lines.join('\n');
+}
+
+/** Every table except sign-in sessions; passwords and the bot token are left out. */
+async function backupData() {
+  const tables = await query<{ name: string }>(
+    `SELECT table_name AS name FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_type = 'BASE TABLE' AND table_name NOT IN ('app_sessions', 'login_attempts')
+      ORDER BY table_name`,
+  );
+  const data: Record<string, unknown[]> = {};
+  for (const { name } of tables) {
+    let rows = await query(`SELECT * FROM "${name.replace(/"/g, '')}"`);
+    if (name === 'app_users') rows = rows.map(({ password_hash, ...u }: any) => u);
+    if (name === 'app_meta') rows = rows.filter((r: any) => r.key !== 'telegram');
+    data[name] = rows;
+  }
+  const counts = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, v.length]));
+  const json = JSON.stringify({ app: 'laylak-cargo-kassa', created_at: new Date().toISOString(), counts, tables: data });
+  return { gz: gzipSync(json), counts };
+}
+
+async function sendDailyReport(date: string) {
+  const text = await dailyReportText(date);
+  if (!(await sendMessage(text))) throw new HttpError(400, 'Telegram ulanmagan');
+  const { gz, counts } = await backupData();
+  await sendDocument(gz, `laylak-zaxira-${date}.json.gz`,
+    `🗄 Zaxira nusxa · ${dayLabel(date)}\n${counts.payments ?? 0} toʻlov, ${counts.clients ?? 0} mijoz, ${counts.attendance ?? 0} davomat yozuvi`);
+}
+
+function telegramView(config: Awaited<ReturnType<typeof getTelegram>>) {
+  if (!config) return { telegram: null };
+  return { telegram: { botName: config.botName, connected: Boolean(config.chatId), chatName: config.chatName || null, code: config.chatId ? null : config.code } };
+}
+
+route('GET', '/telegram', 'owner', async () => telegramView(await getTelegram()));
+
+route('PUT', '/telegram', 'owner', async (ctx) => {
+  const token = str(ctx.body?.token, 100);
+  if (!/^\d{5,15}:[A-Za-z0-9_-]{30,60}$/.test(token)) throw new HttpError(400, 'Bot tokeni notoʻgʻri. @BotFather bergan tokenni toʻliq nusxalang');
+  const me = await tg(token, 'getMe', {});
+  const config = { token, botName: me.username, code: String(randomInt(100000, 999999)) };
+  await saveTelegram(config);
+  await audit(null, ctx.user, 'telegram_set', 'telegram', null, { bot: me.username });
+  return telegramView(config);
+});
+
+// The owner opens the bot and presses Start with the code; we read the bot's messages to find their chat.
+route('POST', '/telegram/check', 'owner', async (ctx) => {
+  const config = await getTelegram();
+  if (!config) throw new HttpError(400, 'Avval bot tokenini kiriting');
+  if (config.chatId) return telegramView(config);
+  const updates: any[] = await tg(config.token, 'getUpdates', { allowed_updates: ['message'], timeout: 0 });
+  const match = updates.reverse().find((u) => typeof u.message?.text === 'string' && u.message.text.includes(config.code) && u.message.chat?.type === 'private');
+  if (!match) throw new HttpError(404, `Botga hali kod kelmadi. @${config.botName} ni ochib, “Start” bosing yoki ${config.code} deb yozing`);
+  const chat = match.message.chat;
+  const next = { ...config, chatId: chat.id, chatName: [chat.first_name, chat.last_name].filter(Boolean).join(' ') || chat.username || 'Telegram' };
+  await saveTelegram(next);
+  await tg(config.token, 'sendMessage', { chat_id: chat.id, text: '✅ Laylak Cargo kassa ulandi. Har kuni kechqurun shu yerga hisobot va zaxira nusxa keladi.' });
+  await audit(null, ctx.user, 'telegram_connect', 'telegram', null, { chat: next.chatName });
+  return telegramView(next);
+});
+
+route('DELETE', '/telegram', 'owner', async (ctx) => {
+  await saveTelegram(null);
+  await audit(null, ctx.user, 'telegram_remove', 'telegram', null);
+  return { telegram: null };
+});
+
+route('POST', '/telegram/send', 'owner', async () => {
+  await sendDailyReport(todayTashkent());
+  return { ok: true };
+});
+
+// Download a backup from the Sozlamalar page. Sent compressed so it stays small.
+route('GET', '/backup', 'owner', async (ctx) => {
+  const { gz, counts } = await backupData();
+  await audit(null, ctx.user, 'backup_download', 'backup', null, counts);
+  return { filename: `laylak-zaxira-${todayTashkent()}.json.gz`, data: gz.toString('base64'), counts };
+});
+
+// Vercel Cron calls this every evening (vercel.json). It sends at most one report per day, and only
+// in the evening, so calling it by hand cannot spam the owner.
+route('GET', '/cron/daily', 'public', async (ctx) => {
+  const secret = process.env.CRON_SECRET;
+  if (secret && ctx.headers.authorization !== `Bearer ${secret}`) return { status: 401, body: { error: 'Ruxsat yoʻq' } };
+  if (tashkentHour() < 20) return { sent: false, reason: 'early' };
+  const date = todayTashkent();
+  const claimed = await query(
+    `INSERT INTO app_meta (key, value) VALUES ('daily_report', $1::jsonb)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+      WHERE app_meta.value->>'date' IS DISTINCT FROM $2
+     RETURNING key`,
+    [JSON.stringify({ date }), date],
+  );
+  if (!claimed.length) return { sent: false, reason: 'already-sent' };
+  try {
+    await sendDailyReport(date);
+  } catch (error) {
+    await query(`DELETE FROM app_meta WHERE key = 'daily_report'`);
+    if (error instanceof HttpError && error.status === 400) return { sent: false, reason: 'not-connected' };
+    throw error;
+  }
+  return { sent: true };
 });

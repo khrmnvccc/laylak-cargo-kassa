@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { Monitor, Moon, Sun } from 'lucide-react';
+import { Download, Monitor, Moon, Send, Sun } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useApi } from '../lib/live';
@@ -13,6 +13,7 @@ const ACTIONS: Record<string, string> = {
   setup: 'Tizim sozlandi', login: 'Tizimga kirdi', payment_create: 'Toʻlov kiritdi', payment_void: 'Toʻlovni bekor qildi',
   staff_create: 'Xodim qoʻshdi', staff_update: 'Xodimni oʻzgartirdi', client_update: 'Mijozni oʻzgartirdi', password_change: 'Parolini oʻzgartirdi',
   client_import: 'Mijozlar roʻyxatini yukladi', expense_create: 'Rasxod yozdi', expense_void: 'Rasxodni bekor qildi', balance_adjust: 'Qoldiqni tuzatdi',
+  telegram_set: 'Telegram botni kiritdi', telegram_connect: 'Telegramni uladi', telegram_remove: 'Telegramni uzdi', backup_download: 'Zaxirani yuklab oldi',
 };
 
 export default function Settings() {
@@ -25,6 +26,7 @@ export default function Settings() {
         <Password />
         <Appearance />
         {isBoss(user) && <SystemInfo />}
+        {user.role === 'owner' && <TelegramCard />}
       </div>
       {isBoss(user) && <AuditLog />}
     </>
@@ -184,6 +186,105 @@ function AuditLog() {
           </ul>
         )}
       </div>
+    </Card>
+  );
+}
+
+interface TelegramState { botName: string; connected: boolean; chatName: string | null; code: string | null }
+
+/** Owner only: connect a Telegram bot for the evening report and nightly backup, and download a backup now. */
+function TelegramCard() {
+  const toast = useToast();
+  const { data, error: loadError, loading } = useApi<{ telegram: TelegramState | null }>('/telegram');
+  const [override, setOverride] = useState<{ telegram: TelegramState | null } | null>(null);
+  const tg = (override ?? data)?.telegram ?? null;
+  const [token, setToken] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run(name: string, fn: () => Promise<void>) {
+    setError(null);
+    setBusy(name);
+    try {
+      await fn();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+  const call = (method: string, path: string, body?: unknown) => run(method + path, async () => {
+    setOverride(await api<{ telegram: TelegramState | null }>(path, { method, body }));
+    setToken('');
+  });
+  const sendNow = () => run('send', async () => {
+    await api('/telegram/send', { method: 'POST' });
+    toast({ tone: 'success', title: 'Hisobot va zaxira Telegramga yuborildi' });
+  });
+  const download = () => run('backup', async () => {
+    const { filename, data: b64 } = await api<{ filename: string; data: string }>('/backup');
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/gzip' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  });
+
+  return (
+    <Card>
+      <CardHeader title="Telegram hisobot va zaxira" subtitle="Faqat Ega koʻradi"
+        action={tg?.connected ? <Badge tone="success"><span className="size-1.5 rounded-full bg-success" />Ulangan</Badge> : undefined} />
+      {loadError && !data ? <ErrorState message={loadError} /> : loading && !override ? <div className="skeleton h-32" /> : (
+        <div className="space-y-4 text-sm">
+          {!tg && (
+            <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); call('PUT', '/telegram', { token: token.trim() }); }}>
+              <ol className="list-decimal space-y-1 pl-5 text-[13px] text-ink-2">
+                <li>Telegramda <a className="font-medium text-ink underline" href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">@BotFather</a> ni oching va <b>/newbot</b> deb yozing.</li>
+                <li>Botga nom bering. BotFather uzun token beradi.</li>
+                <li>Shu tokenni pastga qoʻying. U faqat serverda saqlanadi.</li>
+              </ol>
+              <Field label="Bot tokeni" htmlFor="tg-token">
+                <Input id="tg-token" type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" spellCheck={false} placeholder="123456789:AA..." />
+              </Field>
+              <Button variant="primary" type="submit" loading={busy === 'PUT/telegram'} disabled={!token.trim()}>Botni ulash</Button>
+            </form>
+          )}
+          {tg && !tg.connected && (
+            <div className="space-y-3">
+              <p className="text-ink-2">Endi botga oʻzingizni tanishtiring: quyidagi tugma Telegramni ochadi, u yerda <b>Start</b> bosing. Keyin “Tekshirish”ni bosing.</p>
+              <div className="flex flex-wrap gap-2">
+                <a href={`https://t.me/${tg.botName}?start=${tg.code}`} target="_blank" rel="noopener noreferrer"><Button icon={<Send className="size-4" />}>@{tg.botName} ni ochish</Button></a>
+                <Button variant="primary" loading={busy === 'POST/telegram/check'} onClick={() => call('POST', '/telegram/check')}>Tekshirish</Button>
+              </div>
+              <p className="text-xs text-ink-3">{`Tugma ishlamasa, botga ${tg.code} deb yozing.`}</p>
+            </div>
+          )}
+          {tg?.connected && (
+            <div className="space-y-3">
+              <p className="text-ink-2">{`Xabarlar ${tg.chatName} ga @${tg.botName} orqali keladi.`}</p>
+              <ul className="list-disc space-y-1 pl-5 text-[13px] text-ink-2">
+                <li>Har kuni 21:00 dan keyin: kunlik hisobot va butun bazaning zaxira nusxasi (fayl).</li>
+                <li>Toʻlov bekor qilinsa, darhol xabar.</li>
+              </ul>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="primary" icon={<Send className="size-4" />} loading={busy === 'send'} onClick={sendNow}>Hozir yuborish</Button>
+                <Button variant="ghost" loading={busy === 'DELETE/telegram'} onClick={() => call('DELETE', '/telegram')}>Uzish</Button>
+              </div>
+            </div>
+          )}
+          {tg && !tg.connected && <Button variant="ghost" size="sm" onClick={() => call('DELETE', '/telegram')}>Boshqa bot kiritish</Button>}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line px-3 py-2.5">
+            <div>
+              <div className="font-medium text-ink">Zaxirani yuklab olish</div>
+              <div className="text-xs text-ink-3">Barcha toʻlov, mijoz, rasxod va davomat bitta faylda. Parollar kirmaydi.</div>
+            </div>
+            <Button icon={<Download className="size-4" />} loading={busy === 'backup'} onClick={download}>Yuklab olish</Button>
+          </div>
+          {error && <Alert>{error}</Alert>}
+        </div>
+      )}
     </Card>
   );
 }
