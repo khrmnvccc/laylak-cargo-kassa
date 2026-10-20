@@ -3,7 +3,7 @@ import { Banknote, CheckCircle2, ChevronDown, Printer, CreditCard, Loader2, Mail
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useApi, useLive } from '../lib/live';
-import { CARD_METHODS, PAY_GROUPS, cardTotal, dateTime, isCardMethod, groupDigits, methodLabel, money, timeOf, todayTashkent } from '../lib/format';
+import { CARD_METHODS, PAY_GROUPS, cardTotal, dateTime, isCardMethod, groupDigits, methodLabel, money, nowIso, nowMs, timeOf, todayTashkent } from '../lib/format';
 import type { Method, Payment, PaymentList, Summary } from '../lib/types';
 import { PaymentsTable } from '../components/PaymentsTable';
 import { printPaymentLabel } from '../lib/print';
@@ -15,7 +15,7 @@ const METHOD_ICONS = { cash: Banknote, card: CreditCard, yandex: Navigation, poc
 type Errors = Partial<Record<'clientCode' | 'clientName' | 'amount' | 'method' | 'paidAt' | 'note', string>>;
 
 function nowLocalInput(): string {
-  const d = new Date(Date.now() + 5 * 3600_000);
+  const d = new Date(nowMs() + 5 * 3600_000);
   return d.toISOString().slice(0, 16);
 }
 
@@ -41,14 +41,14 @@ export default function Kassa() {
   const [autoLabel, setAutoLabel] = useState(() => { try { return localStorage.getItem('lk-auto-label') === '1'; } catch { return false; } });
   const toggleAutoLabel = (on: boolean) => { setAutoLabel(on); try { localStorage.setItem('lk-auto-label', on ? '1' : '0'); } catch { /* ignore */ } };
   const [lookup, setLookup] = useState<{ state: 'idle' | 'loading' | 'found' | 'new'; info?: ClientInfo }>({ state: 'idle' });
-  const [now, setNow] = useState(() => new Date().toISOString());
+  const [now, setNow] = useState(nowIso);
   const codeRef = useRef<HTMLInputElement>(null);
 
   const amount = Number(amountText.replace(/\D/g, '')) || 0;
   const normalizedCode = clientCode.trim().toUpperCase();
 
   useEffect(() => {
-    const id = setInterval(() => setNow(new Date().toISOString()), 15_000);
+    const id = setInterval(() => setNow(nowIso()), 15_000);
     return () => clearInterval(id);
   }, []);
 
@@ -82,7 +82,7 @@ export default function Kassa() {
     if (customTime) {
       const t = Date.parse(`${paidAtLocal}:00+05:00`);
       if (!Number.isFinite(t)) e.paidAt = 'Sana va vaqtni toʻgʻri kiriting';
-      else if (t > Date.now() + 60_000) e.paidAt = 'Kelajakdagi vaqtni kiritib boʻlmaydi';
+      else if (t > nowMs() + 60_000) e.paidAt = 'Kelajakdagi vaqtni kiritib boʻlmaydi';
     }
     return e;
   }

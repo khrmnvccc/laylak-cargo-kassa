@@ -6,7 +6,7 @@ import { printBalance } from '../lib/reports';
 import { PrintButton } from '../components/PrintButton';
 import { ImportKassa } from '../components/ImportKassa';
 import { useApi, useLive } from '../lib/live';
-import { addDays, dateTime, formatDate, groupDigits, methodColor, methodLabel, money, timeOf, todayTashkent, weekday } from '../lib/format';
+import { addDays, dateTime, formatDate, groupDigits, methodColor, methodLabel, money, nowMs, timeOf, todayTashkent, weekday } from '../lib/format';
 import type { BalanceReport, Expense, ExpenseCategory, SourceBalance } from '../lib/types';
 import {
   Alert, Badge, Button, Card, CardHeader, EmptyState, ErrorState, Field, IconButton, Input, MethodBadge, Modal, PageHeader, Segmented, Select,
@@ -242,7 +242,7 @@ export default function Balance() {
 }
 
 function nowLocal(): string {
-  return new Date(Date.now() + 5 * 3600_000).toISOString().slice(0, 16);
+  return new Date(nowMs() + 5 * 3600_000).toISOString().slice(0, 16);
 }
 
 function ExpenseForm({ date, onClose }: { date: string; onClose: () => void }) {

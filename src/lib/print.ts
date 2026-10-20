@@ -2,7 +2,7 @@
 // Each document is rendered into a hidden iframe with its own @page size, so the
 // app's styles and layout never leak into the printout.
 import { LANG } from './i18n';
-import { dateTime, formatDate, methodLabel, money, timeOf, todayTashkent } from './format';
+import { dateTime, formatDate, methodLabel, money, nowMs, timeOf, todayTashkent } from './format';
 import type { Payment } from './types';
 
 export type PaperSize = 'label' | 'a4';
@@ -154,7 +154,7 @@ function tableHtml(t: A4Table, empty = 'Maʼlumot yoʻq'): string {
 }
 
 export function printA4(doc: { title: string; subtitle?: string; printedBy?: string; blocks: A4Block[] }) {
-  const now = new Date();
+  const now = new Date(nowMs());
   const body = [
     `<header><div class="brand">LAYLAK CARGO<small>Kassa tizimi</small></div>
       <div class="meta">Chop etildi: ${esc(dateTime(now.toISOString()))}${doc.printedBy ? `<br>${esc(doc.printedBy)}` : ''}</div></header>`,

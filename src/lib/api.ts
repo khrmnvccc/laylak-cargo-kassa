@@ -1,3 +1,5 @@
+import { syncClock } from './format';
+
 export class ApiError extends Error {
   constructor(public status: number, message: string, public fields?: Record<string, string>) {
     super(message);
@@ -28,6 +30,7 @@ export async function api<T = any>(path: string, options: { method?: string; bod
   } catch {
     throw new ApiError(0, 'Internet aloqasi yoʻq yoki server javob bermayapti');
   }
+  syncClock(response.headers.get('Date'));
   let data: any = null;
   try {
     data = await response.json();
