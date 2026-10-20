@@ -10,7 +10,7 @@ Laylak Cargo uchun kunlik kassa, toʻlovlar va hisobotlar tizimi. Barcha xodimla
 - **Kunlik**, **haftalik va oylik hisobotlar**: ishchilar kesimi, grafik, chop etish, CSV.
 - **Ishchilar** (faqat admin): xodim qoʻshish, rol, parolni tiklash, oʻchirish, koʻrsatkichlar.
 - **Kassa balansi** (faqat admin): naqdda va kartada hozir qancha pul borligi (Yandex va Pochta tushumi kartaga qoʻshiladi), kunlik harakat (kun boshida, tushum, rasxod, tuzatish, kun oxirida), kunlik rasxodlar va oxirgi 14 kun. Qoldiq = tushumlar − rasxodlar ± tuzatishlar. Boshlangʻich qoldiqni “Qoldiqni tuzatish” orqali kiriting.
-- **Mijozlar**: ID boʻyicha qidiruv va toʻlovlar tarixi.
+- **Mijozlar**: har bir mijoz jami, naqd va karta (Yandex, Pochta bilan) qancha toʻlagani; faollar, koʻp yoki kam toʻlaganlar boʻyicha saralash; qidiruv va toʻlovlar tarixi. Admin CSV fayldan (ID, Ism, Telefon) mijozlar roʻyxatini yuklay oladi.
 - **Sozlamalar**: profil, parol, yorugʻ/qorongʻi rejim, tizim holati va faoliyat jurnali (admin).
 
 ## Rollar

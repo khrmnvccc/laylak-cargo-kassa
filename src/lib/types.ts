@@ -84,8 +84,24 @@ export interface ClientRow {
   full_name: string | null;
   phone: string | null;
   total: number;
+  cash: number;
+  /** Card, Yandex and Pochta together. */
+  card: number;
+  online: number;
   count: number;
   last_paid_at: string | null;
+}
+
+export interface ClientList {
+  items: ClientRow[];
+  sort: 'active' | 'most' | 'least' | 'recent';
+  limit: number;
+  offset: number;
+  clients: number;
+  active30: number;
+  total: number;
+  cash: number;
+  card: number;
 }
 
 export type Source = Method;
