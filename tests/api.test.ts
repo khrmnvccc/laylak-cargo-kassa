@@ -346,6 +346,73 @@ test('cash book import: opening balance and expenses, safe to repeat', async () 
   assert.equal((await admin.call('GET', '/balance', undefined, { date: '2026-10-01' })).body.sources.find((s: any) => s.source === 'cash').opening, 370000);
 });
 
+test('worker permissions are set by the admin and enforced by the server', async () => {
+  const admin = new Client();
+  assert.equal((await admin.call('POST', '/auth/login', { username: 'admin', password: 'password123' })).status, 200);
+  const created = await admin.call('POST', '/staff', { username: 'nodir', fullName: 'Nodir Karimov', password: 'worker123', role: 'worker' });
+  assert.equal(created.status, 201);
+  const id = created.body.staff.id;
+  const w = new Client();
+  const login = await w.call('POST', '/auth/login', { username: 'nodir', password: 'worker123' });
+  assert.deepEqual(login.body.user.permissions, ['payments.create', 'reports.view'], 'default worker rights');
+  assert.equal((await w.call('GET', '/balance')).status, 403);
+  assert.equal((await w.call('GET', '/summary')).status, 200);
+
+  // Take away reports and payment entry, give the balance.
+  const upd = await admin.call('PATCH', `/staff/${id}`, { permissions: ['balance.view', 'not-a-right'] });
+  assert.equal(upd.status, 200, JSON.stringify(upd.body));
+  assert.deepEqual(upd.body.staff.permissions, ['balance.view']);
+  assert.deepEqual((await w.call('GET', '/auth/me')).body.user.permissions, ['balance.view'], 'applies without signing in again');
+  assert.equal((await w.call('GET', '/summary')).status, 403);
+  assert.equal((await w.call('GET', '/balance')).status, 200);
+  assert.equal((await w.call('POST', '/payments', { clientCode: 'P-1', amount: 1000, method: 'cash' })).status, 403);
+  const own = await w.call('GET', '/payments');
+  assert.equal(own.status, 200);
+  assert.equal(own.body.items.length, 0, 'without reports a worker sees only their own payments');
+
+  // Only an admin edits rights; an admin always has every right.
+  assert.equal((await w.call('PATCH', `/staff/${id}`, { permissions: ['reports.view'] })).status, 403);
+  const me = (await admin.call('GET', '/auth/me')).body.user;
+  assert.ok(me.permissions.includes('staff.view') && me.permissions.includes('payments.void'));
+});
+
+test('attendance: check in and out near the office only, totals for the admin', async () => {
+  const admin = new Client();
+  assert.equal((await admin.call('POST', '/auth/login', { username: 'admin', password: 'password123' })).status, 200);
+  const w = new Client();
+  assert.equal((await w.call('POST', '/auth/login', { username: 'sardor', password: 'worker123' })).status, 200);
+
+  // No office set yet: allowed anywhere.
+  assert.equal((await w.call('POST', '/attendance/check-in', {})).status, 201);
+  assert.equal((await w.call('POST', '/attendance/check-in', {})).status, 409, 'cannot arrive twice');
+  assert.equal((await w.call('POST', '/attendance/check-out', {})).status, 200);
+  assert.equal((await w.call('POST', '/attendance/check-out', {})).status, 409, 'nothing open to close');
+
+  assert.equal((await w.call('PUT', '/office', { lat: 41.311, lng: 69.279, radius: 100 })).status, 403);
+  assert.equal((await admin.call('PUT', '/office', { lat: 41.311, lng: 69.279, radius: 100 })).status, 200);
+  assert.equal((await w.call('POST', '/attendance/check-in', {})).status, 400, 'location required once the office is set');
+  const far = await w.call('POST', '/attendance/check-in', { lat: 41.33, lng: 69.279, accuracy: 20 });
+  assert.equal(far.status, 403, 'about 2 km away');
+  assert.match(far.body.error, /km uzoqdasiz/);
+  assert.equal((await w.call('POST', '/attendance/check-in', { lat: 41.3115, lng: 69.2792, accuracy: 15 })).status, 201);
+  const me = (await w.call('GET', '/attendance/me')).body;
+  assert.ok(me.open && me.officeSet);
+  assert.equal(me.items.length, 2);
+
+  assert.equal((await w.call('GET', '/attendance')).status, 403, 'workers do not see everyone by default');
+  const all = await admin.call('GET', '/attendance', undefined, { from: today, to: today });
+  assert.equal(all.status, 200);
+  assert.equal(all.body.items.filter((r: any) => r.user_name === 'Sardor Rahimov' || r.user_id === me.open.user_id).length, 2);
+
+  // The admin fixes a forgotten "Ketdim".
+  const inAt = new Date(Date.now() - 3 * 3600_000).toISOString();
+  const outAt = new Date(Date.now() - 3600_000).toISOString();
+  const fix = await admin.call('PATCH', `/attendance/${me.open.id}`, { checkInAt: inAt, checkOutAt: outAt });
+  assert.equal(fix.status, 200, JSON.stringify(fix.body));
+  assert.equal((await admin.call('PATCH', `/attendance/${me.open.id}`, { checkInAt: outAt, checkOutAt: inAt })).status, 400);
+  assert.equal((await w.call('GET', '/attendance/me')).body.open, null);
+});
+
 test.after(async () => {
   await getPool().end();
 });
