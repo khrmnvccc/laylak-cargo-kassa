@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { Ban, ChevronLeft, ChevronRight, Minus, Plus, Scale, Wallet } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
+import { useAuth } from '../lib/auth';
+import { printBalance } from '../lib/reports';
+import { PrintButton } from '../components/PrintButton';
 import { useApi, useLive } from '../lib/live';
 import { addDays, dateTime, formatDate, groupDigits, methodColor, methodLabel, money, timeOf, todayTashkent, weekday } from '../lib/format';
 import type { BalanceReport, Expense, ExpenseCategory, SourceBalance } from '../lib/types';
@@ -33,6 +36,7 @@ const parseDigits = (text: string) => Number(text.replace(/\D/g, '') || 0);
 const digitsInput = (value: string) => { const d = value.replace(/\D/g, '').slice(0, 11); return d ? groupDigits(Number(d)) : ''; };
 
 export default function Balance() {
+  const { user } = useAuth();
   const today = todayTashkent();
   const [date, setDate] = useState(today);
   const { data, error, loading, reload } = useApi<BalanceReport>('/balance', { date });
@@ -50,6 +54,7 @@ export default function Balance() {
         title="Kassa balansi"
         subtitle="Naqd va kartada qancha pul borligi, kunlik rasxodlar · faqat admin koʻradi"
         actions={<>
+          <PrintButton disabled={!data} run={() => data && printBalance(data, user.full_name)} />
           <Button icon={<Scale className="size-4" />} onClick={() => setModal('adjust')}>Qoldiqni tuzatish</Button>
           <Button variant="primary" icon={<Minus className="size-4" />} onClick={() => setModal('expense')}>Rasxod qoʻshish</Button>
         </>}

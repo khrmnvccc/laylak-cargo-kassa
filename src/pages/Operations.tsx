@@ -7,13 +7,16 @@ import type { Method, PaymentList, Summary } from '../lib/types';
 import { DateRangePicker, presetRange, type Range } from '../components/DateRange';
 import { PaymentsTable } from '../components/PaymentsTable';
 import { ImportPayments } from '../components/ImportPayments';
+import { PrintButton } from '../components/PrintButton';
 import { useAuth } from '../lib/auth';
+import { printOperations } from '../lib/reports';
 import { Button, Card, EmptyState, ErrorState, IconButton, Input, PageHeader, Segmented, Select, SkeletonRows, useToast } from '../components/ui';
 
 const PAGE_SIZE = 50;
 
 export default function Operations({ params }: { params: URLSearchParams }) {
   const toast = useToast();
+  const { user } = useAuth();
   const [range, setRange] = useState<Range>(() => presetRange(params.get('client') ? '30d' : '7d'));
   const [method, setMethod] = useState<'all' | Method>('all');
   const [worker, setWorker] = useState('');
@@ -23,7 +26,6 @@ export default function Operations({ params }: { params: URLSearchParams }) {
   const [page, setPage] = useState(0);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
-  const { user } = useAuth();
 
   useEffect(() => {
     const id = setTimeout(() => setDebounced(search.trim()), 300);
@@ -71,6 +73,7 @@ export default function Operations({ params }: { params: URLSearchParams }) {
         actions={<>
           {user.role === 'admin' && <Button icon={<Upload className="size-4" />} onClick={() => setImporting(true)}>Hisobotni yuklash</Button>}
           <Button icon={<Download className="size-4" />} loading={exporting} onClick={exportCsv} disabled={!data?.count}>Excel (CSV)</Button>
+          <PrintButton disabled={!data?.count} run={() => printOperations(filters, [method !== 'all' && methodLabel(method), status === 'voided' ? 'bekor qilinganlar' : status === 'all' ? 'faol va bekor qilinganlar' : '', debounced && `qidiruv: ${debounced}`].filter(Boolean).join(' · '), user.full_name)} />
         </>}
       />
       {importing && <ImportPayments onClose={() => setImporting(false)} />}

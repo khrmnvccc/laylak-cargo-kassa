@@ -142,7 +142,7 @@ async function audit(db: { query: pg.PoolClient['query'] } | null, user: AuthUse
 
 const PAYMENT_COLUMNS = `p.id, p.client_code, COALESCE(p.client_name, c.full_name) AS client_name, p.amount, p.method, p.note,
   p.paid_at, p.created_by, p.created_by_name, p.created_at, p.voided_at, p.voided_by_name, p.void_reason,
-  (p.legacy_id IS NOT NULL) AS is_legacy`;
+  (p.legacy_id IS NOT NULL) AS is_legacy, c.phone AS client_phone`;
 
 async function totalsFor(from: string, to: string) {
   const rows = await query(

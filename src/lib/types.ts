@@ -23,6 +23,7 @@ export interface Payment {
   voided_by_name: string | null;
   void_reason: string | null;
   is_legacy: boolean;
+  client_phone?: string | null;
 }
 
 export interface Totals {
