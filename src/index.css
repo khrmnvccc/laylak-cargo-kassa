@@ -43,6 +43,7 @@
     radial-gradient(56rem 40rem at 50% 110%, rgb(52 199 89 / 0.08), transparent 60%),
     #f2f2f7;
   --surface: rgb(255 255 255 / 0.68);
+  --surface-solid: rgb(255 255 255 / 0.86);
   --surface-2: rgb(118 118 128 / 0.08);
   --surface-3: rgb(118 118 128 / 0.14);
   --line: rgb(60 60 67 / 0.10);
@@ -78,6 +79,7 @@
     radial-gradient(56rem 40rem at 50% 110%, rgb(48 209 88 / 0.10), transparent 60%),
     #000000;
   --surface: rgb(44 44 46 / 0.62);
+  --surface-solid: rgb(28 28 30 / 0.88);
   --surface-2: rgb(118 118 128 / 0.18);
   --surface-3: rgb(118 118 128 / 0.26);
   --line: rgb(84 84 88 / 0.40);
@@ -130,6 +132,15 @@
 }
 .glass, .shadow-soft.bg-surface, .shadow-pop.bg-surface { box-shadow: inset 0 0.5px 0 var(--glass-edge), var(--shadow); }
 .shadow-pop.bg-surface { box-shadow: inset 0 0.5px 0 var(--glass-edge), var(--shadow-lg); }
+/* Desktop: big screens have several times more blurred area, and a fixed page background
+   makes the browser repaint every blur on each scroll step. There the backdrop is its own
+   composited layer, and cards are plain translucent panels; the header, sidebar and pop-ups keep the blur.
+   Phones keep the full effect. */
+@media (min-width: 1024px) {
+  body { background: var(--bg); }
+  body::before { content: ''; position: fixed; inset: 0; z-index: -1; background: var(--backdrop); pointer-events: none; transform: translateZ(0); }
+  .shadow-soft.bg-surface:not(.glass) { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--surface-solid); }
+}
 button, a { -webkit-tap-highlight-color: transparent; }
 button:not(:disabled):active { transform: scale(0.98); transition: transform 80ms ease-out; }
 
