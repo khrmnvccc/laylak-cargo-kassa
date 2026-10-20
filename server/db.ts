@@ -250,6 +250,8 @@ CREATE TABLE IF NOT EXISTS attendance (
   in_accuracy INTEGER,
   out_distance INTEGER,
   out_accuracy INTEGER,
+  -- "Ketdim" was never pressed; the row was closed the next time the person arrived.
+  forgot_out BOOLEAN NOT NULL DEFAULT FALSE,
   edited_by_name TEXT,
   edited_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

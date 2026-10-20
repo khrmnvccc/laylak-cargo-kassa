@@ -7,12 +7,13 @@ export const cx = (...classes: Array<string | false | null | undefined>) => clas
 
 // ---------- Buttons ----------
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
+type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'success';
 const variants: Record<Variant, string> = {
   primary: 'bg-primary text-primary-fg hover:opacity-90 shadow-soft',
   secondary: 'bg-surface text-ink border border-line hover:bg-surface-2 shadow-soft',
   ghost: 'text-ink-2 hover:bg-surface-2 hover:text-ink',
   danger: 'bg-danger text-white hover:opacity-90 shadow-soft',
+  success: 'bg-success text-white hover:opacity-90 shadow-soft',
 };
 
 export function Button({ variant = 'secondary', size = 'md', loading, icon, children, className, disabled, ...rest }:

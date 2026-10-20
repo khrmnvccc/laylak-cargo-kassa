@@ -267,7 +267,9 @@ route('GET', '/version', 'user', async () => {
             COALESCE((SELECT EXTRACT(EPOCH FROM MAX(updated_at)) FROM app_users), 0)::text || ':' ||
             (SELECT COUNT(*) FROM expenses)::text || ':' ||
             COALESCE((SELECT EXTRACT(EPOCH FROM MAX(updated_at)) FROM expenses), 0)::text || ':' ||
-            (SELECT COUNT(*) FROM balance_adjustments)::text AS version`,
+            (SELECT COUNT(*) FROM balance_adjustments)::text || ':' ||
+            (SELECT COUNT(*) FROM attendance)::text || ':' ||
+            COALESCE((SELECT EXTRACT(EPOCH FROM MAX(GREATEST(check_in_at, check_out_at, edited_at))) FROM attendance), 0)::text AS version`,
   );
   return { version: rows[0].version, today: todayTashkent() };
 });
@@ -1040,9 +1042,23 @@ async function checkLocation(body: any): Promise<{ distance: number | null; accu
 }
 
 const ATT_COLUMNS = `a.id, a.user_id, u.full_name AS user_name, a.check_in_at, a.check_out_at, a.in_distance, a.out_distance,
-  a.edited_by_name, a.edited_at, to_char(a.check_in_at AT TIME ZONE '${TZ}', 'YYYY-MM-DD') AS day`;
+  a.forgot_out, a.edited_by_name, a.edited_at, to_char(a.check_in_at AT TIME ZONE '${TZ}', 'YYYY-MM-DD') AS day`;
+
+/**
+ * An arrival from an earlier day that was never closed: "Ketdim" was forgotten. It is closed with
+ * zero length and flagged, so the day still counts as present and an admin can enter the real time.
+ */
+async function closeForgotten(userId: string | null) {
+  await query(
+    `UPDATE attendance SET check_out_at = check_in_at, forgot_out = TRUE
+      WHERE check_out_at IS NULL AND check_in_at < (($1::date)::timestamp AT TIME ZONE '${TZ}')
+        AND ($2::uuid IS NULL OR user_id = $2::uuid)`,
+    [todayTashkent(), userId],
+  );
+}
 
 route('GET', '/attendance/me', 'user', async (ctx) => {
+  await closeForgotten(ctx.user!.id);
   const [open, recent, office] = await Promise.all([
     query(`SELECT ${ATT_COLUMNS} FROM attendance a JOIN app_users u ON u.id = a.user_id WHERE a.user_id = $1 AND a.check_out_at IS NULL`, [ctx.user!.id]),
     query(`SELECT ${ATT_COLUMNS} FROM attendance a JOIN app_users u ON u.id = a.user_id
@@ -1054,6 +1070,7 @@ route('GET', '/attendance/me', 'user', async (ctx) => {
 
 route('POST', '/attendance/check-in', 'user', async (ctx) => {
   const { distance, accuracy } = await checkLocation(ctx.body);
+  await closeForgotten(ctx.user!.id);
   return transaction(async (db) => {
     await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`att:${ctx.user!.id}`]);
     const open = await db.query(`SELECT 1 FROM attendance WHERE user_id = $1 AND check_out_at IS NULL`, [ctx.user!.id]);
@@ -1068,6 +1085,7 @@ route('POST', '/attendance/check-in', 'user', async (ctx) => {
 
 route('POST', '/attendance/check-out', 'user', async (ctx) => {
   const { distance, accuracy } = await checkLocation(ctx.body);
+  await closeForgotten(ctx.user!.id);
   const rows = await query(
     `UPDATE attendance SET check_out_at = GREATEST(NOW(), check_in_at), out_distance = $2, out_accuracy = $3
       WHERE user_id = $1 AND check_out_at IS NULL RETURNING id, check_in_at, check_out_at`,
@@ -1079,6 +1097,7 @@ route('POST', '/attendance/check-out', 'user', async (ctx) => {
 
 route('GET', '/attendance', 'staff.view', async (ctx) => {
   const { from, to } = parseRange(ctx.query, 6);
+  await closeForgotten(null);
   const items = await query(
     `SELECT ${ATT_COLUMNS} FROM attendance a JOIN app_users u ON u.id = a.user_id
       WHERE a.check_in_at >= ($1::date)::timestamp AT TIME ZONE '${TZ}' AND a.check_in_at < ($2::date + 1)::timestamp AT TIME ZONE '${TZ}'
@@ -1101,7 +1120,7 @@ route('PATCH', '/attendance/:id', 'admin', async (ctx) => {
     const before = await db.query(`SELECT check_in_at, check_out_at FROM attendance WHERE id = $1 FOR UPDATE`, [ctx.params.id]);
     if (!before.rowCount) throw new HttpError(404, 'Yozuv topilmadi');
     const rows = await db.query(
-      `UPDATE attendance SET check_in_at = $2, check_out_at = $3, edited_by_name = $4, edited_at = NOW()
+      `UPDATE attendance SET check_in_at = $2, check_out_at = $3, forgot_out = FALSE, edited_by_name = $4, edited_at = NOW()
         WHERE id = $1 RETURNING id, check_in_at, check_out_at`,
       [ctx.params.id, new Date(inAt).toISOString(), outAt === null ? null : new Date(outAt).toISOString(), ctx.user!.full_name],
     );

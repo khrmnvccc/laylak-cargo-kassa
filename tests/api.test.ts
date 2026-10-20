@@ -411,6 +411,13 @@ test('attendance: check in and out near the office only, totals for the admin', 
   assert.equal(fix.status, 200, JSON.stringify(fix.body));
   assert.equal((await admin.call('PATCH', `/attendance/${me.open.id}`, { checkInAt: outAt, checkOutAt: inAt })).status, 400);
   assert.equal((await w.call('GET', '/attendance/me')).body.open, null);
+
+  // A forgotten "Ketdim" from an earlier day does not block today's "Keldim".
+  const uid = me.open.user_id;
+  await getPool().query(`INSERT INTO attendance (user_id, check_in_at) VALUES ($1, NOW() - interval '2 days')`, [uid]);
+  assert.equal((await w.call('POST', '/attendance/check-in', { lat: 41.311, lng: 69.279, accuracy: 10 })).status, 201);
+  const old = await getPool().query(`SELECT forgot_out, check_out_at = check_in_at AS zero FROM attendance WHERE user_id = $1 AND check_in_at < NOW() - interval '1 day'`, [uid]);
+  assert.deepEqual(old.rows, [{ forgot_out: true, zero: true }]);
 });
 
 test.after(async () => {

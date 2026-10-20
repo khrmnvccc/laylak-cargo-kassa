@@ -11,6 +11,7 @@ import { PrintButton } from '../components/PrintButton';
 import { useAuth } from '../lib/auth';
 import { printOperations } from '../lib/reports';
 import { Button, Card, CardBreakdown, EmptyState, ErrorState, IconButton, Input, PageHeader, Segmented, Select, SkeletonRows, cx, useToast } from '../components/ui';
+import { can } from '../lib/perms';
 
 const PAGE_SIZE = 50;
 
@@ -72,7 +73,7 @@ export default function Operations({ params }: { params: URLSearchParams }) {
         title="Operatsiyalar"
         subtitle="Barcha kirimlar tarixi"
         actions={<>
-          {user.role === 'admin' && <Button icon={<Upload className="size-4" />} onClick={() => setImporting(true)}>Hisobotni yuklash</Button>}
+          {can(user, 'payments.import') && <Button icon={<Upload className="size-4" />} onClick={() => setImporting(true)}>Hisobotni yuklash</Button>}
           <Button icon={<Download className="size-4" />} loading={exporting} onClick={exportCsv} disabled={!data?.count}>Excel (CSV)</Button>
           <PrintButton disabled={!data?.count} run={() => printOperations(filters, [method === 'card_all' ? 'Karta (hammasi)' : method !== 'all' && methodLabel(method), status === 'voided' ? 'bekor qilinganlar' : status === 'all' ? 'faol va bekor qilinganlar' : '', debounced && `qidiruv: ${debounced}`].filter(Boolean).join(' · '), user.full_name)} />
         </>}
