@@ -15,7 +15,7 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
     group: 'Asosiy',
     items: [
       { page: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      { page: 'kassa', label: 'Kassa', icon: Wallet },
+      { page: 'kassa', label: 'Toʻlov kiritish', icon: Wallet },
       { page: 'operations', label: 'Operatsiyalar', icon: ListOrdered },
     ],
   },
@@ -38,7 +38,7 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
 ];
 
 export const PAGE_TITLES: Record<Page, string> = {
-  dashboard: 'Dashboard', kassa: 'Kassa', operations: 'Operatsiyalar', daily: 'Kunlik hisobot',
+  dashboard: 'Dashboard', kassa: 'Toʻlov kiritish', operations: 'Operatsiyalar', daily: 'Kunlik hisobot',
   periods: 'Haftalik va oylik hisobot', workers: 'Ishchilar', clients: 'Mijozlar', balance: 'Kassa balansi', settings: 'Sozlamalar',
 };
 
@@ -135,7 +135,7 @@ export function Layout({ page, user, onLogout, children }: { page: Page; user: U
   const mobileTabs: Array<{ page: Page; label: string; icon: typeof Wallet }> = [
     { page: 'dashboard', label: 'Asosiy', icon: LayoutDashboard },
     { page: 'operations', label: 'Tarix', icon: ListOrdered },
-    { page: 'kassa', label: 'Kassa', icon: Plus },
+    { page: 'kassa', label: 'Toʻlov', icon: Plus },
     { page: 'daily', label: 'Hisobot', icon: CalendarDays },
   ];
 

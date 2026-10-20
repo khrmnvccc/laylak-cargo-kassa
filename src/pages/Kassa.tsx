@@ -132,7 +132,7 @@ export default function Kassa() {
 
   return (
     <>
-      <PageHeader title="Kassa" subtitle="Yangi toʻlovni kiritish. Saqlangan toʻlov barcha xodimlarga darhol koʻrinadi." />
+      <PageHeader title="Toʻlov kiritish" subtitle="Yangi toʻlovni kiritish. Saqlangan toʻlov barcha xodimlarga darhol koʻrinadi." />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
         <Card>
