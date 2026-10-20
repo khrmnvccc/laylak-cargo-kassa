@@ -236,7 +236,34 @@ DROP TRIGGER IF EXISTS adjustments_no_change_trg ON balance_adjustments;
 CREATE TRIGGER adjustments_no_change_trg BEFORE UPDATE OR DELETE ON balance_adjustments FOR EACH ROW EXECUTE FUNCTION ledger_no_delete();
 `;
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_V3_SQL = `
+-- Per-worker rights; NULL means the default worker rights (see server/perms.ts). Admins have all rights.
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS permissions TEXT[];
+
+-- One row per arrival: when a person pressed "Keldim" and "Ketdim", and how far from the office they were.
+CREATE TABLE IF NOT EXISTS attendance (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+  check_in_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  check_out_at TIMESTAMPTZ,
+  in_distance INTEGER,
+  in_accuracy INTEGER,
+  out_distance INTEGER,
+  out_accuracy INTEGER,
+  -- "Ketdim" was never pressed; the row was closed the next time the person arrived.
+  forgot_out BOOLEAN NOT NULL DEFAULT FALSE,
+  edited_by_name TEXT,
+  edited_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (check_out_at IS NULL OR check_out_at >= check_in_at)
+);
+-- At most one open (not yet checked out) arrival per person.
+CREATE UNIQUE INDEX IF NOT EXISTS attendance_open_idx ON attendance(user_id) WHERE check_out_at IS NULL;
+CREATE INDEX IF NOT EXISTS attendance_in_idx ON attendance(check_in_at DESC);
+ALTER TABLE attendance ENABLE ROW LEVEL SECURITY;
+`;
+
+const SCHEMA_VERSION = 3;
 
 export function ensureSchema(): Promise<void> {
   if (!globalForPool.__kassaSchema) {
@@ -263,6 +290,7 @@ async function migrate() {
     if (current < SCHEMA_VERSION) {
       if (current < 1) await client.query(SCHEMA_SQL);
       if (current < 2) await client.query(SCHEMA_V2_SQL);
+      if (current < 3) await client.query(SCHEMA_V3_SQL);
       await client.query(
         `INSERT INTO app_meta (key, value) VALUES ('schema_version', $1::jsonb)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,

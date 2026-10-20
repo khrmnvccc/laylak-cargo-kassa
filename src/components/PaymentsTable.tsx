@@ -8,6 +8,7 @@ import { dateTime, methodColor, methodLabel, money, relativeDay } from '../lib/f
 import { href } from '../lib/router';
 import type { Payment } from '../lib/types';
 import { Alert, Avatar, Badge, Button, Field, MethodBadge, Modal, Textarea, cx, td, th, useToast } from './ui';
+import { can } from '../lib/perms';
 
 export function PaymentsTable({ items, showDate = true, compact = false, list = false }: { items: Payment[]; showDate?: boolean; compact?: boolean; list?: boolean }) {
   const [selected, setSelected] = useState<Payment | null>(null);
@@ -134,7 +135,7 @@ function PaymentDetail({ payment, onClose }: { payment: Payment | null; onClose:
           </>
         ) : (
           <>
-            {user.role === 'admin' && !payment.voided_at && (
+            {can(user, 'payments.void') && !payment.voided_at && (
               <Button variant="ghost" className="text-danger hover:text-danger sm:mr-auto" onClick={() => setVoiding(true)} icon={<Ban className="size-4" />}>Bekor qilish</Button>
             )}
             <Button icon={<Printer className="size-4" />} onClick={() => printPaymentLabel(payment)}>Yorliq (76×130)</Button>

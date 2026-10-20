@@ -5,6 +5,7 @@ import { AuthContext } from './lib/auth';
 import { LiveProvider } from './lib/live';
 import { useRoute } from './lib/router';
 import { useTheme } from './lib/theme';
+import { canSee, homePage } from './lib/perms';
 import type { User } from './lib/types';
 import { Layout } from './components/Layout';
 import { ErrorState, ToastProvider } from './components/ui';
@@ -19,6 +20,7 @@ const pages = {
   workers: lazy(() => import('./pages/Workers')),
   balance: lazy(() => import('./pages/Balance')),
   clients: lazy(() => import('./pages/Clients')),
+  attendance: lazy(() => import('./pages/Attendance')),
   settings: lazy(() => import('./pages/Settings')),
 };
 
@@ -87,7 +89,7 @@ export default function App() {
   }
 
   const user = boot.user;
-  const page = (route.page === 'workers' || route.page === 'balance') && user.role !== 'admin' ? 'dashboard' : route.page;
+  const page = canSee(user, route.page) ? route.page : homePage(user);
   const PageComponent = pages[page];
 
   return (

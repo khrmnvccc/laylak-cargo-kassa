@@ -1,6 +1,7 @@
 import { createHash, randomBytes, scrypt as scryptCb, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { HttpError, query } from './db.js';
+import { permsOf, type Perm } from './perms.js';
 
 const scrypt = promisify(scryptCb) as (password: string, salt: Buffer, keylen: number, options: object) => Promise<Buffer>;
 const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1 };
@@ -14,6 +15,7 @@ export interface AuthUser {
   username: string;
   full_name: string;
   role: Role;
+  permissions: Perm[];
 }
 
 export async function hashPassword(password: string): Promise<string> {
@@ -67,13 +69,15 @@ export async function destroySession(token: string | undefined) {
 
 export async function getSessionUser(token: string | undefined): Promise<AuthUser | null> {
   if (!token) return null;
-  const rows = await query<AuthUser>(
-    `SELECT u.id, u.username, u.full_name, u.role
+  const rows = await query<Omit<AuthUser, 'permissions'> & { stored: string[] | null }>(
+    `SELECT u.id, u.username, u.full_name, u.role, u.permissions AS stored
        FROM app_sessions s JOIN app_users u ON u.id = s.user_id
       WHERE s.token_hash = $1 AND s.expires_at > NOW() AND u.is_active`,
     [hashToken(token)],
   );
-  return rows[0] || null;
+  if (!rows[0]) return null;
+  const { stored, ...user } = rows[0];
+  return { ...user, permissions: permsOf(user.role, stored) };
 }
 
 export function sessionCookie(token: string, maxAge: number, secure: boolean): string {

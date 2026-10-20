@@ -4,11 +4,14 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useApi, useLive } from '../lib/live';
 import { groupDigits, money, rangeLabel, relativeDay } from '../lib/format';
+import { PERM_INFO, PRESETS, roleLabel, type Perm } from '../lib/perms';
 import type { Role, Staff } from '../lib/types';
 import { DateRangePicker, presetRange, type Range } from '../components/DateRange';
 import { Alert, Avatar, Badge, Button, Card, EmptyState, ErrorState, Field, Input, MethodCells, MethodHeads, Modal, PageHeader, Segmented, SkeletonRows, cx, td, th, useToast } from '../components/ui';
 
 export default function Workers() {
+  const { user } = useAuth();
+  const isAdmin = user.role === 'admin';
   const [range, setRange] = useState<Range>(() => presetRange('month'));
   const { data, error, loading, reload } = useApi<{ items: Staff[] }>('/staff', range);
   const [editing, setEditing] = useState<Staff | 'new' | null>(null);
@@ -23,7 +26,7 @@ export default function Workers() {
         subtitle={<>Xodimlar va ularning koʻrsatkichlari · <span className="text-ink-2">{rangeLabel(range.from, range.to)}</span></>}
         actions={<>
           <DateRangePicker value={range} onChange={setRange} />
-          <Button variant="primary" icon={<UserPlus className="size-4" />} onClick={() => setEditing('new')}>Xodim qoʻshish</Button>
+          {isAdmin && <Button variant="primary" icon={<UserPlus className="size-4" />} onClick={() => setEditing('new')}>Xodim qoʻshish</Button>}
         </>}
       />
 
@@ -37,7 +40,7 @@ export default function Workers() {
 
       <Card padded={false}>
         {error && !data ? <ErrorState message={error} onRetry={reload} /> : loading ? <SkeletonRows rows={4} cols={6} /> : !data?.items.length ? (
-          <EmptyState title="Xodimlar yoʻq" action={<Button variant="primary" onClick={() => setEditing('new')}>Xodim qoʻshish</Button>} />
+          <EmptyState title="Xodimlar yoʻq" action={isAdmin ? <Button variant="primary" onClick={() => setEditing('new')}>Xodim qoʻshish</Button> : undefined} />
         ) : (
           <div className="overflow-x-auto scrollbar-thin">
             <table className="w-full">
@@ -69,7 +72,7 @@ export default function Workers() {
                       </td>
                       <td className={td}>
                         <div className="flex gap-1.5">
-                          <Badge tone={w.role === 'admin' ? 'warn' : 'neutral'}>{w.role === 'admin' ? 'Admin' : 'Kassir'}</Badge>
+                          <Badge tone={w.role === 'admin' ? 'warn' : 'neutral'}>{roleLabel(w)}</Badge>
                           {!w.is_active && <Badge tone="danger">Oʻchirilgan</Badge>}
                         </div>
                       </td>
@@ -84,7 +87,7 @@ export default function Workers() {
                       </td>
                       <td className={cx(td, 'text-ink-3')}>{w.last_login_at ? relativeDay(w.last_login_at) : 'Hech qachon'}</td>
                       <td className="pr-3">
-                        <Button variant="ghost" size="sm" onClick={() => setEditing(w)} aria-label="Tahrirlash"><Pencil className="size-3.5" /></Button>
+                        {isAdmin && <Button variant="ghost" size="sm" onClick={() => setEditing(w)} aria-label="Tahrirlash"><Pencil className="size-3.5" /></Button>}
                       </td>
                     </tr>
                   );
@@ -117,6 +120,15 @@ function StaffModal({ staff, onClose }: { staff: Staff | null; onClose: () => vo
   const [fullName, setFullName] = useState(staff?.full_name || '');
   const [username, setUsername] = useState(staff?.username || '');
   const [role, setRole] = useState<Role>(staff?.role || 'worker');
+  const [perms, setPerms] = useState<Perm[]>(staff?.role === 'worker' ? staff.permissions : PRESETS.kassir);
+  const kind = role === 'admin' ? 'admin' : perms.includes('payments.create') ? 'kassir' : 'ishchi';
+  const pickKind = (k: 'ishchi' | 'kassir' | 'admin') => {
+    if (isSelf) return;
+    if (k === 'admin') return setRole('admin');
+    setRole('worker');
+    setPerms(PRESETS[k]);
+  };
+  const toggle = (p: Perm) => setPerms((list) => (list.includes(p) ? list.filter((x) => x !== p) : [...list, p]));
   const [active, setActive] = useState(staff?.is_active ?? true);
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -132,13 +144,14 @@ function StaffModal({ staff, onClose }: { staff: Staff | null; onClose: () => vo
     setBusy(true);
     try {
       if (isNew) {
-        await api('/staff', { method: 'POST', body: { fullName, username, role, password } });
+        await api('/staff', { method: 'POST', body: { fullName, username, role, password, permissions: perms } });
         toast({ tone: 'success', title: 'Xodim qoʻshildi', description: `${fullName} · login: ${username.trim().toLowerCase()}` });
       } else {
         const body: Record<string, unknown> = {};
         if (fullName !== staff.full_name) body.fullName = fullName;
         if (role !== staff.role) body.role = role;
         if (active !== staff.is_active) body.isActive = active;
+        if (role === 'worker' && [...perms].sort().join() !== [...(staff.role === 'worker' ? staff.permissions : [])].sort().join()) body.permissions = perms;
         if (password) body.password = password;
         if (!Object.keys(body).length) return onClose();
         await api(`/staff/${staff.id}`, { method: 'PATCH', body });
@@ -169,9 +182,27 @@ function StaffModal({ staff, onClose }: { staff: Staff | null; onClose: () => vo
         <Field label={isNew ? 'Parol' : 'Yangi parol'} required={isNew} hint={isNew ? 'Kamida 8 belgi' : 'Oʻzgartirmaslik uchun boʻsh qoldiring'} htmlFor="sf-pass">
           <Input id="sf-pass" type="text" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" placeholder="••••••••" />
         </Field>
-        <Field label="Rol" hint={role === 'admin' ? 'Barcha maʼlumotlar, xodimlarni boshqarish va operatsiyalarni bekor qilish' : 'Toʻlov kiritadi, umumiy operatsiya va hisobotlarni koʻradi'}>
-          <Segmented className="flex w-full" value={role} onChange={(r) => !isSelf && setRole(r)} options={[{ value: 'worker', label: 'Kassir' }, { value: 'admin', label: 'Admin' }]} />
+        <Field label="Rol" hint={kind === 'admin' ? 'Hamma narsaga ruxsat: xodimlar, ruxsatlar, balans, bekor qilish' : kind === 'kassir' ? 'Toʻlov kiritadi. Qolgan ruxsatlarni pastda belgilang' : 'Faqat kelish-ketishini belgilaydi. Kerak boʻlsa pastda ruxsat bering'}>
+          <Segmented className="flex w-full" value={kind} onChange={pickKind}
+            options={[{ value: 'ishchi', label: 'Ishchi' }, { value: 'kassir', label: 'Kassir' }, { value: 'admin', label: 'Admin' }]} />
         </Field>
+        {role === 'worker' && (
+          <div>
+            <div className="mb-1.5 text-sm font-medium text-ink">Ruxsatlar</div>
+            <div className="divide-y divide-line rounded-lg border border-line">
+              {PERM_INFO.map((p) => (
+                <label key={p.perm} className="flex cursor-pointer items-start gap-3 px-3 py-2.5 hover:bg-surface-2/60">
+                  <input type="checkbox" checked={perms.includes(p.perm)} onChange={() => toggle(p.perm)} className="mt-0.5 size-4 shrink-0 accent-[var(--ink)]" />
+                  <span className="min-w-0">
+                    <span className="block text-sm text-ink">{p.label}</span>
+                    <span className="block text-xs text-ink-3">{p.hint}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <p className="mt-1.5 text-xs text-ink-3">Kelish-ketishni belgilash hammaga ochiq. Oʻzgarish xodimda darhol kuchga kiradi.</p>
+          </div>
+        )}
         {!isNew && !isSelf && (
           <label className="flex items-center justify-between gap-3 rounded-lg border border-line px-3 py-2.5">
             <div>

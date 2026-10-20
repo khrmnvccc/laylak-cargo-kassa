@@ -18,6 +18,7 @@ import {
   validatePassword,
   verifyPassword,
 } from './auth.js';
+import { PERMISSIONS, isPerm, permsOf, type Perm } from './perms.js';
 
 export interface ApiRequest {
   method: string;
@@ -41,7 +42,7 @@ interface Ctx extends ApiRequest {
 }
 
 type Handler = (ctx: Ctx) => Promise<ApiResponse | unknown>;
-type Access = 'public' | 'user' | 'admin';
+type Access = 'public' | 'user' | 'admin' | Perm;
 
 const routes: Array<{ method: string; pattern: RegExp; keys: string[]; access: Access; handler: Handler }> = [];
 
@@ -73,6 +74,7 @@ export async function handleApi(req: ApiRequest): Promise<ApiResponse> {
     const user = r.access === 'public' && !token ? null : await getSessionUser(token);
     if (r.access !== 'public' && !user) return { status: 401, body: { error: 'Tizimga qayta kiring' } };
     if (r.access === 'admin' && user?.role !== 'admin') return { status: 403, body: { error: 'Bu amal faqat admin uchun' } };
+    if (isPerm(r.access) && !user?.permissions.includes(r.access)) return { status: 403, body: { error: 'Sizda bu amal uchun ruxsat yoʻq' } };
     const result = await r.handler({ ...req, params, token, secure, user });
     if (result && typeof result === 'object' && 'status' in result && 'body' in result) return result as ApiResponse;
     return { status: 200, body: result };
@@ -192,7 +194,7 @@ route('POST', '/setup', 'public', async (ctx) => {
       [username, fullName, passwordHash],
     );
     await audit(db, inserted.rows[0], 'setup', 'user', inserted.rows[0].id);
-    return inserted.rows[0] as AuthUser;
+    return { ...inserted.rows[0], permissions: permsOf('admin', null) } as AuthUser;
   });
   const session = await createSession(user.id, ctx.headers['user-agent']);
   return { status: 200, body: { user }, cookies: [sessionCookie(session.token, session.maxAge, ctx.secure)] };
@@ -205,7 +207,7 @@ route('POST', '/auth/login', 'public', async (ctx) => {
   const lockKey = `user:${username}`;
   await assertNotLocked(lockKey);
   const rows = await query(
-    `SELECT id, username, full_name, role, password_hash, is_active FROM app_users WHERE username = $1`,
+    `SELECT id, username, full_name, role, permissions, password_hash, is_active FROM app_users WHERE username = $1`,
     [username],
   );
   const row = rows[0];
@@ -217,7 +219,7 @@ route('POST', '/auth/login', 'public', async (ctx) => {
   if (!row.is_active) throw new HttpError(403, 'Akkaunt o‘chirilgan. Admin bilan bog‘laning');
   await clearLoginFailures(lockKey);
   await query(`UPDATE app_users SET last_login_at = NOW() WHERE id = $1`, [row.id]);
-  const user: AuthUser = { id: row.id, username: row.username, full_name: row.full_name, role: row.role };
+  const user: AuthUser = { id: row.id, username: row.username, full_name: row.full_name, role: row.role, permissions: permsOf(row.role, row.permissions) };
   await audit(null, user, 'login', 'user', user.id);
   const session = await createSession(user.id, ctx.headers['user-agent']);
   return { status: 200, body: { user }, cookies: [sessionCookie(session.token, session.maxAge, ctx.secure)] };
@@ -237,7 +239,7 @@ route('PATCH', '/auth/profile', 'user', async (ctx) => {
     `UPDATE app_users SET full_name = $2, updated_at = NOW() WHERE id = $1 RETURNING id, username, full_name, role`,
     [ctx.user!.id, fullName],
   );
-  return { user: rows[0] };
+  return { user: { ...rows[0], permissions: ctx.user!.permissions } };
 });
 
 route('POST', '/auth/password', 'user', async (ctx) => {
@@ -265,14 +267,16 @@ route('GET', '/version', 'user', async () => {
             COALESCE((SELECT EXTRACT(EPOCH FROM MAX(updated_at)) FROM app_users), 0)::text || ':' ||
             (SELECT COUNT(*) FROM expenses)::text || ':' ||
             COALESCE((SELECT EXTRACT(EPOCH FROM MAX(updated_at)) FROM expenses), 0)::text || ':' ||
-            (SELECT COUNT(*) FROM balance_adjustments)::text AS version`,
+            (SELECT COUNT(*) FROM balance_adjustments)::text || ':' ||
+            (SELECT COUNT(*) FROM attendance)::text || ':' ||
+            COALESCE((SELECT EXTRACT(EPOCH FROM MAX(GREATEST(check_in_at, check_out_at, edited_at))) FROM attendance), 0)::text AS version`,
   );
   return { version: rows[0].version, today: todayTashkent() };
 });
 
 // ---------- payments ----------
 
-route('POST', '/payments', 'user', async (ctx) => {
+route('POST', '/payments', 'payments.create', async (ctx) => {
   const b = ctx.body || {};
   const clientCode = str(b.clientCode, 40).toUpperCase();
   const clientName = str(b.clientName, 80);
@@ -288,7 +292,7 @@ route('POST', '/payments', 'user', async (ctx) => {
 
   let paidAt: string | null = null;
   if (b.paidAt) {
-    if (ctx.user!.role !== 'admin') errors.paidAt = 'Sanani faqat admin o‘zgartira oladi';
+    if (!ctx.user!.permissions.includes('payments.backdate')) errors.paidAt = 'Sanani o‘zgartirishga ruxsatingiz yo‘q';
     const t = Date.parse(b.paidAt);
     if (!Number.isFinite(t)) errors.paidAt = 'Sana noto‘g‘ri';
     else if (t > Date.now() + 5 * 60_000) errors.paidAt = 'Kelajakdagi sana kiritib bo‘lmaydi';
@@ -328,7 +332,7 @@ route('POST', '/payments', 'user', async (ctx) => {
 // kassa — typed in by hand or loaded by an earlier import — so the file can be uploaded
 // again safely. With dryRun the counts are returned and nothing is written.
 const IMPORT_SOURCE = 'Excel hisobot';
-route('POST', '/payments/import', 'admin', async (ctx) => {
+route('POST', '/payments/import', 'payments.import', async (ctx) => {
   const rows = Array.isArray(ctx.body?.rows) ? ctx.body.rows : null;
   const dryRun = ctx.body?.dryRun === true;
   if (!rows || !rows.length) throw new HttpError(400, 'Fayldan toʻlov topilmadi');
@@ -412,7 +416,9 @@ route('GET', '/payments', 'user', async (ctx) => {
   const add = (sql: string, value: unknown) => { params.push(value); where.push(sql.replace('?', `$${params.length}`)); };
   if (METHODS.includes(q.method as string)) add('p.method = ?', q.method);
   else if (q.method === 'card_all') where.push("p.method IN ('card', 'yandex', 'pochta')");
-  if (q.worker && /^[0-9a-f-]{36}$/i.test(q.worker)) add('p.created_by = ?', q.worker);
+  // Without the reports right a worker sees only the payments they entered.
+  if (!ctx.user!.permissions.includes('reports.view')) add('p.created_by = ?', ctx.user!.id);
+  else if (q.worker && /^[0-9a-f-]{36}$/i.test(q.worker)) add('p.created_by = ?', q.worker);
   if (q.client) add('p.client_code = ?', q.client.toUpperCase());
   if (q.q) {
     params.push(`%${q.q.trim().slice(0, 60).replace(/[%_\\]/g, '\\$&')}%`);
@@ -445,7 +451,7 @@ route('GET', '/payments', 'user', async (ctx) => {
   return { from, to, items, ...agg[0], limit, offset };
 });
 
-route('POST', '/payments/:id/void', 'admin', async (ctx) => {
+route('POST', '/payments/:id/void', 'payments.void', async (ctx) => {
   const reason = str(ctx.body?.reason, 300);
   if (reason.length < 3) throw new HttpError(400, 'Bekor qilish sababini yozing');
   if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Operatsiya topilmadi');
@@ -464,7 +470,7 @@ route('POST', '/payments/:id/void', 'admin', async (ctx) => {
 
 // ---------- reports ----------
 
-route('GET', '/summary', 'user', async (ctx) => {
+route('GET', '/summary', 'reports.view', async (ctx) => {
   const { from, to } = parseRange(ctx.query, 0);
   const span = daysBetween(from, to) + 1;
   const prevTo = addDays(from, -1);
@@ -517,7 +523,7 @@ route('GET', '/summary', 'user', async (ctx) => {
   return { from, to, previousRange: { from: prevFrom, to: prevTo }, totals, previous, byWorker, byDay, recent };
 });
 
-route('GET', '/periods', 'user', async (ctx) => {
+route('GET', '/periods', 'reports.view', async (ctx) => {
   const group = ctx.query.group === 'month' ? 'month' : 'week';
   const defaultDays = group === 'month' ? 365 : 7 * 12;
   const { from, to } = parseRange(ctx.query, defaultDays - 1);
@@ -590,7 +596,7 @@ route('GET', '/clients', 'user', async (ctx) => {
 });
 
 // Admin bulk import of an existing customer list: adds new IDs, fills in names/phones.
-route('POST', '/clients/import', 'admin', async (ctx) => {
+route('POST', '/clients/import', 'clients.edit', async (ctx) => {
   const rows = Array.isArray(ctx.body?.rows) ? ctx.body.rows : null;
   if (!rows || !rows.length) throw new HttpError(400, 'Fayldan mijozlar topilmadi');
   if (rows.length > 5000) throw new HttpError(400, 'Bir martada 5000 tadan ko‘p mijoz yuklab bo‘lmaydi');
@@ -648,7 +654,7 @@ route('GET', '/clients/:code', 'user', async (ctx) => {
   return { client: clients[0], stats: stats[0], payments };
 });
 
-route('PATCH', '/clients/:code', 'admin', async (ctx) => {
+route('PATCH', '/clients/:code', 'clients.edit', async (ctx) => {
   const code = ctx.params.code.toUpperCase();
   const rows = await query(
     `UPDATE clients SET full_name = NULLIF($2, ''), phone = NULLIF($3, ''), updated_at = NOW()
@@ -662,10 +668,10 @@ route('PATCH', '/clients/:code', 'admin', async (ctx) => {
 
 // ---------- staff (admin) ----------
 
-route('GET', '/staff', 'admin', async (ctx) => {
+route('GET', '/staff', 'staff.view', async (ctx) => {
   const { from, to } = parseRange(ctx.query, 0);
   const rows = await query(
-    `SELECT u.id, u.username, u.full_name, u.role, u.is_active, u.created_at, u.last_login_at,
+    `SELECT u.id, u.username, u.full_name, u.role, u.permissions, u.is_active, u.created_at, u.last_login_at,
             COALESCE(SUM(p.amount), 0)::bigint AS total,
             COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'cash'), 0)::bigint AS cash,
             COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'card'), 0)::bigint AS card,
@@ -678,23 +684,29 @@ route('GET', '/staff', 'admin', async (ctx) => {
       ORDER BY u.is_active DESC, total DESC, u.full_name`,
     [from, to],
   );
-  return { from, to, items: rows };
+  return { from, to, items: rows.map((u: any) => ({ ...u, permissions: permsOf(u.role, u.permissions) })) };
 });
+
+function parsePermissions(value: unknown): Perm[] {
+  if (!Array.isArray(value)) throw new HttpError(400, 'Ruxsatlar roʻyxati notoʻgʻri');
+  return PERMISSIONS.filter((p) => value.includes(p));
+}
 
 route('POST', '/staff', 'admin', async (ctx) => {
   const username = normalizeUsername(ctx.body?.username);
   const fullName = str(ctx.body?.fullName, 80);
   if (fullName.length < 2) throw new HttpError(400, 'Xodim ismini kiriting');
   const role = ctx.body?.role === 'admin' ? 'admin' : 'worker';
+  const permissions = role === 'worker' && ctx.body?.permissions !== undefined ? parsePermissions(ctx.body.permissions) : null;
   const passwordHash = await hashPassword(validatePassword(ctx.body?.password));
   const exists = await query(`SELECT 1 FROM app_users WHERE username = $1`, [username]);
   if (exists.length) throw new HttpError(409, 'Bu login band. Boshqa login tanlang');
   const rows = await query(
-    `INSERT INTO app_users (username, full_name, role, password_hash) VALUES ($1, $2, $3, $4)
+    `INSERT INTO app_users (username, full_name, role, password_hash, permissions) VALUES ($1, $2, $3, $4, $5)
      RETURNING id, username, full_name, role, is_active, created_at`,
-    [username, fullName, role, passwordHash],
+    [username, fullName, role, passwordHash, permissions],
   );
-  await audit(null, ctx.user, 'staff_create', 'user', rows[0].id, { username, role });
+  await audit(null, ctx.user, 'staff_create', 'user', rows[0].id, { username, role, permissions });
   return { status: 201, body: { staff: rows[0] } };
 });
 
@@ -724,20 +736,23 @@ route('PATCH', '/staff/:id', 'admin', async (ctx) => {
     }
     if (b.role !== undefined) set('role', b.role === 'admin' ? 'admin' : 'worker');
     if (b.isActive !== undefined) set('is_active', Boolean(b.isActive));
+    if (b.permissions !== undefined) set('permissions', parsePermissions(b.permissions));
     if (b.password !== undefined) set('password_hash', await hashPassword(validatePassword(b.password)));
     if (!sets.length) throw new HttpError(400, 'O‘zgartirish yo‘q');
     sets.push('updated_at = NOW()');
     const rows = await db.query(
       `UPDATE app_users SET ${sets.join(', ')} WHERE id = $1
-       RETURNING id, username, full_name, role, is_active, created_at, last_login_at`,
+       RETURNING id, username, full_name, role, permissions, is_active, created_at, last_login_at`,
       params,
     );
     // Deactivation or password reset signs the person out everywhere.
     if (b.isActive === false || b.password !== undefined) await db.query(`DELETE FROM app_sessions WHERE user_id = $1`, [id]);
     await audit(db, ctx.user, 'staff_update', 'user', id, {
       fullName: b.fullName, role: b.role, isActive: b.isActive, passwordReset: b.password !== undefined,
+      permissions: b.permissions,
     });
-    return { staff: rows.rows[0] };
+    const staff = rows.rows[0];
+    return { staff: { ...staff, permissions: permsOf(staff.role, staff.permissions) } };
   });
 });
 
@@ -779,7 +794,7 @@ const LEDGER_SQL = `
   UNION ALL SELECT source, NULL, 0, amount, 0, spent_at FROM expenses WHERE voided_at IS NULL
   UNION ALL SELECT CASE WHEN source = 'cash' THEN 'cash' ELSE 'card' END, NULL, 0, 0, amount, at FROM balance_adjustments`;
 
-route('GET', '/balance', 'admin', async (ctx) => {
+route('GET', '/balance', 'balance.view', async (ctx) => {
   const date = ctx.query.date && DATE_RE.test(ctx.query.date) ? ctx.query.date : todayTashkent();
   const start = `($1::date)::timestamp AT TIME ZONE '${TZ}'`;
   const end = `($1::date + 1)::timestamp AT TIME ZONE '${TZ}'`;
@@ -834,7 +849,7 @@ route('GET', '/balance', 'admin', async (ctx) => {
 // account. An expense matching one already recorded (same day, account, category and amount) is
 // skipped; the opening balance becomes the one adjustment that makes the balance at the start of
 // that day equal the given amount, so re-uploading the same file changes nothing.
-route('POST', '/expenses/import', 'admin', async (ctx) => {
+route('POST', '/expenses/import', 'balance.view', async (ctx) => {
   const rows = Array.isArray(ctx.body?.rows) ? ctx.body.rows : null;
   const dryRun = ctx.body?.dryRun === true;
   if (!rows || !rows.length) throw new HttpError(400, 'Fayldan maʼlumot topilmadi');
@@ -923,7 +938,7 @@ route('POST', '/expenses/import', 'admin', async (ctx) => {
   });
 });
 
-route('POST', '/expenses', 'admin', async (ctx) => {
+route('POST', '/expenses', 'balance.view', async (ctx) => {
   const b = ctx.body || {};
   const errors: Record<string, string> = {};
   const amount = Number(b.amount);
@@ -948,7 +963,7 @@ route('POST', '/expenses', 'admin', async (ctx) => {
   return { status: 201, body: { expense } };
 });
 
-route('POST', '/expenses/:id/void', 'admin', async (ctx) => {
+route('POST', '/expenses/:id/void', 'balance.view', async (ctx) => {
   const reason = str(ctx.body?.reason, 300);
   if (reason.length < 3) throw new HttpError(400, 'Bekor qilish sababini yozing');
   if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Rasxod topilmadi');
@@ -964,7 +979,7 @@ route('POST', '/expenses/:id/void', 'admin', async (ctx) => {
   });
 });
 
-route('POST', '/adjustments', 'admin', async (ctx) => {
+route('POST', '/adjustments', 'balance.view', async (ctx) => {
   const b = ctx.body || {};
   const errors: Record<string, string> = {};
   const amount = Number(b.amount);
@@ -986,4 +1001,154 @@ route('POST', '/adjustments', 'admin', async (ctx) => {
     return inserted.rows[0];
   });
   return { status: 201, body: { adjustment } };
+});
+
+// ---------- attendance ----------
+
+interface Office { lat: number; lng: number; radius: number }
+
+async function getOffice(): Promise<Office | null> {
+  const rows = await query(`SELECT value FROM app_meta WHERE key = 'office'`);
+  const v = rows[0]?.value;
+  return v && Number.isFinite(v.lat) && Number.isFinite(v.lng) && Number.isFinite(v.radius) ? v : null;
+}
+
+/** Metres between two points (haversine). */
+function distanceM(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad;
+  const dLng = (b.lng - a.lng) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6371000 * Math.asin(Math.sqrt(h));
+}
+
+/**
+ * When an office location is set, "Keldim" and "Ketdim" only work near it. The phone's own
+ * accuracy estimate (capped at 100 m) is allowed on top of the radius, because indoor GPS drifts.
+ */
+async function checkLocation(body: any): Promise<{ distance: number | null; accuracy: number | null }> {
+  const office = await getOffice();
+  const lat = Number(body?.lat);
+  const lng = Number(body?.lng);
+  const hasPoint = body?.lat != null && body?.lng != null && Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+  const accuracy = Number.isFinite(Number(body?.accuracy)) ? Math.max(0, Math.round(Number(body.accuracy))) : null;
+  if (!office) return { distance: null, accuracy };
+  if (!hasPoint) throw new HttpError(400, 'Joylashuvingiz aniqlanmadi. Telefonda joylashuvga ruxsat bering va qayta urinib koʻring');
+  const distance = Math.round(distanceM({ lat, lng }, office));
+  if (distance - Math.min(accuracy ?? 0, 100) > office.radius) {
+    throw new HttpError(403, `Siz ishxonadan ${distance >= 1000 ? `${(distance / 1000).toFixed(1).replace('.', ',')} km` : `${distance} m`} uzoqdasiz. Belgilash faqat ishxona yonida ishlaydi`);
+  }
+  return { distance, accuracy };
+}
+
+const ATT_COLUMNS = `a.id, a.user_id, u.full_name AS user_name, a.check_in_at, a.check_out_at, a.in_distance, a.out_distance,
+  a.forgot_out, a.edited_by_name, a.edited_at, to_char(a.check_in_at AT TIME ZONE '${TZ}', 'YYYY-MM-DD') AS day`;
+
+/**
+ * An arrival from an earlier day that was never closed: "Ketdim" was forgotten. It is closed with
+ * zero length and flagged, so the day still counts as present and an admin can enter the real time.
+ */
+async function closeForgotten(userId: string | null) {
+  await query(
+    `UPDATE attendance SET check_out_at = check_in_at, forgot_out = TRUE
+      WHERE check_out_at IS NULL AND check_in_at < (($1::date)::timestamp AT TIME ZONE '${TZ}')
+        AND ($2::uuid IS NULL OR user_id = $2::uuid)`,
+    [todayTashkent(), userId],
+  );
+}
+
+route('GET', '/attendance/me', 'user', async (ctx) => {
+  await closeForgotten(ctx.user!.id);
+  const [open, recent, office] = await Promise.all([
+    query(`SELECT ${ATT_COLUMNS} FROM attendance a JOIN app_users u ON u.id = a.user_id WHERE a.user_id = $1 AND a.check_out_at IS NULL`, [ctx.user!.id]),
+    query(`SELECT ${ATT_COLUMNS} FROM attendance a JOIN app_users u ON u.id = a.user_id
+            WHERE a.user_id = $1 AND a.check_in_at >= NOW() - interval '40 days' ORDER BY a.check_in_at DESC`, [ctx.user!.id]),
+    getOffice(),
+  ]);
+  return { open: open[0] || null, items: recent, officeSet: Boolean(office), radius: office?.radius ?? null };
+});
+
+route('POST', '/attendance/check-in', 'user', async (ctx) => {
+  const { distance, accuracy } = await checkLocation(ctx.body);
+  await closeForgotten(ctx.user!.id);
+  return transaction(async (db) => {
+    await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`att:${ctx.user!.id}`]);
+    const open = await db.query(`SELECT 1 FROM attendance WHERE user_id = $1 AND check_out_at IS NULL`, [ctx.user!.id]);
+    if (open.rowCount) throw new HttpError(409, 'Siz allaqachon “Keldim” ni bosgansiz');
+    const rows = await db.query(
+      `INSERT INTO attendance (user_id, in_distance, in_accuracy) VALUES ($1, $2, $3) RETURNING id, check_in_at`,
+      [ctx.user!.id, distance, accuracy],
+    );
+    return { status: 201, body: { attendance: rows.rows[0] } };
+  });
+});
+
+route('POST', '/attendance/check-out', 'user', async (ctx) => {
+  const { distance, accuracy } = await checkLocation(ctx.body);
+  await closeForgotten(ctx.user!.id);
+  const rows = await query(
+    `UPDATE attendance SET check_out_at = GREATEST(NOW(), check_in_at), out_distance = $2, out_accuracy = $3
+      WHERE user_id = $1 AND check_out_at IS NULL RETURNING id, check_in_at, check_out_at`,
+    [ctx.user!.id, distance, accuracy],
+  );
+  if (!rows[0]) throw new HttpError(409, 'Avval “Keldim” ni bosing');
+  return { attendance: rows[0] };
+});
+
+route('GET', '/attendance', 'staff.view', async (ctx) => {
+  const { from, to } = parseRange(ctx.query, 6);
+  await closeForgotten(null);
+  const items = await query(
+    `SELECT ${ATT_COLUMNS} FROM attendance a JOIN app_users u ON u.id = a.user_id
+      WHERE a.check_in_at >= ($1::date)::timestamp AT TIME ZONE '${TZ}' AND a.check_in_at < ($2::date + 1)::timestamp AT TIME ZONE '${TZ}'
+      ORDER BY a.check_in_at DESC LIMIT 5000`,
+    [from, to],
+  );
+  const staff = await query(`SELECT id, full_name, role, is_active FROM app_users ORDER BY is_active DESC, full_name`);
+  return { from, to, items, staff };
+});
+
+// An admin fixes a forgotten "Ketdim" or a wrong time.
+route('PATCH', '/attendance/:id', 'admin', async (ctx) => {
+  if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Yozuv topilmadi');
+  const inAt = Date.parse(ctx.body?.checkInAt);
+  const outAt = ctx.body?.checkOutAt ? Date.parse(ctx.body.checkOutAt) : null;
+  if (!Number.isFinite(inAt) || (outAt !== null && !Number.isFinite(outAt))) throw new HttpError(400, 'Vaqt notoʻgʻri');
+  if (outAt !== null && outAt < inAt) throw new HttpError(400, 'Ketish vaqti kelish vaqtidan oldin boʻlmasin');
+  if (inAt > Date.now() + 60_000 || (outAt !== null && outAt > Date.now() + 60_000)) throw new HttpError(400, 'Kelajakdagi vaqtni kiritib boʻlmaydi');
+  return transaction(async (db) => {
+    const before = await db.query(`SELECT check_in_at, check_out_at FROM attendance WHERE id = $1 FOR UPDATE`, [ctx.params.id]);
+    if (!before.rowCount) throw new HttpError(404, 'Yozuv topilmadi');
+    const rows = await db.query(
+      `UPDATE attendance SET check_in_at = $2, check_out_at = $3, forgot_out = FALSE, edited_by_name = $4, edited_at = NOW()
+        WHERE id = $1 RETURNING id, check_in_at, check_out_at`,
+      [ctx.params.id, new Date(inAt).toISOString(), outAt === null ? null : new Date(outAt).toISOString(), ctx.user!.full_name],
+    );
+    await audit(db, ctx.user, 'attendance_edit', 'attendance', ctx.params.id, { before: before.rows[0], after: rows.rows[0] });
+    return { attendance: rows.rows[0] };
+  });
+});
+
+route('GET', '/office', 'admin', async () => ({ office: await getOffice() }));
+
+route('PUT', '/office', 'admin', async (ctx) => {
+  const b = ctx.body || {};
+  if (b.office === null) {
+    await query(`DELETE FROM app_meta WHERE key = 'office'`);
+    await audit(null, ctx.user, 'office_clear', 'office', null);
+    return { office: null };
+  }
+  const lat = Number(b.lat);
+  const lng = Number(b.lng);
+  const radius = Math.round(Number(b.radius));
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) throw new HttpError(400, 'Joylashuv notoʻgʻri');
+  if (!Number.isFinite(radius) || radius < 20 || radius > 5000) throw new HttpError(400, 'Radius 20 dan 5000 metrgacha boʻlsin');
+  const office = { lat: Math.round(lat * 1e6) / 1e6, lng: Math.round(lng * 1e6) / 1e6, radius };
+  await query(
+    `INSERT INTO app_meta (key, value) VALUES ('office', $1::jsonb)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [JSON.stringify(office)],
+  );
+  await audit(null, ctx.user, 'office_set', 'office', null, office);
+  return { office };
 });

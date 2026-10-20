@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import {
-  BarChart3, Landmark, CalendarDays, LayoutDashboard, ListOrdered, LogOut, Menu, Moon, Plus, Settings, Sun, UserSearch, Users, Wallet, X,
+  BarChart3, Clock, Landmark, CalendarDays, LayoutDashboard, ListOrdered, LogOut, Menu, Moon, Plus, Settings, Sun, UserSearch, Users, Wallet, X,
 } from 'lucide-react';
 import { href, type Page } from '../lib/router';
 import { useLive } from '../lib/live';
@@ -8,9 +8,11 @@ import { useTheme } from '../lib/theme';
 import { formatDate, todayTashkent, weekday } from '../lib/format';
 import type { User } from '../lib/types';
 import { LANG, LANGS, setLang } from '../lib/i18n';
+import { canSee, roleLabel } from '../lib/perms';
+import { AttendanceButton } from './AttendanceButton';
 import { Avatar, Button, IconButton, cx } from './ui';
 
-interface NavItem { page: Page; label: string; icon: typeof Wallet; adminOnly?: boolean }
+interface NavItem { page: Page; label: string; icon: typeof Wallet }
 const NAV: Array<{ group: string; items: NavItem[] }> = [
   {
     group: 'Asosiy',
@@ -25,13 +27,14 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
     items: [
       { page: 'daily', label: 'Kunlik hisobot', icon: CalendarDays },
       { page: 'periods', label: 'Haftalik va oylik', icon: BarChart3 },
-      { page: 'balance', label: 'Kassa balansi', icon: Landmark, adminOnly: true },
+      { page: 'balance', label: 'Kassa balansi', icon: Landmark },
     ],
   },
   {
     group: 'Boshqaruv',
     items: [
-      { page: 'workers', label: 'Ishchilar', icon: Users, adminOnly: true },
+      { page: 'workers', label: 'Ishchilar', icon: Users },
+      { page: 'attendance', label: 'Davomat', icon: Clock },
       { page: 'clients', label: 'Mijozlar', icon: UserSearch },
       { page: 'settings', label: 'Sozlamalar', icon: Settings },
     ],
@@ -40,7 +43,7 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
 
 export const PAGE_TITLES: Record<Page, string> = {
   dashboard: 'Dashboard', kassa: 'Toʻlov kiritish', operations: 'Operatsiyalar', daily: 'Kunlik hisobot',
-  periods: 'Haftalik va oylik hisobot', workers: 'Ishchilar', clients: 'Mijozlar', balance: 'Kassa balansi', settings: 'Sozlamalar',
+  periods: 'Haftalik va oylik hisobot', workers: 'Ishchilar', attendance: 'Davomat', clients: 'Mijozlar', balance: 'Kassa balansi', settings: 'Sozlamalar',
 };
 
 function Logo() {
@@ -77,7 +80,7 @@ function NavLinks({ page, user, onNavigate }: { page: Page; user: User; onNaviga
   return (
     <nav className="space-y-5">
       {NAV.map((group) => {
-        const items = group.items.filter((i) => !i.adminOnly || user.role === 'admin');
+        const items = group.items.filter((i) => canSee(user, i.page));
         if (!items.length) return null;
         return (
           <div key={group.group}>
@@ -115,7 +118,7 @@ function UserCard({ user, onLogout }: { user: User; onLogout: () => void }) {
       <Avatar name={user.full_name} />
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium text-ink">{user.full_name}</div>
-        <div className="text-xs text-ink-3">{user.role === 'admin' ? 'Administrator' : 'Kassir'}</div>
+        <div className="text-xs text-ink-3">{roleLabel(user)}</div>
       </div>
       <IconButton label="Chiqish" onClick={onLogout}><LogOut className="size-4" /></IconButton>
     </div>
@@ -154,12 +157,12 @@ export function Layout({ page, user, onLogout, children }: { page: Page; user: U
     window.scrollTo({ top: 0 });
   }, [page]);
 
-  const mobileTabs: Array<{ page: Page; label: string; icon: typeof Wallet }> = [
+  const mobileTabs = ([
     { page: 'dashboard', label: 'Asosiy', icon: LayoutDashboard },
     { page: 'operations', label: 'Tarix', icon: ListOrdered },
     { page: 'kassa', label: 'Toʻlov', icon: Plus },
-    { page: 'daily', label: 'Hisobot', icon: CalendarDays },
-  ];
+    { page: 'attendance', label: 'Davomat', icon: Clock },
+  ] as Array<{ page: Page; label: string; icon: typeof Wallet }>).filter((t) => canSee(user, t.page));
 
   return (
     <div className="min-h-screen">
@@ -199,11 +202,12 @@ export function Layout({ page, user, onLogout, children }: { page: Page; user: U
                 <span className="text-ink-2">{weekday(today)}</span>, {formatDate(today)}
               </div>
             </div>
+            <AttendanceButton />
             <SyncIndicator />
             <IconButton label={theme.isDark ? 'Yorugʻ rejim' : 'Qorongʻi rejim'} onClick={theme.toggle}>
               {theme.isDark ? <Sun className="size-[18px]" /> : <Moon className="size-[18px]" />}
             </IconButton>
-            {page !== 'kassa' && (
+            {page !== 'kassa' && canSee(user, 'kassa') && (
               <a href={href('kassa')} className="hidden sm:block">
                 <Button variant="primary" icon={<Plus className="size-4" />}>Yangi toʻlov</Button>
               </a>
@@ -216,7 +220,7 @@ export function Layout({ page, user, onLogout, children }: { page: Page; user: U
 
       {/* Mobile bottom navigation */}
       <nav className="no-print fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface glass pb-[env(safe-area-inset-bottom)] lg:hidden">
-        <div className="mx-auto grid h-16 max-w-md grid-cols-5">
+        <div className="mx-auto grid h-16 max-w-md" style={{ gridTemplateColumns: `repeat(${mobileTabs.length + 1}, minmax(0, 1fr))` }}>
           {mobileTabs.map((tab) => {
             const active = tab.page === page;
             if (tab.page === 'kassa') {

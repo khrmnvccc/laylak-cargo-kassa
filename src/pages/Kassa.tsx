@@ -8,6 +8,7 @@ import type { Method, Payment, PaymentList, Summary } from '../lib/types';
 import { PaymentsTable } from '../components/PaymentsTable';
 import { printPaymentLabel } from '../lib/print';
 import { Alert, Button, Card, CardBreakdown, CardHeader, EmptyState, Field, Input, MethodBadge, Modal, PageHeader, SkeletonRows, Textarea, cx, useToast } from '../components/ui';
+import { can } from '../lib/perms';
 
 interface ClientInfo { client: { code: string; full_name: string | null }; stats: { total: number; count: number } }
 const METHOD_ICONS = { cash: Banknote, card: CreditCard, yandex: Navigation, pochta: Mail };
@@ -68,7 +69,8 @@ export default function Kassa() {
     return () => clearTimeout(timer);
   }, [normalizedCode]);
 
-  const todaySummary = useApi<Summary>('/summary', { from: today, to: today });
+  const seesReports = can(user, 'reports.view');
+  const todaySummary = useApi<Summary>(seesReports ? '/summary' : null, { from: today, to: today });
   const mine = useApi<PaymentList>('/payments', { from: today, to: today, worker: user.id, limit: 20 });
 
   function validate(): Errors {
@@ -219,13 +221,13 @@ export default function Kassa() {
 
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Sana va vaqt" error={errors.paidAt}
-                hint={user.role === 'admin' ? (customTime ? 'Oʻtgan sanani kiritish (faqat admin)' : 'Saqlash vaqtida avtomatik qoʻyiladi') : 'Server vaqti boʻyicha avtomatik qoʻyiladi'}>
+                hint={can(user, 'payments.backdate') ? (customTime ? 'Oʻtgan sanani kiritish' : 'Saqlash vaqtida avtomatik qoʻyiladi') : 'Server vaqti boʻyicha avtomatik qoʻyiladi'}>
                 {customTime ? (
                   <Input type="datetime-local" value={paidAtLocal} max={nowLocalInput()} onChange={(e) => setPaidAtLocal(e.target.value)} invalid={Boolean(errors.paidAt)} />
                 ) : (
                   <div className="flex h-10 items-center justify-between rounded-lg border border-line bg-surface-2 px-3 text-sm text-ink-2">
                     <span className="num">{dateTime(now)}</span>
-                    {user.role === 'admin' && (
+                    {can(user, 'payments.backdate') && (
                       <button type="button" className="text-xs font-medium text-ink hover:underline" onClick={() => { setPaidAtLocal(nowLocalInput()); setCustomTime(true); }}>Oʻzgartirish</button>
                     )}
                   </div>
@@ -247,25 +249,27 @@ export default function Kassa() {
         </Card>
 
         <div className="space-y-4">
-          <Card>
-            <CardHeader title="Bugungi kassa" subtitle="Barcha xodimlar boʻyicha" />
-            {todaySummary.loading ? <div className="skeleton h-24" /> : (
-              <div className="space-y-3">
-                <div>
-                  <div className="text-xs text-ink-3">Jami tushum</div>
-                  <div className="text-2xl font-semibold tracking-tight text-ink num">{money(t?.total || 0)}</div>
+          {seesReports && (
+            <Card>
+              <CardHeader title="Bugungi kassa" subtitle="Barcha xodimlar boʻyicha" />
+              {todaySummary.loading ? <div className="skeleton h-24" /> : (
+                <div className="space-y-3">
+                  <div>
+                    <div className="text-xs text-ink-3">Jami tushum</div>
+                    <div className="text-2xl font-semibold tracking-tight text-ink num">{money(t?.total || 0)}</div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <Mini label="Naqd" value={money(t?.cash || 0)} color="var(--cash)" />
+                    <button type="button" onClick={() => setCardOpen((o) => !o)} aria-expanded={cardOpen} className="text-left">
+                      <Mini label="Karta" value={money(cardTotal(t))} color="var(--card)" open={cardOpen} />
+                    </button>
+                  </div>
+                  {cardOpen && <CardBreakdown t={t} />}
+                  <div className="text-xs text-ink-3">{t?.count || 0} ta operatsiya</div>
                 </div>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <Mini label="Naqd" value={money(t?.cash || 0)} color="var(--cash)" />
-                  <button type="button" onClick={() => setCardOpen((o) => !o)} aria-expanded={cardOpen} className="text-left">
-                    <Mini label="Karta" value={money(cardTotal(t))} color="var(--card)" open={cardOpen} />
-                  </button>
-                </div>
-                {cardOpen && <CardBreakdown t={t} />}
-                <div className="text-xs text-ink-3">{t?.count || 0} ta operatsiya</div>
-              </div>
-            )}
-          </Card>
+              )}
+            </Card>
+          )}
           <Card padded={false}>
             <div className="px-4 pb-3 pt-4 sm:px-5">
               <h3 className="text-[15px] font-semibold tracking-tight text-ink">Siz bugun kiritganlar</h3>

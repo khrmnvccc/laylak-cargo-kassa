@@ -1,3 +1,5 @@
+import type { Perm } from './perms';
+
 export type Role = 'admin' | 'worker';
 export type Method = 'cash' | 'card' | 'yandex' | 'pochta';
 
@@ -6,6 +8,7 @@ export interface User {
   username: string;
   full_name: string;
   role: Role;
+  permissions: Perm[];
 }
 
 export interface Payment {
@@ -75,6 +78,7 @@ export interface Staff extends Totals {
   username: string;
   full_name: string;
   role: Role;
+  permissions: Perm[];
   is_active: boolean;
   created_at: string;
   last_login_at: string | null;
@@ -148,4 +152,27 @@ export interface BalanceReport {
   expenses: Expense[];
   adjustments: Adjustment[];
   recent: Array<{ day: string; income: number; expense: number; cash_expense: number; card_expense: number }>;
+}
+
+export interface AttendanceRow {
+  id: string;
+  user_id: string;
+  user_name: string;
+  check_in_at: string;
+  check_out_at: string | null;
+  in_distance: number | null;
+  out_distance: number | null;
+  /** "Ketdim" was never pressed; closed with zero length the next time. */
+  forgot_out: boolean;
+  edited_by_name: string | null;
+  edited_at: string | null;
+  /** Tashkent date of the arrival, YYYY-MM-DD. */
+  day: string;
+}
+
+export interface MyAttendance {
+  open: AttendanceRow | null;
+  items: AttendanceRow[];
+  officeSet: boolean;
+  radius: number | null;
 }

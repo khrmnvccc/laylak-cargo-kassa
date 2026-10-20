@@ -11,6 +11,7 @@ import { navigate } from '../lib/router';
 import type { ClientList, Payment } from '../lib/types';
 import { PaymentsTable } from '../components/PaymentsTable';
 import { Alert, Button, Card, EmptyState, ErrorState, Field, IconButton, Input, MethodStatCards, Modal, PageHeader, Segmented, SkeletonRows, StatCard, cx, td, th, useToast } from '../components/ui';
+import { can } from '../lib/perms';
 
 interface ClientDetail {
   client: { code: string; full_name: string | null; phone: string | null; created_at: string };
@@ -47,7 +48,7 @@ function ClientSearch() {
       <PageHeader
         title="Mijozlar"
         subtitle="Har bir mijoz qancha toʻlagani: naqd va karta boʻyicha"
-        actions={user.role === 'admin' ? <Button icon={<Upload className="size-4" />} onClick={() => setImporting(true)}>Roʻyxatni yuklash</Button> : undefined}
+        actions={can(user, 'clients.edit') ? <Button icon={<Upload className="size-4" />} onClick={() => setImporting(true)}>Roʻyxatni yuklash</Button> : undefined}
       />
 
       <div className="mb-4 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
@@ -255,7 +256,7 @@ function ClientView({ code }: { code: string }) {
             actions={data ? <>
               <Button icon={<Tag className="size-4" />} onClick={() => printClientLabel({ code: data.client.code, name: data.client.full_name, phone: data.client.phone })}>Yorliq (76×130)</Button>
               <PrintButton run={() => printClientStatement(data, user.full_name)} />
-              {user.role === 'admin' && <Button icon={<Pencil className="size-4" />} onClick={() => setEditing(true)}>Tahrirlash</Button>}
+              {can(user, 'clients.edit') && <Button icon={<Pencil className="size-4" />} onClick={() => setEditing(true)}>Tahrirlash</Button>}
             </> : undefined}
           />
           <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
