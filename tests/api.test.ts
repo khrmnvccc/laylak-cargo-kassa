@@ -194,6 +194,10 @@ test('yandex/pochta payments, expenses and kassa balance', async () => {
   assert.equal(summary.totals.cash + summary.totals.card + summary.totals.yandex + summary.totals.pochta, summary.totals.total);
   const filtered = (await ali.call('GET', '/payments', undefined, { from: today, to: today, method: 'pochta' })).body;
   assert.equal(filtered.count, 1);
+  // "Karta" in the filters means card, Yandex and Pochta together.
+  const cardAll = (await ali.call('GET', '/payments', undefined, { from: today, to: today, method: 'card_all' })).body;
+  assert.ok(cardAll.items.every((p: any) => ['card', 'yandex', 'pochta'].includes(p.method)));
+  assert.equal(cardAll.total, summary.totals.card + summary.totals.yandex + summary.totals.pochta);
 
   // Workers cannot see or change the balance.
   assert.equal((await ali.call('GET', '/balance')).status, 403);

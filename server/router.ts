@@ -411,6 +411,7 @@ route('GET', '/payments', 'user', async (ctx) => {
   const params: unknown[] = [from, to];
   const add = (sql: string, value: unknown) => { params.push(value); where.push(sql.replace('?', `$${params.length}`)); };
   if (METHODS.includes(q.method as string)) add('p.method = ?', q.method);
+  else if (q.method === 'card_all') where.push("p.method IN ('card', 'yandex', 'pochta')");
   if (q.worker && /^[0-9a-f-]{36}$/i.test(q.worker)) add('p.created_by = ?', q.worker);
   if (q.client) add('p.client_code = ?', q.client.toUpperCase());
   if (q.q) {

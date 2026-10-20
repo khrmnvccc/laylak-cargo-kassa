@@ -6,12 +6,13 @@ import { useApi, useLive } from '../lib/live';
 import { groupDigits, money, rangeLabel, relativeDay } from '../lib/format';
 import type { Role, Staff } from '../lib/types';
 import { DateRangePicker, presetRange, type Range } from '../components/DateRange';
-import { Alert, Avatar, Badge, Button, Card, EmptyState, ErrorState, Field, Input, Modal, PageHeader, Segmented, SkeletonRows, cx, td, th, useToast } from '../components/ui';
+import { Alert, Avatar, Badge, Button, Card, EmptyState, ErrorState, Field, Input, MethodCells, MethodHeads, Modal, PageHeader, Segmented, SkeletonRows, cx, td, th, useToast } from '../components/ui';
 
 export default function Workers() {
   const [range, setRange] = useState<Range>(() => presetRange('month'));
   const { data, error, loading, reload } = useApi<{ items: Staff[] }>('/staff', range);
   const [editing, setEditing] = useState<Staff | 'new' | null>(null);
+  const [cardOpen, setCardOpen] = useState(false);
   const total = data?.items.reduce((s, w) => s + w.total, 0) || 0;
   const best = data?.items.filter((w) => w.is_active).reduce<Staff | null>((b, w) => (!b || w.total > b.total ? w : b), null);
 
@@ -45,10 +46,7 @@ export default function Workers() {
                   <th className={th}>Xodim</th>
                   <th className={th}>Rol</th>
                   <th className={cx(th, 'text-right')}>Operatsiya</th>
-                  <th className={cx(th, 'text-right')}>Naqd</th>
-                  <th className={cx(th, 'text-right')}>Karta</th>
-                  <th className={cx(th, 'text-right')}>Yandex</th>
-                  <th className={cx(th, 'text-right')}>Pochta</th>
+                  <MethodHeads open={cardOpen} onToggle={() => setCardOpen((o) => !o)} />
                   <th className={cx(th, 'text-right')}>Jami</th>
                   <th className={th}>Ulush</th>
                   <th className={th}>Oxirgi kirish</th>
@@ -76,10 +74,7 @@ export default function Workers() {
                         </div>
                       </td>
                       <td className={cx(td, 'text-right num text-ink-2')}>{groupDigits(w.count)}</td>
-                      <td className={cx(td, 'text-right num')}>{money(w.cash)}</td>
-                      <td className={cx(td, 'text-right num')}>{money(w.card)}</td>
-                      <td className={cx(td, 'text-right num')}>{money(w.yandex)}</td>
-                      <td className={cx(td, 'text-right num')}>{money(w.pochta)}</td>
+                      <MethodCells row={w} open={cardOpen} />
                       <td className={cx(td, 'text-right font-semibold num')}>{money(w.total)}</td>
                       <td className={cx(td, 'min-w-[120px]')}>
                         <div className="flex items-center gap-2">

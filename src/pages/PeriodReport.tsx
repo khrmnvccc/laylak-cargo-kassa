@@ -1,14 +1,14 @@
 import { useMemo, useState } from 'react';
 import { Download } from 'lucide-react';
 import { useApi } from '../lib/live';
-import { addDays, downloadCsv, formatDate, groupDigits, money, monthLabel, rangeLabel, startOfMonth, startOfWeek, todayTashkent } from '../lib/format';
+import { addDays, cardTotal, downloadCsv, formatDate, groupDigits, money, monthLabel, rangeLabel, startOfMonth, startOfWeek, todayTashkent } from '../lib/format';
 import type { PeriodRow, Totals } from '../lib/types';
 import { DateRangePicker, type Range } from '../components/DateRange';
 import { Legend, RevenueChart } from '../components/RevenueChart';
 import { PrintButton } from '../components/PrintButton';
 import { useAuth } from '../lib/auth';
 import { printPeriodReport } from '../lib/reports';
-import { Button, Card, CardHeader, Delta, EmptyState, ErrorState, PageHeader, Segmented, SkeletonRows, StatCard, cx, td, th } from '../components/ui';
+import { Button, Card, CardHeader, Delta, EmptyState, ErrorState, MethodCells, MethodHeads, MethodStatCards, PageHeader, Segmented, SkeletonRows, StatCard, cx, td, th } from '../components/ui';
 
 interface PeriodsResponse { group: 'week' | 'month'; from: string; to: string; rows: PeriodRow[]; totals: Totals }
 
@@ -24,6 +24,7 @@ export default function PeriodReport() {
   const { user } = useAuth();
   const [group, setGroup] = useState<'week' | 'month'>('week');
   const [range, setRange] = useState<Range>(() => defaultRange('week'));
+  const [cardOpen, setCardOpen] = useState(false);
   const { data, error, loading, reload } = useApi<PeriodsResponse>('/periods', { group, ...range });
 
   const label = (period: string) => (group === 'month' ? monthLabel(period) : `${formatDate(period, false)} – ${formatDate(addDays(period, 6))}`);
@@ -34,9 +35,9 @@ export default function PeriodReport() {
   function exportCsv() {
     if (!data) return;
     downloadCsv(`hisobot_${group === 'week' ? 'haftalik' : 'oylik'}_${range.from}_${range.to}.csv`, [
-      ['Davr', 'Operatsiyalar', 'Mijozlar', 'Naqd (soʻm)', 'Karta (soʻm)', 'Yandex (soʻm)', 'Pochta (soʻm)', 'Jami (soʻm)'],
-      ...data.rows.map((r) => [label(r.period), r.count, r.clients, r.cash, r.card, r.yandex, r.pochta, r.total]),
-      ['Jami', data.totals.count, '', data.totals.cash, data.totals.card, data.totals.yandex, data.totals.pochta, data.totals.total],
+      ['Davr', 'Operatsiyalar', 'Mijozlar', 'Naqd (soʻm)', 'Karta jami (soʻm)', 'shundan karta', 'shundan Yandex', 'shundan Pochta', 'Jami (soʻm)'],
+      ...data.rows.map((r) => [label(r.period), r.count, r.clients, r.cash, cardTotal(r), r.card, r.yandex, r.pochta, r.total]),
+      ['Jami', data.totals.count, '', data.totals.cash, cardTotal(data.totals), data.totals.card, data.totals.yandex, data.totals.pochta, data.totals.total],
     ]);
   }
 
@@ -55,12 +56,9 @@ export default function PeriodReport() {
 
       {error && !data ? <Card><ErrorState message={error} onRetry={reload} /></Card> : (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
             <div className="col-span-2 xl:col-span-1"><StatCard label="Davr boʻyicha jami" value={data?.totals.total || 0} loading={loading} hint={data ? `${groupDigits(data.totals.count)} ta operatsiya` : undefined} /></div>
-            <StatCard label="Naqd" accent="var(--cash)" value={data?.totals.cash || 0} loading={loading} />
-            <StatCard label="Karta" accent="var(--card)" value={data?.totals.card || 0} loading={loading} />
-            <StatCard label="Yandex" accent="var(--yandex)" value={data?.totals.yandex || 0} loading={loading} />
-            <StatCard label="Pochta" accent="var(--pochta)" value={data?.totals.pochta || 0} loading={loading} />
+            <MethodStatCards t={data?.totals} loading={loading} />
             <div className="col-span-2 xl:col-span-1">
               <StatCard label={group === 'week' ? 'Oʻrtacha haftalik' : 'Oʻrtacha oylik'} value={avg} loading={loading} hint={best ? `Eng yaxshi: ${label(best.period)}` : undefined} />
             </div>
@@ -80,10 +78,7 @@ export default function PeriodReport() {
                       <th className={th}>{group === 'week' ? 'Hafta' : 'Oy'}</th>
                       <th className={cx(th, 'text-right')}>Operatsiya</th>
                       <th className={cx(th, 'text-right')}>Mijoz</th>
-                      <th className={cx(th, 'text-right')}>Naqd</th>
-                      <th className={cx(th, 'text-right')}>Karta</th>
-                      <th className={cx(th, 'text-right')}>Yandex</th>
-                      <th className={cx(th, 'text-right')}>Pochta</th>
+                      <MethodHeads open={cardOpen} onToggle={() => setCardOpen((o) => !o)} />
                       <th className={cx(th, 'text-right')}>Jami</th>
                       <th className={cx(th, 'text-right')}>Oʻzgarish</th>
                     </tr>
@@ -96,10 +91,7 @@ export default function PeriodReport() {
                           <td className={cx(td, 'font-medium')}>{label(r.period)}</td>
                           <td className={cx(td, 'text-right num text-ink-2')}>{groupDigits(r.count)}</td>
                           <td className={cx(td, 'text-right num text-ink-2')}>{groupDigits(r.clients)}</td>
-                          <td className={cx(td, 'text-right num')}>{money(r.cash)}</td>
-                          <td className={cx(td, 'text-right num')}>{money(r.card)}</td>
-                          <td className={cx(td, 'text-right num')}>{money(r.yandex)}</td>
-                          <td className={cx(td, 'text-right num')}>{money(r.pochta)}</td>
+                          <MethodCells row={r} open={cardOpen} />
                           <td className={cx(td, 'text-right font-semibold num')}>{money(r.total)}</td>
                           <td className={cx(td, 'text-right')}>{prev ? <Delta current={r.total} previous={prev.total} /> : <span className="text-xs text-ink-3">—</span>}</td>
                         </tr>
@@ -111,10 +103,7 @@ export default function PeriodReport() {
                       <td className={cx(td, 'font-semibold')}>Jami</td>
                       <td className={cx(td, 'text-right font-semibold num')}>{groupDigits(data.totals.count)}</td>
                       <td className={cx(td, 'text-right font-semibold num')}>{groupDigits(data.totals.clients || 0)}</td>
-                      <td className={cx(td, 'text-right font-semibold num')}>{money(data.totals.cash)}</td>
-                      <td className={cx(td, 'text-right font-semibold num')}>{money(data.totals.card)}</td>
-                      <td className={cx(td, 'text-right font-semibold num')}>{money(data.totals.yandex)}</td>
-                      <td className={cx(td, 'text-right font-semibold num')}>{money(data.totals.pochta)}</td>
+                      <MethodCells row={data.totals} open={cardOpen} bold />
                       <td className={cx(td, 'text-right font-semibold num')}>{money(data.totals.total)}</td>
                       <td />
                     </tr>

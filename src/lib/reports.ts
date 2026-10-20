@@ -1,17 +1,19 @@
 // A4 printouts of the app's reports, built from the same API data the pages show.
 import { api } from './api';
-import { formatDate, groupDigits, methodLabel, money, rangeLabel, timeOf, weekday } from './format';
+import { cardTotal, formatDate, groupDigits, methodLabel, money, rangeLabel, timeOf, weekday } from './format';
 import { paymentsTable, printA4, type A4Block } from './print';
 import type { BalanceReport, Payment, PaymentList, PeriodRow, Summary, Totals } from './types';
 
 const methodKpis = (t: Totals): Array<[string, string]> => [
   ['Jami tushum', money(t.total)],
   ['Naqd', money(t.cash)],
-  ['Karta', money(t.card)],
-  ['Yandex', money(t.yandex)],
-  ['Pochta', money(t.pochta)],
-  ['Operatsiyalar', `${groupDigits(t.count)} ta`],
+  ['Karta', money(cardTotal(t))],
 ];
+
+/** One line under the Naqd / Karta totals saying what the Karta total is made of. */
+const cardNote = (t: { card: number; yandex: number; pochta: number }): A4Block => ({
+  kind: 'text', text: `Karta ichida: karta ${money(t.card)} · Yandex ${money(t.yandex)} · Pochta ${money(t.pochta)}`,
+});
 
 /** Loads every payment matching the filters (the list endpoint pages by 500). */
 export async function fetchAllPayments(query: Record<string, unknown>): Promise<Payment[]> {
@@ -35,15 +37,16 @@ export async function printDailyReport(date: string, printedBy: string) {
     subtitle: `${weekday(date)}, ${formatDate(date)}`,
     printedBy,
     blocks: [
-      { kind: 'kpis', items: methodKpis(summary.totals), cols: 3 },
+      { kind: 'kpis', items: [...methodKpis(summary.totals), ['Operatsiyalar', `${groupDigits(summary.totals.count)} ta`]], cols: 4 },
+      cardNote(summary.totals),
       { kind: 'heading', text: 'Ishchilar kesimida' },
       {
         kind: 'table',
         table: {
-          head: ['Ishchi', 'Operatsiya', 'Naqd', 'Karta', 'Yandex', 'Pochta', 'Jami'],
-          rows: w.map((r) => [r.name, `${r.count} ta`, r.cash, r.card, r.yandex, r.pochta, r.total]),
-          right: [1, 2, 3, 4, 5, 6],
-          foot: ['Jami', `${summary.totals.count} ta`, summary.totals.cash, summary.totals.card, summary.totals.yandex, summary.totals.pochta, summary.totals.total],
+          head: ['Ishchi', 'Operatsiya', 'Naqd', 'Karta', 'Jami'],
+          rows: w.map((r) => [r.name, `${r.count} ta`, r.cash, cardTotal(r), r.total]),
+          right: [1, 2, 3, 4],
+          foot: ['Jami', `${summary.totals.count} ta`, summary.totals.cash, cardTotal(summary.totals), summary.totals.total],
         },
         empty: 'Bu kunda toʻlov kiritilmagan',
       },
@@ -60,15 +63,16 @@ export function printPeriodReport(opts: { group: 'week' | 'month'; from: string;
     subtitle: rangeLabel(opts.from, opts.to),
     printedBy: opts.printedBy,
     blocks: [
-      { kind: 'kpis', items: methodKpis(opts.totals), cols: 3 },
+      { kind: 'kpis', items: [...methodKpis(opts.totals), ['Operatsiyalar', `${groupDigits(opts.totals.count)} ta`]], cols: 4 },
+      cardNote(opts.totals),
       { kind: 'heading', text: opts.group === 'week' ? 'Haftalar boʻyicha' : 'Oylar boʻyicha' },
       {
         kind: 'table',
         table: {
-          head: ['Davr', 'Operatsiya', 'Mijozlar', 'Naqd', 'Karta', 'Yandex', 'Pochta', 'Jami'],
-          rows: opts.rows.map((r) => [opts.label(r.period), `${r.count} ta`, String(r.clients), r.cash, r.card, r.yandex, r.pochta, r.total]),
-          right: [1, 2, 3, 4, 5, 6, 7],
-          foot: ['Jami', `${opts.totals.count} ta`, '', opts.totals.cash, opts.totals.card, opts.totals.yandex, opts.totals.pochta, opts.totals.total],
+          head: ['Davr', 'Operatsiya', 'Mijozlar', 'Naqd', 'Karta', 'Jami'],
+          rows: opts.rows.map((r) => [opts.label(r.period), `${r.count} ta`, String(r.clients), r.cash, cardTotal(r), r.total]),
+          right: [1, 2, 3, 4, 5],
+          foot: ['Jami', `${opts.totals.count} ta`, '', opts.totals.cash, cardTotal(opts.totals), opts.totals.total],
         },
       },
     ],
@@ -84,7 +88,8 @@ export async function printOperations(filters: Record<string, unknown> & { from:
     subtitle: [rangeLabel(filters.from, filters.to), filterNote].filter(Boolean).join(' · '),
     printedBy,
     blocks: [
-      { kind: 'kpis', items: [['Jami', money(sum())], ['Naqd', money(sum('cash'))], ['Karta', money(sum('card'))], ['Yandex + Pochta', money(sum('yandex') + sum('pochta'))]] },
+      { kind: 'kpis', items: [['Jami', money(sum())], ['Naqd', money(sum('cash'))], ['Karta', money(sum('card') + sum('yandex') + sum('pochta'))]], cols: 3 },
+      cardNote({ card: sum('card'), yandex: sum('yandex'), pochta: sum('pochta') }),
       { kind: 'table', table: paymentsTable(items, { withDate: true }), empty: 'Filtrlarga mos operatsiya yoʻq' },
     ],
   });
@@ -103,7 +108,8 @@ export function printClientStatement(d: ClientDetailLike, printedBy: string) {
     subtitle: [d.client.full_name, d.client.phone].filter(Boolean).join(' · ') || 'Ismi kiritilmagan',
     printedBy,
     blocks: [
-      { kind: 'kpis', items: [['Jami toʻlangan', money(s.total)], ['Naqd', money(s.cash)], ['Karta (Yandex, Pochta bilan)', money(s.card + s.yandex + s.pochta)], ['Toʻlovlar', `${s.count} ta`]] },
+      { kind: 'kpis', items: [['Jami toʻlangan', money(s.total)], ['Naqd', money(s.cash)], ['Karta', money(cardTotal(s))], ['Toʻlovlar', `${s.count} ta`]] },
+      cardNote(s),
       { kind: 'heading', text: 'Toʻlovlar tarixi' },
       { kind: 'table', table: paymentsTable(d.payments, { withDate: true }), empty: 'Toʻlov yoʻq' },
     ],
