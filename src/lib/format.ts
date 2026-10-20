@@ -1,8 +1,29 @@
-const MONTHS = ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'];
-const MONTHS_CAP = MONTHS.map((m) => m[0].toUpperCase() + m.slice(1));
-const WEEKDAYS = ['Yakshanba', 'Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba'];
-const WEEKDAYS_SHORT = ['Ya', 'Du', 'Se', 'Ch', 'Pa', 'Ju', 'Sh'];
-const NBSP = ' ';
+import { LANG } from './i18n';
+
+const L = {
+  uz: {
+    months: ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'],
+    monthsCap: ['Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'Iyun', 'Iyul', 'Avgust', 'Sentabr', 'Oktabr', 'Noyabr', 'Dekabr'],
+    weekdays: ['Yakshanba', 'Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba'],
+    weekdaysShort: ['Ya', 'Du', 'Se', 'Ch', 'Pa', 'Ju', 'Sh'],
+    currency: 'soʻm', scale: ['ming', 'mln', 'mlrd'], today: 'Bugun', yesterday: 'Kecha',
+  },
+  ru: {
+    months: ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'],
+    monthsCap: ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'],
+    weekdays: ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'],
+    weekdaysShort: ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'],
+    currency: 'сум', scale: ['тыс.', 'млн', 'млрд'], today: 'Сегодня', yesterday: 'Вчера',
+  },
+  zh: {
+    months: ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'],
+    monthsCap: ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'],
+    weekdays: ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'],
+    weekdaysShort: ['日', '一', '二', '三', '四', '五', '六'],
+    currency: '苏姆', scale: ['千', '百万', '十亿'], today: '今天', yesterday: '昨天',
+  },
+}[LANG];
+const NBSP = '\u00a0';
 
 export function groupDigits(value: number): string {
   const sign = value < 0 ? '−' : '';
@@ -10,14 +31,14 @@ export function groupDigits(value: number): string {
 }
 
 export function money(value: number | null | undefined): string {
-  return `${groupDigits(Number(value) || 0)}${NBSP}soʻm`;
+  return `${groupDigits(Number(value) || 0)}${NBSP}${L.currency}`;
 }
 
 export function compactMoney(value: number): string {
   const abs = Math.abs(value);
-  if (abs >= 1e9) return `${trim(value / 1e9)} mlrd`;
-  if (abs >= 1e6) return `${trim(value / 1e6)} mln`;
-  if (abs >= 1e3) return `${trim(value / 1e3)} ming`;
+  if (abs >= 1e9) return `${trim(value / 1e9)} ${L.scale[2]}`;
+  if (abs >= 1e6) return `${trim(value / 1e6)} ${L.scale[1]}`;
+  if (abs >= 1e3) return `${trim(value / 1e3)} ${L.scale[0]}`;
   return String(Math.round(value));
 }
 const trim = (n: number) => (Math.round(n * 10) / 10).toString().replace('.', ',');
@@ -35,10 +56,12 @@ const tzParts = (iso: string) => {
   return { date: `${get('year')}-${get('month')}-${get('day')}`, time: `${get('hour') === '24' ? '00' : get('hour')}:${get('minute')}` };
 };
 
-/** '2026-10-20' -> '20-oktabr, 2026' */
+/** '2026-10-20' -> '20-oktabr, 2026' (ru: '20 октября 2026', zh: '2026年10月20日') */
 export function formatDate(date: string, withYear = true): string {
   const [y, m, d] = date.split('-').map(Number);
-  return `${d}-${MONTHS[m - 1]}${withYear ? `, ${y}` : ''}`;
+  if (LANG === 'zh') return `${withYear ? `${y}年` : ''}${m}月${d}日`;
+  if (LANG === 'ru') return `${d} ${L.months[m - 1]}${withYear ? ` ${y}` : ''}`;
+  return `${d}-${L.months[m - 1]}${withYear ? `, ${y}` : ''}`;
 }
 
 export function formatDateShort(date: string): string {
@@ -48,12 +71,12 @@ export function formatDateShort(date: string): string {
 
 export function weekday(date: string, short = false): string {
   const day = new Date(`${date}T00:00:00Z`).getUTCDay();
-  return short ? WEEKDAYS_SHORT[day] : WEEKDAYS[day];
+  return short ? L.weekdaysShort[day] : L.weekdays[day];
 }
 
 export function monthLabel(date: string): string {
   const [y, m] = date.split('-').map(Number);
-  return `${MONTHS_CAP[m - 1]} ${y}`;
+  return LANG === 'zh' ? `${y}年${m}月` : `${L.monthsCap[m - 1]} ${y}`;
 }
 
 export function timeOf(iso: string): string {
@@ -72,8 +95,8 @@ export function dateTime(iso: string): string {
 export function relativeDay(iso: string): string {
   const d = dateOf(iso);
   const today = todayTashkent();
-  if (d === today) return `Bugun, ${timeOf(iso)}`;
-  if (d === addDays(today, -1)) return `Kecha, ${timeOf(iso)}`;
+  if (d === today) return `${L.today}, ${timeOf(iso)}`;
+  if (d === addDays(today, -1)) return `${L.yesterday}, ${timeOf(iso)}`;
   return dateTime(iso);
 }
 

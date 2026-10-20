@@ -7,6 +7,7 @@ import { useLive } from '../lib/live';
 import { useTheme } from '../lib/theme';
 import { formatDate, todayTashkent, weekday } from '../lib/format';
 import type { User } from '../lib/types';
+import { LANG, LANGS, setLang } from '../lib/i18n';
 import { Avatar, Button, IconButton, cx } from './ui';
 
 interface NavItem { page: Page; label: string; icon: typeof Wallet; adminOnly?: boolean }
@@ -121,6 +122,19 @@ function UserCard({ user, onLogout }: { user: User; onLogout: () => void }) {
   );
 }
 
+export function LangSwitch() {
+  return (
+    <div className="mb-2 flex rounded-lg bg-surface-2 p-0.5" role="radiogroup" aria-label="Til">
+      {LANGS.map((l) => (
+        <button key={l.value} type="button" role="radio" aria-checked={LANG === l.value} title={l.label} onClick={() => setLang(l.value)}
+          className={cx('h-7 flex-1 rounded-md text-xs font-medium transition-colors', LANG === l.value ? 'bg-surface text-ink shadow-soft' : 'text-ink-3 hover:text-ink')}>
+          {l.short}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function Credit() {
   return (
     <a href="https://t.me/khrmnvccc" target="_blank" rel="noopener noreferrer" className="mt-2 block text-center text-[11px] text-ink-3 hover:text-ink">
@@ -153,6 +167,7 @@ export function Layout({ page, user, onLogout, children }: { page: Page; user: U
       <aside className="no-print fixed inset-y-0 left-0 z-30 hidden w-[248px] flex-col border-r border-line bg-surface glass px-3 py-5 lg:flex">
         <div className="px-2"><Logo /></div>
         <div className="mt-7 flex-1 overflow-y-auto scrollbar-thin"><NavLinks page={page} user={user} /></div>
+        <LangSwitch />
         <UserCard user={user} onLogout={onLogout} />
         <Credit />
       </aside>
@@ -167,6 +182,7 @@ export function Layout({ page, user, onLogout, children }: { page: Page; user: U
               <IconButton label="Yopish" onClick={() => setDrawer(false)}><X className="size-5" /></IconButton>
             </div>
             <div className="mt-7 flex-1 overflow-y-auto"><NavLinks page={page} user={user} onNavigate={() => setDrawer(false)} /></div>
+            <LangSwitch />
             <UserCard user={user} onLogout={onLogout} />
             <Credit />
           </div>

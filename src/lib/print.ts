@@ -1,6 +1,7 @@
 // Printing: 76×130 mm package labels (label printer) and A4 documents.
 // Each document is rendered into a hidden iframe with its own @page size, so the
 // app's styles and layout never leak into the printout.
+import { LANG } from './i18n';
 import { dateTime, formatDate, methodLabel, money, timeOf, todayTashkent } from './format';
 import type { Payment } from './types';
 
@@ -79,12 +80,13 @@ export function printHtml(body: string, size: PaperSize, title = 'Laylak Cargo')
   const win = frame.contentWindow!;
   const cleanup = () => setTimeout(() => frame.remove(), 500);
   win.addEventListener('afterprint', cleanup);
-  setTimeout(() => {
+  const translated = LANG === 'uz' ? Promise.resolve() : import('./i18n-dom').then((m) => m.translateTree(doc.body)).catch(() => undefined);
+  translated.then(() => setTimeout(() => {
     win.focus();
     win.print();
     // Some browsers don't fire afterprint; remove the frame eventually anyway.
     setTimeout(cleanup, 60_000);
-  }, 150);
+  }, 150));
 }
 
 // ---------- 76×130 labels ----------
