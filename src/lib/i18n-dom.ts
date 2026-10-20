@@ -40,6 +40,16 @@ function lookup(core: string): string | null {
     const out = parts.map((p) => lookup(p) ?? p);
     if (out.some((p, i) => p !== parts[i])) return out.join(' · ');
   }
+  // "· bugun" (a fragment that starts with the separator) and "Eng yaxshi: <date>".
+  if (core.startsWith('· ')) {
+    const t = lookup(core.slice(2));
+    if (t !== null) return '· ' + t;
+  }
+  const colon = core.indexOf(': ');
+  if (colon > 0) {
+    const head = lookup(core.slice(0, colon));
+    if (head !== null) return head + core.slice(colon);
+  }
   return null;
 }
 
