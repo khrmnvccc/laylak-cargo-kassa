@@ -221,6 +221,10 @@ function TelegramCard() {
     await api('/telegram/send', { method: 'POST' });
     toast({ tone: 'success', title: 'Hisobot va zaxira Telegramga yuborildi' });
   });
+  const sendWeekly = () => run('weekly', async () => {
+    await api('/telegram/weekly', { method: 'POST' });
+    toast({ tone: 'success', title: 'Haftalik hisobot guruhga yuborildi' });
+  });
   const download = () => run('backup', async () => {
     const { filename, data: b64 } = await api<{ filename: string; data: string }>('/backup');
     const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
@@ -268,6 +272,7 @@ function TelegramCard() {
                 <li>Har kuni 21:00 dan keyin: kunlik hisobot va butun bazaning zaxira nusxasi (fayl).</li>
                 <li>Har bir toʻlovning rasmi: naqd yoki karta, summa, mijoz va kim kiritgani.</li>
                 <li>Toʻlov bekor qilinsa, darhol xabar.</li>
+                <li>Har dushanba kechqurun: oʻtgan haftaning hisoboti guruhga (guruh boʻlmasa, sizga).</li>
               </ul>
               <div className="space-y-2 rounded-lg border border-line px-3 py-2.5">
                 <div className="flex items-center justify-between gap-3">
@@ -277,7 +282,10 @@ function TelegramCard() {
                 {tg.groupName ? (
                   <>
                     <p className="text-[13px] text-ink-2">Toʻlov rasmlari va bekor qilingan toʻlovlar bu guruhga ham keladi. Kunlik hisobot va zaxira fayli faqat sizga keladi.</p>
-                    <Button variant="ghost" size="sm" loading={busy === 'DELETE/telegram/group'} onClick={() => call('DELETE', '/telegram/group')}>Guruhni uzish</Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" icon={<Send className="size-4" />} loading={busy === 'weekly'} onClick={sendWeekly}>Haftalik hisobotni hozir yuborish</Button>
+                      <Button variant="ghost" size="sm" loading={busy === 'DELETE/telegram/group'} onClick={() => call('DELETE', '/telegram/group')}>Guruhni uzish</Button>
+                    </div>
                   </>
                 ) : (
                   <>

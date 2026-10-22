@@ -147,3 +147,23 @@ export async function reportPhotos(photos: Buffer[], caption: string): Promise<'
     return 'failed';
   }
 }
+
+/** A message for the team: to the group (its topic) when one is linked, otherwise to the owner. */
+export async function sendToTeam(text: string): Promise<'group' | 'owner' | false> {
+  const config = await getTelegram();
+  if (!config?.chatId) return false;
+  const body = { text, parse_mode: 'HTML', disable_web_page_preview: true };
+  if (config.groupId) {
+    const topic = config.groupThreadId ? { message_thread_id: config.groupThreadId } : {};
+    try {
+      await tg(config.token, 'sendMessage', { chat_id: config.groupId, ...topic, ...body });
+    } catch (error) {
+      if (!(error instanceof ChatMoved)) throw error;
+      await saveTelegram({ ...config, groupId: error.chatId });
+      await tg(config.token, 'sendMessage', { chat_id: error.chatId, ...topic, ...body });
+    }
+    return 'group';
+  }
+  await tg(config.token, 'sendMessage', { chat_id: config.chatId, ...body });
+  return 'owner';
+}

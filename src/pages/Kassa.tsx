@@ -8,6 +8,7 @@ import type { Method, Payment, PaymentList, Summary } from '../lib/types';
 import { PaymentsTable } from '../components/PaymentsTable';
 import { ReceiptImport } from '../components/ReceiptImport';
 import { printPaymentLabel } from '../lib/print';
+import { href } from '../lib/router';
 import { TELEGRAM_MISS, photoDataUrl } from '../lib/photo';
 import { Alert, Button, Card, CardBreakdown, CardHeader, EmptyState, Field, Input, MethodBadge, Modal, PageHeader, SkeletonRows, Textarea, cx, useToast } from '../components/ui';
 import { can } from '../lib/perms';
@@ -198,7 +199,7 @@ export default function Kassa() {
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Mijoz ID raqami" required htmlFor="clientCode" error={errors.clientCode}
                 hint={lookup.state === 'loading' ? <span className="inline-flex items-center gap-1"><Loader2 className="size-3 animate-spin" />Qidirilmoqda…</span>
-                  : lookup.state === 'found' ? <span className="inline-flex items-center gap-1 text-success"><UserCheck className="size-3.5" />Mavjud mijoz · {lookup.info!.stats.count} ta toʻlov · {money(lookup.info!.stats.total)}</span>
+                  : lookup.state === 'found' ? <span className="inline-flex flex-wrap items-center gap-1 text-success"><UserCheck className="size-3.5" />Mavjud mijoz · {lookup.info!.stats.count} ta toʻlov · {money(lookup.info!.stats.total)} · <a href={href('clients', { id: lookup.info!.client.code })} className="font-medium underline">Kartochka</a></span>
                   : lookup.state === 'new' ? <span className="inline-flex items-center gap-1"><UserPlus className="size-3.5" />Yangi mijoz sifatida qoʻshiladi</span> : 'Masalan: LC-1024'}>
                 <Input id="clientCode" ref={codeRef} value={clientCode} onChange={(e) => setClientCode(e.target.value.toUpperCase())} invalid={Boolean(errors.clientCode)}
                   placeholder="ID" autoComplete="off" autoCapitalize="characters" spellCheck={false} className="h-11 text-base font-medium num" autoFocus />
