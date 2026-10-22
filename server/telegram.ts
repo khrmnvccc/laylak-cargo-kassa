@@ -78,3 +78,43 @@ export async function notify(text: string) {
     console.error('Telegram notify failed', error);
   }
 }
+
+/** "data:image/jpeg;base64,…" from the browser -> bytes; null when it is not a small picture. */
+export function photoFromDataUrl(value: unknown): Buffer | null {
+  const m = typeof value === 'string' ? value.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/) : null;
+  if (!m) return null;
+  const data = Buffer.from(m[2], 'base64');
+  return data.length > 32 && data.length <= 3_000_000 ? data : null;
+}
+
+/** Pictures with one caption (on the first) to the owner's chat; false when Telegram is not connected. */
+export async function sendPhotos(photos: Buffer[], caption: string): Promise<boolean> {
+  const config = await getTelegram();
+  if (!config?.chatId || !photos.length) return false;
+  const form = new FormData();
+  form.append('chat_id', String(config.chatId));
+  if (photos.length === 1) {
+    form.append('caption', caption.slice(0, 1024));
+    form.append('parse_mode', 'HTML');
+    form.append('photo', new Blob([new Uint8Array(photos[0])], { type: 'image/jpeg' }), 'tolov.jpg');
+    await tg(config.token, 'sendPhoto', form, 15_000);
+    return true;
+  }
+  const media = photos.slice(0, 10).map((_, i) => ({
+    type: 'photo', media: `attach://p${i}`, ...(i === 0 ? { caption: caption.slice(0, 1024), parse_mode: 'HTML' } : {}),
+  }));
+  form.append('media', JSON.stringify(media));
+  photos.slice(0, 10).forEach((p, i) => form.append(`p${i}`, new Blob([new Uint8Array(p)], { type: 'image/jpeg' }), `tolov-${i + 1}.jpg`));
+  await tg(config.token, 'sendMediaGroup', form, 20_000);
+  return true;
+}
+
+/** Like sendPhotos, but never throws: says whether the admin got it. */
+export async function reportPhotos(photos: Buffer[], caption: string): Promise<'sent' | 'off' | 'failed'> {
+  try {
+    return (await sendPhotos(photos, caption)) ? 'sent' : 'off';
+  } catch (error) {
+    console.error('Telegram photo failed', error);
+    return 'failed';
+  }
+}

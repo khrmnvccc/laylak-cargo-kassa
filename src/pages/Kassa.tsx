@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Banknote, CheckCircle2, ChevronDown, Printer, CreditCard, Loader2, Mail, Navigation, ReceiptText, Save, UserCheck, UserPlus } from 'lucide-react';
+import { Banknote, CheckCircle2, ChevronDown, ImagePlus, Printer, CreditCard, Loader2, Mail, Navigation, ReceiptText, Save, UserCheck, UserPlus, X } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useApi, useLive } from '../lib/live';
@@ -8,13 +8,15 @@ import type { Method, Payment, PaymentList, Summary } from '../lib/types';
 import { PaymentsTable } from '../components/PaymentsTable';
 import { ReceiptImport } from '../components/ReceiptImport';
 import { printPaymentLabel } from '../lib/print';
+import { TELEGRAM_MISS, photoDataUrl } from '../lib/photo';
 import { Alert, Button, Card, CardBreakdown, CardHeader, EmptyState, Field, Input, MethodBadge, Modal, PageHeader, SkeletonRows, Textarea, cx, useToast } from '../components/ui';
 import { can } from '../lib/perms';
 
 interface ClientInfo { client: { code: string; full_name: string | null }; stats: { total: number; count: number } }
 const METHOD_ICONS = { cash: Banknote, card: CreditCard, yandex: Navigation, pochta: Mail };
 
-type Errors = Partial<Record<'clientCode' | 'clientName' | 'amount' | 'method' | 'paidAt' | 'note', string>>;
+type Errors = Partial<Record<'clientCode' | 'clientName' | 'amount' | 'method' | 'paidAt' | 'note' | 'photos', string>>;
+const MAX_PHOTOS = 4;
 
 function nowLocalInput(): string {
   const d = new Date(nowMs() + 5 * 3600_000);
@@ -33,6 +35,9 @@ export default function Kassa() {
   const [method, setMethod] = useState<Method>('cash');
   const [cardOpen, setCardOpen] = useState(false);
   const [note, setNote] = useState('');
+  const [photos, setPhotos] = useState<string[]>([]);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const photoInput = useRef<HTMLInputElement>(null);
   const [customTime, setCustomTime] = useState(false);
   const [paidAtLocal, setPaidAtLocal] = useState(nowLocalInput);
   const [errors, setErrors] = useState<Errors>({});
@@ -71,6 +76,32 @@ export default function Kassa() {
     return () => clearTimeout(timer);
   }, [normalizedCode]);
 
+  async function addPhotos(files: Iterable<File>) {
+    const list = [...files].filter((f) => f.type.startsWith('image/')).slice(0, MAX_PHOTOS);
+    if (!list.length) return;
+    setPhotoBusy(true);
+    try {
+      const urls = await Promise.all(list.map((f) => photoDataUrl(f)));
+      setPhotos((prev) => [...prev, ...urls].slice(0, MAX_PHOTOS));
+      setErrors((e) => ({ ...e, photos: undefined }));
+    } catch (e) {
+      setErrors((prev) => ({ ...prev, photos: (e as Error).message }));
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
+
+  // A screenshot copied to the clipboard can be pasted straight into the form (Ctrl+V).
+  useEffect(() => {
+    const onPaste = (ev: ClipboardEvent) => {
+      if (receiptOpen) return;
+      const files = [...(ev.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
+      if (files.length) { ev.preventDefault(); void addPhotos(files); }
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [receiptOpen]);
+
   const seesReports = can(user, 'reports.view');
   const todaySummary = useApi<Summary>(seesReports ? '/summary' : null, { from: today, to: today });
   const mine = useApi<PaymentList>('/payments', { from: today, to: today, worker: user.id, limit: 20 });
@@ -83,6 +114,7 @@ export default function Kassa() {
     else if (amount > 10_000_000_000) e.amount = 'Summa juda katta';
     if (clientName.length > 80) e.clientName = 'Ism juda uzun';
     if (note.length > 500) e.note = 'Izoh 500 belgidan oshmasin';
+    if (!photos.length) e.photos = 'Buyurtmalar rasmini yuklang';
     if (customTime) {
       const t = Date.parse(`${paidAtLocal}:00+05:00`);
       if (!Number.isFinite(t)) e.paidAt = 'Sana va vaqtni toʻgʻri kiriting';
@@ -104,7 +136,7 @@ export default function Kassa() {
     setSaving(true);
     setFormError(null);
     try {
-      const { payment } = await api<{ payment: Payment }>('/payments', {
+      const { payment, telegram } = await api<{ payment: Payment; telegram?: 'sent' | 'off' | 'failed' }>('/payments', {
         method: 'POST',
         body: {
           clientCode: normalizedCode,
@@ -113,13 +145,15 @@ export default function Kassa() {
           method,
           note: note.trim(),
           paidAt: customTime ? new Date(`${paidAtLocal}:00+05:00`).toISOString() : undefined,
+          photos,
         },
       });
       setConfirming(false);
       setLastSaved(payment);
       if (autoLabel) printPaymentLabel(payment);
       toast({ tone: 'success', title: 'Toʻlov saqlandi', description: `${payment.client_code} · ${money(payment.amount)} · ${methodLabel(payment.method)}` });
-      setClientCode(''); setClientName(''); setAmountText(''); setNote(''); setErrors({}); setCustomTime(false);
+      if (telegram && telegram !== 'sent') toast({ tone: 'error', title: 'Rasm adminga yuborilmadi', description: TELEGRAM_MISS[telegram] });
+      setClientCode(''); setClientName(''); setAmountText(''); setNote(''); setPhotos([]); setErrors({}); setCustomTime(false);
       setLookup({ state: 'idle' });
       bump();
       setTimeout(() => codeRef.current?.focus(), 50);
@@ -219,6 +253,31 @@ export default function Kassa() {
               )}
             </Field>
 
+            <Field label="Buyurtmalar rasmi" required error={errors.photos}
+              hint="Mijozning buyurtmalari koʻringan skrinshot. Saqlangach adminga Telegram orqali yuboriladi. Ctrl+V bilan ham qoʻyish mumkin">
+              <input ref={photoInput} type="file" accept="image/*" multiple hidden
+                onChange={(e) => { if (e.target.files) void addPhotos(e.target.files); e.target.value = ''; }} />
+              <div className="flex flex-wrap gap-2">
+                {photos.map((src, i) => (
+                  <div key={i} className="relative size-24 overflow-hidden rounded-lg border border-line bg-surface-2">
+                    <img src={src} alt={`Rasm ${i + 1}`} className="size-full object-cover" />
+                    <button type="button" aria-label="Rasmni olib tashlash" onClick={() => setPhotos((p) => p.filter((_, k) => k !== i))}
+                      className="absolute right-1 top-1 grid size-6 place-items-center rounded-full bg-[color-mix(in_srgb,var(--ink)_70%,transparent)] text-surface">
+                      <X className="size-3.5" />
+                    </button>
+                  </div>
+                ))}
+                {photos.length < MAX_PHOTOS && (
+                  <button type="button" onClick={() => photoInput.current?.click()} disabled={photoBusy}
+                    className={cx('flex h-24 items-center justify-center gap-2 rounded-lg border border-dashed px-4 text-sm font-medium transition-colors',
+                      photos.length ? 'w-24 flex-col' : 'w-full', errors.photos ? 'border-danger text-danger' : 'border-line text-ink-2 hover:bg-surface-2')}>
+                    {photoBusy ? <Loader2 className="size-5 animate-spin" /> : <ImagePlus className="size-5" />}
+                    {photos.length ? 'Yana' : 'Rasm yuklash'}
+                  </button>
+                )}
+              </div>
+            </Field>
+
             <Field label="Izoh" htmlFor="note" error={errors.note} hint="Ixtiyoriy">
               <Textarea id="note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Masalan: 3 ta posilka, Guanchjou reysi" rows={2} invalid={Boolean(errors.note)} />
             </Field>
@@ -307,6 +366,11 @@ export default function Kassa() {
           <Row k="Ishchi" v={user.full_name} />
           {note.trim() && <Row k="Izoh" v={note.trim()} />}
         </dl>
+        {photos.length > 0 && (
+          <div className="mt-3 flex gap-2 overflow-x-auto">
+            {photos.map((src, i) => <img key={i} src={src} alt={`Rasm ${i + 1}`} className="h-20 rounded-md border border-line object-cover" />)}
+          </div>
+        )}
       </Modal>
     </>
   );

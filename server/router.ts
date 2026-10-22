@@ -20,7 +20,7 @@ import {
   verifyPassword,
 } from './auth.js';
 import { PERMISSIONS, WORKER_DEFAULT, isPerm, permsOf, type Perm } from './perms.js';
-import { escapeHtml, getTelegram, notify, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
+import { escapeHtml, getTelegram, notify, photoFromDataUrl, reportPhotos, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
 import { receiptKey } from './receipts.js';
 import { gzipSync } from 'node:zlib';
 import { randomInt } from 'node:crypto';
@@ -295,6 +295,10 @@ route('POST', '/payments', 'payments.create', async (ctx) => {
   if (!Number.isInteger(amount) || amount <= 0) errors.amount = 'Summa musbat butun son bo‘lishi kerak';
   else if (amount > 10_000_000_000) errors.amount = 'Summa juda katta';
   if (!METHODS.includes(method)) errors.method = 'To‘lov turini tanlang';
+  // Every payment comes with a picture of the client's orders; it goes to the admin on Telegram.
+  const photos = (Array.isArray(b.photos) ? b.photos : []).slice(0, 4).map(photoFromDataUrl);
+  if (!photos.length) errors.photos = 'Buyurtmalar rasmini yuklang';
+  else if (photos.some((p: Buffer | null) => !p)) errors.photos = 'Rasm ochilmadi yoki juda katta. Boshqa rasm tanlang';
 
   let paidAt: string | null = null;
   if (b.paidAt) {
@@ -330,8 +334,25 @@ route('POST', '/payments', 'payments.create', async (ctx) => {
     );
     return full.rows[0];
   });
-  return { status: 201, body: { payment } };
+  const telegram = await reportPhotos(photos as Buffer[], paymentCaption({
+    method, amount, by: ctx.user!.full_name, at: payment.paid_at, note,
+    lines: [`${clientCode}${clientName ? ` · ${clientName}` : ''}`],
+  }));
+  return { status: 201, body: { payment, telegram } };
 });
+
+/** Telegram caption for a payment the kassa just saved: type and sum first, then who and what. */
+function paymentCaption(p: { method: string; amount: number; by: string; at: string | Date; note?: string; lines: string[]; head?: string }) {
+  const icon = p.method === 'cash' ? '💵' : '💳';
+  const when = new Date(new Date(p.at).getTime() + 5 * 3600_000).toISOString();
+  return [
+    `${icon} <b>${METHOD_LABEL[p.method] || p.method} · ${som(p.amount)}</b>`,
+    p.head ? escapeHtml(p.head) : '',
+    ...p.lines.map((l) => escapeHtml(l)),
+    `👤 ${escapeHtml(p.by)} · ${when.slice(8, 10)}.${when.slice(5, 7)}.${when.slice(0, 4)} ${when.slice(11, 16)}`,
+    p.note ? `📝 ${escapeHtml(p.note)}` : '',
+  ].filter(Boolean).join('\n');
+}
 
 // ---------- receipts: a bank receipt photo + the client's orders screenshot ----------
 
@@ -383,6 +404,7 @@ route('POST', '/receipts/confirm', 'payments.create', async (ctx) => {
     if (!/^[A-Z0-9-]{1,40}$/.test(o.clientCode)) throw new HttpError(400, `Mijoz ID notoʻgʻri: ${o.clientCode || 'boʻsh'}`);
     if (!Number.isInteger(o.amount) || o.amount <= 0) throw new HttpError(400, `Buyurtma summasi notoʻgʻri (${o.code || o.clientCode})`);
   }
+  const photos = (Array.isArray(b.photos) ? b.photos : []).slice(0, 4).map(photoFromDataUrl).filter(Boolean) as Buffer[];
   const ordersSum = orders.reduce((s: number, o: { amount: number }) => s + o.amount, 0);
   if (ordersSum !== receipt.amount) {
     throw new HttpError(400, `Chek summasi (${som(receipt.amount)}) buyurtmalar jamiga (${som(ordersSum)}) teng emas`);
@@ -435,7 +457,13 @@ route('POST', '/receipts/confirm', 'payments.create', async (ctx) => {
     );
     return full.rows;
   });
-  return { status: 201, body: { payments: saved } };
+  const telegram = await reportPhotos(photos, paymentCaption({
+    method, amount: receipt.amount, by: ctx.user!.full_name, at: saved[0]?.paid_at || new Date(),
+    head: [head, receipt.sender && `· ${receipt.sender}`].filter(Boolean).join(' '),
+    lines: orders.map((o: { clientCode: string; clientName: string; orderNo: string; transport: string; amount: number }) =>
+      `• ${o.clientCode}${o.clientName ? ` ${o.clientName}` : ''}${o.orderNo ? ` №${o.orderNo}` : ''}${o.transport ? ` ${o.transport}` : ''} — ${som(o.amount)}`),
+  }));
+  return { status: 201, body: { payments: saved, telegram } };
 });
 
 // Admin import of payments from an old Excel report (CSV: sana, id, turi, summa, izoh).
