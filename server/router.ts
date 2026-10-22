@@ -23,7 +23,7 @@ import { PERMISSIONS, WORKER_DEFAULT, isPerm, permsOf, type Perm } from './perms
 import { ChatMoved, escapeHtml, getTelegram, notify, photoFromDataUrl, reportPhotos, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
 import { receiptKey } from './receipts.js';
 import { gzipSync } from 'node:zlib';
-import { randomInt } from 'node:crypto';
+import { createHash, randomInt } from 'node:crypto';
 
 export interface ApiRequest {
   method: string;
@@ -1395,9 +1395,15 @@ async function sendDailyReport(date: string) {
     `🗄 Zaxira nusxa · ${dayLabel(date)}\n${counts.payments ?? 0} toʻlov, ${counts.clients ?? 0} mijoz, ${counts.attendance ?? 0} davomat yozuvi`);
 }
 
+/** Code the owner types in a group to link it; made from the bot token, so only the kassa knows it. */
+const groupCode = (token: string) => String(100000 + (createHash('sha256').update(`group:${token}`).digest().readUInt32BE(0) % 900000));
+
 function telegramView(config: Awaited<ReturnType<typeof getTelegram>>) {
   if (!config) return { telegram: null };
-  return { telegram: { botName: config.botName, connected: Boolean(config.chatId), chatName: config.chatName || null, code: config.chatId ? null : config.code, groupName: config.groupId ? config.groupName || 'Guruh' : null } };
+  return { telegram: {
+    botName: config.botName, connected: Boolean(config.chatId), chatName: config.chatName || null, code: config.chatId ? null : config.code,
+    groupName: config.groupId ? config.groupName || 'Guruh' : null, groupCode: config.chatId && !config.groupId ? groupCode(config.token) : null,
+  } };
 }
 
 route('GET', '/telegram', 'owner', async () => telegramView(await getTelegram()));
@@ -1417,7 +1423,8 @@ route('POST', '/telegram/check', 'owner', async (ctx) => {
   const config = await getTelegram();
   if (!config) throw new HttpError(400, 'Avval bot tokenini kiriting');
   if (config.chatId) return telegramView(config);
-  const updates: any[] = await tg(config.token, 'getUpdates', { allowed_updates: ['message'], timeout: 0 });
+  // The newest 100 updates: older ones (a busy group) would otherwise hide the one we need.
+  const updates: any[] = await tg(config.token, 'getUpdates', { offset: -100, allowed_updates: ['message'], timeout: 0 });
   const match = updates.reverse().find((u) => typeof u.message?.text === 'string' && u.message.text.includes(config.code) && u.message.chat?.type === 'private');
   if (!match) throw new HttpError(404, `Botga hali kod kelmadi. @${config.botName} ni ochib, “Start” bosing yoki ${config.code} deb yozing`);
   const chat = match.message.chat;
@@ -1428,26 +1435,34 @@ route('POST', '/telegram/check', 'owner', async (ctx) => {
   return telegramView(next);
 });
 
-// The owner adds the bot to a group: Telegram tells the bot who added it, and only the owner's own
-// account counts, so a stranger adding the bot to their group gets nothing.
+// Linking a group: someone writes "/start@bot <code>" in it (the code is only on this page), or the
+// owner's own account adds the bot. A stranger adding the bot to their group gets nothing. In a group
+// with topics, messages go to the topic where the code was written.
 route('POST', '/telegram/group', 'owner', async (ctx) => {
   const config = await getTelegram();
   if (!config?.chatId) throw new HttpError(400, 'Avval botni oʻzingizga ulang');
-  const updates: any[] = await tg(config.token, 'getUpdates', { allowed_updates: ['message'], timeout: 0 });
-  const inGroup = updates.map((u) => u.message).filter((m) => m && ['group', 'supergroup'].includes(m.chat?.type) && m.from?.id === config.chatId);
-  const added = inGroup.reverse().find((m) =>
-    (m.new_chat_members || []).some((u: any) => u.username === config.botName) || (typeof m.text === 'string' && m.text.includes(`@${config.botName}`)));
-  if (!added) throw new HttpError(404, `Guruh topilmadi. @${config.botName} ni guruhga qoʻshing yoki guruhda /start@${config.botName} deb yozing, keyin qayta bosing`);
+  // The newest 100 updates: older ones (a busy group) would otherwise hide the one we need.
+  const updates: any[] = await tg(config.token, 'getUpdates', { offset: -100, allowed_updates: ['message'], timeout: 0 });
+  const code = groupCode(config.token);
+  const inGroup = updates.map((u) => u.message).filter((m) => m && ['group', 'supergroup'].includes(m.chat?.type));
+  const added = [...inGroup].reverse().find((m) => (typeof m.text === 'string' && m.text.includes(code))
+    || (m.from?.id === config.chatId && (m.new_chat_members || []).some((u: any) => u.username === config.botName)));
+  if (!added) throw new HttpError(404, `Guruh topilmadi. Guruhda /start@${config.botName} ${code} deb yozing, keyin qayta bosing`);
+  const threadId: number | undefined = added.is_topic_message && added.message_thread_id ? added.message_thread_id : undefined;
   let groupId: number = added.chat.id;
   const moved = inGroup.find((m) => m.chat.id === groupId && m.migrate_to_chat_id);
   if (moved) groupId = moved.migrate_to_chat_id;
-  const next = { ...config, groupId, groupName: added.chat.title || 'Guruh' };
+  const next = { ...config, groupId, groupThreadId: threadId, groupName: added.chat.title || 'Guruh' };
+  const hello = (chatId: number) => tg(config.token, 'sendMessage', {
+    chat_id: chatId, ...(threadId ? { message_thread_id: threadId } : {}),
+    text: '✅ Laylak Cargo kassa: bu yerga toʻlov rasmlari va bekor qilingan toʻlovlar haqida xabar keladi.',
+  });
   try {
-    await tg(config.token, 'sendMessage', { chat_id: groupId, text: '✅ Laylak Cargo kassa: bu guruhga toʻlov rasmlari va bekor qilingan toʻlovlar haqida xabar keladi.' });
+    await hello(groupId);
   } catch (error) {
     if (!(error instanceof ChatMoved)) throw error;
     next.groupId = error.chatId;
-    await tg(config.token, 'sendMessage', { chat_id: next.groupId, text: '✅ Laylak Cargo kassa: bu guruhga toʻlov rasmlari va bekor qilingan toʻlovlar haqida xabar keladi.' });
+    await hello(next.groupId);
   }
   await saveTelegram(next);
   await audit(null, ctx.user, 'telegram_group', 'telegram', null, { group: next.groupName });
@@ -1457,7 +1472,7 @@ route('POST', '/telegram/group', 'owner', async (ctx) => {
 route('DELETE', '/telegram/group', 'owner', async (ctx) => {
   const config = await getTelegram();
   if (!config) throw new HttpError(400, 'Telegram ulanmagan');
-  const { groupId: _id, groupName: _name, ...rest } = config;
+  const { groupId: _id, groupName: _name, groupThreadId: _thread, ...rest } = config;
   await saveTelegram(rest);
   await audit(null, ctx.user, 'telegram_group_remove', 'telegram', null);
   return telegramView(rest);

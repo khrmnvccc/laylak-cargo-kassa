@@ -11,6 +11,7 @@ export interface TelegramConfig {
   // A group the owner added the bot to: payment pictures and alerts go there too (not the backup).
   groupId?: number;
   groupName?: string;
+  groupThreadId?: number; // a topic in a group with topics
 }
 
 /** Telegram moved a group to a new id (it became a supergroup); `chatId` is the new one. */
@@ -83,20 +84,21 @@ export async function sendDocument(data: Buffer, filename: string, caption: stri
 export async function notify(text: string) {
   const config = await getTelegram();
   if (!config?.chatId) return;
-  await everyChat(config, (chatId) => tg(config.token, 'sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true }, 4000))
+  await everyChat(config, (chatId, topic) => tg(config.token, 'sendMessage', { chat_id: chatId, ...topic, text, parse_mode: 'HTML', disable_web_page_preview: true }, 4000))
     .catch((error) => console.error('Telegram notify failed', error));
 }
 
 /** Runs `send` for the owner's chat and the group; resolves when at least one got it. */
-async function everyChat(config: TelegramConfig, send: (chatId: number) => Promise<unknown>) {
+async function everyChat(config: TelegramConfig, send: (chatId: number, topic: Record<string, number>) => Promise<unknown>) {
   const chats = [config.chatId, config.groupId].filter((id): id is number => Boolean(id));
   const results = await Promise.allSettled(chats.map(async (chatId) => {
+    const topic: Record<string, number> = chatId === config.groupId && config.groupThreadId ? { message_thread_id: config.groupThreadId } : {};
     try {
-      await send(chatId);
+      await send(chatId, topic);
     } catch (error) {
       if (!(error instanceof ChatMoved) || chatId !== config.groupId) throw error;
       await saveTelegram({ ...config, groupId: error.chatId });
-      await send(error.chatId);
+      await send(error.chatId, topic);
     }
   }));
   const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
@@ -116,9 +118,10 @@ export function photoFromDataUrl(value: unknown): Buffer | null {
 export async function sendPhotos(photos: Buffer[], caption: string): Promise<boolean> {
   const config = await getTelegram();
   if (!config?.chatId || !photos.length) return false;
-  await everyChat(config, (chatId) => {
+  await everyChat(config, (chatId, topic) => {
     const form = new FormData();
     form.append('chat_id', String(chatId));
+    if (topic.message_thread_id) form.append('message_thread_id', String(topic.message_thread_id));
     if (photos.length === 1) {
       form.append('caption', caption.slice(0, 1024));
       form.append('parse_mode', 'HTML');

@@ -519,6 +519,18 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     assert.equal(sent.find((x) => x.method === 'sendMessage')?.body.chat_id, -1001);
     assert.equal((await w.call('POST', '/telegram/group')).status, 403);
 
+    // Or by the code from the Sozlamalar page, from any account (an anonymous admin too), in a topic.
+    const groupCode = (await owner.call('DELETE', '/telegram/group')).body.telegram.groupCode;
+    assert.match(groupCode, /^\d{6}$/);
+    groupUpdates.push({ message: { chat: { id: -1001, type: 'supergroup', title: 'Hisobotlar', is_forum: true }, from: { id: 1087968824 },
+      is_topic_message: true, message_thread_id: 42, text: `/start@laylak_test_bot ${groupCode}` } });
+    sent.length = 0;
+    const byCode = await owner.call('POST', '/telegram/group');
+    assert.equal(byCode.status, 200, JSON.stringify(byCode.body));
+    assert.deepEqual([byCode.body.telegram.groupName, byCode.body.telegram.groupCode], ['Hisobotlar', null]);
+    const hello = sent.find((x) => x.method === 'sendMessage')!;
+    assert.deepEqual([hello.body.chat_id, hello.body.message_thread_id], [-1001, 42]);
+
     // Cancelling a payment alerts the owner.
     const pay = await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'TG-1', amount: 55000, method: 'cash' });
     // The orders picture goes to the admin with the type and sum.
@@ -527,6 +539,7 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     assert.ok(photo && photo.body.photo instanceof Blob);
     assert.match(photo.body.caption, /💵 <b>Naqd · 55 000 soʻm<\/b>\nTG-1/);
     assert.deepEqual(sent.filter((x) => x.method === 'sendPhoto').map((x) => Number(x.body.chat_id)).sort(), [-1001, 777], 'owner and group');
+    assert.equal(sent.find((x) => x.method === 'sendPhoto' && Number(x.body.chat_id) === -1001)?.body.message_thread_id, '42', 'into the topic');
     sent.length = 0;
     assert.equal((await owner.call('POST', `/payments/${pay.body.payment.id}/void`, { reason: 'xato kiritildi' })).status, 200);
     assert.equal(sent[0]?.method, 'sendMessage');

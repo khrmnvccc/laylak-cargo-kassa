@@ -692,7 +692,7 @@ export const ENTRIES: Array<[string, string, string]> = [
   ['Toʻlov rasmlari va bekor qilingan toʻlovlar bu guruhga ham keladi. Kunlik hisobot va zaxira fayli faqat sizga keladi.', 'Фото оплат и отменённые оплаты приходят и в эту группу. Дневной отчёт и резервная копия — только вам.', '付款图片和已取消的付款也会发到这个群。每日报表和备份只发给您。'],
   ['Guruhni uzish', 'Отключить группу', '断开群组'],
   ['Guruhni tekshirish', 'Проверить группу', '检查群组'],
-  ['Toʻlov rasmlari guruhga ham kelsin desangiz: botni guruhga oʻzingiz qoʻshing, keyin “Guruhni tekshirish”ni bosing. Kunlik hisobot va zaxira fayli guruhga bormaydi.', 'Чтобы фото оплат приходили и в группу: сами добавьте бота в группу и нажмите «Проверить группу». Отчёт и резервная копия в группу не уходят.', '如需把付款图片也发到群里：请亲自把机器人加入群，然后点“检查群组”。日报和备份不会发到群里。'],
+  ['Toʻlov rasmlari guruhga ham kelsin desangiz: botni guruhga qoʻshing, guruhda quyidagini yozing, keyin “Guruhni tekshirish”ni bosing. Mavzuli guruhda qaysi mavzuga yozsangiz, xabarlar oʻsha yerga keladi. Kunlik hisobot va zaxira fayli guruhga bormaydi.', 'Чтобы фото оплат приходили и в группу: добавьте бота в группу, напишите там строку ниже и нажмите «Проверить группу». В группе с темами сообщения придут в ту тему, где вы написали. Отчёт и резервная копия в группу не уходят.', '如需把付款图片也发到群里：把机器人加入群，在群里发送下面这行，然后点“检查群组”。在有话题的群里，消息会发到您发送的那个话题。日报和备份不会发到群里。'],
   ['Telegram guruhini uladi', 'Подключил группу Telegram', '连接了 Telegram 群组'],
   ['Telegram guruhini uzdi', 'Отключил группу Telegram', '断开了 Telegram 群组'],
 ];

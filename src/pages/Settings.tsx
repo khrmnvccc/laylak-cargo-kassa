@@ -190,7 +190,7 @@ function AuditLog() {
   );
 }
 
-interface TelegramState { botName: string; connected: boolean; chatName: string | null; code: string | null; groupName: string | null }
+interface TelegramState { botName: string; connected: boolean; chatName: string | null; code: string | null; groupName: string | null; groupCode: string | null }
 
 /** Owner only: connect a Telegram bot for the evening report and nightly backup, and download a backup now. */
 function TelegramCard() {
@@ -281,7 +281,10 @@ function TelegramCard() {
                   </>
                 ) : (
                   <>
-                    <p className="text-[13px] text-ink-2">Toʻlov rasmlari guruhga ham kelsin desangiz: botni guruhga oʻzingiz qoʻshing, keyin “Guruhni tekshirish”ni bosing. Kunlik hisobot va zaxira fayli guruhga bormaydi.</p>
+                    <p className="text-[13px] text-ink-2">Toʻlov rasmlari guruhga ham kelsin desangiz: botni guruhga qoʻshing, guruhda quyidagini yozing, keyin “Guruhni tekshirish”ni bosing. Mavzuli guruhda qaysi mavzuga yozsangiz, xabarlar oʻsha yerga keladi. Kunlik hisobot va zaxira fayli guruhga bormaydi.</p>
+                    {tg.groupCode && (
+                      <code className="block select-all rounded-md border border-line bg-surface-2 px-3 py-2 font-mono text-sm text-ink">{`/start@${tg.botName} ${tg.groupCode}`}</code>
+                    )}
                     <Button size="sm" loading={busy === 'POST/telegram/group'} onClick={() => call('POST', '/telegram/group')}>Guruhni tekshirish</Button>
                   </>
                 )}
