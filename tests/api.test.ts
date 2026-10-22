@@ -533,75 +533,91 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
   }
 });
 
-test('receipts: a bank receipt + orders screenshot become card payments, once', async () => {
-  const READ = {
-    receipt: {
-      bank: 'Alif', transactionId: '477924487', amount: 44600, commission: 200.7, total: 44800.7, paidAt: '2026-10-22T13:22',
-      sender: 'Akbarova I.', senderCard: 'UZCARD**4168', recipient: 'Ainiwaer A.', recipientCard: 'UZCARD**4096', status: null,
-    },
-    orders: [
-      { clientName: 'Akbarova Iroda', code: 'TTT-102315', orderNo: '369383', transport: 'Avia', weight: '0.1 kg', amount: 11800 },
-      { clientName: 'Akbarova Iroda', code: 'SSS-102315', orderNo: '873407', transport: 'Avto', weight: '0.4 kg', amount: 32800 },
-    ],
-    ordersTotal: 44600,
-    notes: null,
-  };
-  const realFetch = globalThis.fetch;
-  const requests: any[] = [];
-  globalThis.fetch = (async (url: string, init: any) => {
-    if (String(url).includes('api.telegram.org')) return new Response(JSON.stringify({ ok: true, result: true }));
-    assert.match(String(url), /api\.anthropic\.com\/v1\/messages/);
-    requests.push(JSON.parse(init.body));
-    return new Response(JSON.stringify({
-      id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-opus-5-5', stop_reason: 'end_turn', stop_sequence: null,
-      content: [{ type: 'text', text: JSON.stringify(READ) }], usage: { input_tokens: 10, output_tokens: 10 },
-    }), { status: 200, headers: { 'content-type': 'application/json' } });
-  }) as typeof fetch;
-  const img = { mediaType: 'image/jpeg', data: Buffer.from('fake-jpeg').toString('base64') };
-  try {
-    const w = new Client();
-    assert.equal((await w.call('POST', '/auth/login', { username: 'sardor', password: 'worker123' })).status, 200);
+// What on-device OCR returned for a real Alif receipt and the orders screen (names changed).
+const OCR_RECEIPT = `13:22 0 @® пс
+< Электронный чек
+(A alif
+Отп авитель Karimova |.
+ю UZCARD**4168
+Получатель Ainiwaer A.
+у UZCARD**4096
+Номер транзакции 477924487
+Дата и время 22.10.2026 13:22
+Сумма 44 600 сум
+Комиссия 200,7 сум
+Итого 44 800,7 сум
+ЭЛЕКТРОННЫЙ ПЛАТЕЖ
+ИСПОЛНЕНО`;
+const OCR_ORDERS = [
+  `MUOZ KOD BUYURTMA N= USUL POS VAZN SUMMA KUTISH AMAL
+Karimova lroda TTT-182315 Buyurtma Ne 369383 A Avia 1 8.1 kg 11 868 so’‘m © soxun
+Karimova Iroda $SS-102315 Buyurtma N2 873487 Avto 1 0.4 kg 32 808 so'm © s9xun [© Noga |
+2 tabuyurtma Kutilayotgan 44 600 so’‘m`,
+  `Karimova lroda TTT-182315 Buyurtma № 369383 A Avia 1 0.1 kg 11 860 so'm
+Karimova Iroda SSS-1082315 Buyurtma № 873487 Avto 1 0.4 kg 32 800 so'm
+2 ta buyurtma Kutilayotgan 44 600 so'm`,
+  `Karimova Iroda TTT-102315 Buyurtma № 369383 A Avia 1 0.1 kg 11 868 so'm
+Karimova Iroda SSSS-102315 Buyurtma № 873487 Avto 1 0.4 kg 32 808 so'm
+Kutilayotgan 44 600 so'm`,
+];
 
-    delete process.env.ANTHROPIC_API_KEY;
-    const off = await w.call('POST', '/receipts/read', { images: [img, img] });
-    assert.equal(off.status, 503);
-    assert.match(off.body.error, /ANTHROPIC_API_KEY/);
+test('receipt reading: OCR text becomes fields, misread digits are fixed by the receipt sum', async () => {
+  const { parseReceipt, parseOrders, voteOrders, reconcile, codeVariants, clientCodeOf } = await import('../src/lib/receiptParse.js');
+  const r = parseReceipt(OCR_RECEIPT);
+  assert.deepEqual(
+    [r.bank, r.transactionId, r.amount, r.commission, r.total, r.paidAt, r.sender, r.senderCard, r.recipientCard],
+    ['Alif', '477924487', 44600, 200.7, 44800.7, '2026-10-22T13:22', 'Karimova I.', 'UZCARD**4168', 'UZCARD**4096'],
+  );
+  // Other bank layouts: Uzbek labels, one total only.
+  const click = parseReceipt(`CLICK\nToʻlov muvaffaqiyatli\nTranzaksiya ID: 9087766501\n05.10.2026 09:41\n120 000 soʻm\nKarta: HUMO *** 1122`);
+  assert.deepEqual([click.bank, click.transactionId, click.amount, click.paidAt], ['Click', '9087766501', 120000, '2026-10-05T09:41']);
 
-    process.env.ANTHROPIC_API_KEY = 'test-key';
-    assert.equal((await w.call('POST', '/receipts/read', { images: [{ mediaType: 'text/html', data: 'x' }] })).status, 400);
-    const read = await w.call('POST', '/receipts/read', { images: [img, img] });
-    assert.equal(read.status, 200, JSON.stringify(read.body));
-    assert.equal(requests[0].model, 'claude-opus-5-5');
-    assert.equal(requests[0].output_config.format.type, 'json_schema');
-    assert.equal(requests[0].messages[0].content.filter((b: any) => b.type === 'image').length, 2);
-    assert.deepEqual(read.body.orders.map((o: any) => o.clientCode), ['102315', '102315']);
-    assert.equal(read.body.duplicate, null);
+  const voted = voteOrders(OCR_ORDERS.map(parseOrders));
+  assert.equal(voted.orders.length, 2, 'the heading row is not an order');
+  assert.equal(voted.total, 44600);
+  assert.deepEqual(voted.orders.map((o) => [o.orderNo, o.transport]), [['369383', 'Avia'], ['873487', 'Avto']]);
+  assert.deepEqual(reconcile(voted.orders.map((o) => o.amount!), r.amount!), [11800, 32800]);
+  assert.equal(reconcile([11800, 32800], 44600)!.join(), '11800,32800', 'correct sums stay as they are');
+  assert.equal(clientCodeOf('SSS-102315'), '102315');
+  assert.ok(codeVariants('182315').includes('102315'));
+  assert.ok(voted.codeReadings[0].map(clientCodeOf).includes('102315'));
+});
 
-    const body = { receipt: READ.receipt, method: 'card', orders: read.body.orders };
-    const short = await w.call('POST', '/receipts/confirm', { ...body, orders: read.body.orders.slice(0, 1) });
-    assert.equal(short.status, 400);
-    assert.match(short.body.error, /teng emas/);
+test('receipts: checked receipt becomes card payments, once', async () => {
+  const receipt = { bank: 'Alif', transactionId: '477924487', amount: 44600, paidAt: '2026-10-22T13:22', sender: 'Karimova I.', senderCard: 'UZCARD**4168' };
+  const orders = [
+    { clientCode: '102315', clientName: 'Karimova Iroda', code: 'TTT-102315', orderNo: '369383', transport: 'Avia', amount: 11800 },
+    { clientCode: '102315', clientName: 'Karimova Iroda', code: 'SSS-102315', orderNo: '873407', transport: 'Avto', amount: 32800 },
+  ];
+  const w = new Client();
+  assert.equal((await w.call('POST', '/auth/login', { username: 'sardor', password: 'worker123' })).status, 200);
 
-    const ok = await w.call('POST', '/receipts/confirm', body);
-    assert.equal(ok.status, 201, JSON.stringify(ok.body));
-    assert.equal(ok.body.payments.length, 1, 'one payment per client');
-    const p = ok.body.payments[0];
-    assert.deepEqual([p.client_code, Number(p.amount), p.method, p.client_name], ['102315', 44600, 'card', 'Akbarova Iroda']);
-    assert.match(p.note, /Alif №477924487.*№369383 Avia TTT-102315, №873407 Avto SSS-102315/);
+  const before = await w.call('POST', '/receipts/check', { receipt, codes: ['102315', '182315'] });
+  assert.equal(before.status, 200, JSON.stringify(before.body));
+  assert.deepEqual([before.body.duplicate, before.body.clients], [null, {}]);
 
-    // The same receipt again is refused, both when reading and when saving.
-    assert.ok((await w.call('POST', '/receipts/read', { images: [img, img] })).body.duplicate);
-    assert.equal((await w.call('POST', '/receipts/confirm', body)).status, 409);
+  const short = await w.call('POST', '/receipts/confirm', { receipt, method: 'card', orders: orders.slice(0, 1) });
+  assert.equal(short.status, 400);
+  assert.match(short.body.error, /teng emas/);
 
-    // After the payment is cancelled the receipt can be entered again.
-    const owner = new Client();
-    await owner.call('POST', '/auth/login', { username: 'admin', password: 'password123' });
-    assert.equal((await owner.call('POST', `/payments/${p.id}/void`, { reason: 'qayta kiritiladi' })).status, 200);
-    assert.equal((await owner.call('POST', '/receipts/confirm', body)).status, 201);
-    const again = await owner.call('POST', '/receipts/confirm', body);
-    assert.equal(again.status, 409);
-  } finally {
-    globalThis.fetch = realFetch;
-    delete process.env.ANTHROPIC_API_KEY;
-  }
+  const ok = await w.call('POST', '/receipts/confirm', { receipt, method: 'card', orders });
+  assert.equal(ok.status, 201, JSON.stringify(ok.body));
+  assert.equal(ok.body.payments.length, 1, 'one payment per client');
+  const p = ok.body.payments[0];
+  assert.deepEqual([p.client_code, Number(p.amount), p.method, p.client_name], ['102315', 44600, 'card', 'Karimova Iroda']);
+  assert.match(p.note, /Alif №477924487.*№369383 Avia TTT-102315, №873407 Avto SSS-102315/);
+
+  // Now the client is known, and the same receipt is refused.
+  const after = await w.call('POST', '/receipts/check', { receipt, codes: ['102315', '182315'] });
+  assert.ok(after.body.duplicate);
+  assert.deepEqual(Object.keys(after.body.clients), ['102315']);
+  assert.equal(after.body.clients['102315'].count, 1);
+  assert.equal((await w.call('POST', '/receipts/confirm', { receipt, method: 'card', orders })).status, 409);
+
+  // After the payment is cancelled the receipt can be entered again.
+  const owner = new Client();
+  await owner.call('POST', '/auth/login', { username: 'admin', password: 'password123' });
+  assert.equal((await owner.call('POST', `/payments/${p.id}/void`, { reason: 'qayta kiritiladi' })).status, 200);
+  assert.equal((await owner.call('POST', '/receipts/confirm', { receipt, method: 'card', orders })).status, 201);
+  assert.equal((await owner.call('POST', '/receipts/confirm', { receipt, method: 'card', orders })).status, 409);
 });

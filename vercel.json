@@ -1,9 +1,6 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "functions": {
-    "api/index.ts": { "maxDuration": 60 }
-  },
   "crons": [
     { "path": "/api/cron/daily", "schedule": "0 16 * * *" }
   ],
@@ -11,6 +8,10 @@
     { "source": "/api/:path*", "destination": "/api?__route=:path*" }
   ],
   "headers": [
+    {
+      "source": "/ocr/(.*)",
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=2592000, immutable" }]
+    },
     {
       "source": "/sw.js",
       "headers": [

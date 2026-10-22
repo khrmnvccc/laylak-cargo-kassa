@@ -21,7 +21,7 @@ import {
 } from './auth.js';
 import { PERMISSIONS, WORKER_DEFAULT, isPerm, permsOf, type Perm } from './perms.js';
 import { escapeHtml, getTelegram, notify, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
-import { MAX_IMAGE_BYTES, MEDIA_TYPES, clientCodeOf, readImages, receiptKey, type ReceiptImage } from './receipts.js';
+import { receiptKey } from './receipts.js';
 import { gzipSync } from 'node:zlib';
 import { randomInt } from 'node:crypto';
 
@@ -346,29 +346,20 @@ async function usedReceipt(db: { query: pg.PoolClient['query'] } | null, key: st
   return rows[0] as { id: string; created_at: string; created_by_name: string; amount: string; active: boolean } | undefined;
 }
 
-route('POST', '/receipts/read', 'payments.create', async (ctx) => {
-  const list = Array.isArray(ctx.body?.images) ? ctx.body.images : [];
-  if (list.length < 1 || list.length > 4) throw new HttpError(400, 'Chek rasmi va 1–3 ta buyurtma rasmini yuklang');
-  const images: ReceiptImage[] = list.map((img: any) => {
-    const mediaType = String(img?.mediaType || '');
-    const data = String(img?.data || '');
-    if (!MEDIA_TYPES.includes(mediaType) || !/^[A-Za-z0-9+/=]+$/.test(data)) throw new HttpError(400, 'Faqat JPG, PNG yoki WEBP rasm yuklang');
-    if (data.length * 0.75 > MAX_IMAGE_BYTES) throw new HttpError(413, 'Rasm juda katta');
-    return { mediaType, data };
-  });
-  const read = await readImages(images);
-  const orders = (read.orders || []).map((o) => ({ ...o, clientCode: clientCodeOf(o.code) }));
-  const key = receiptKey(read.receipt || ({} as any));
+// Before saving: is this receipt already in the kassa, and which of the client IDs read from the
+// screenshot (with their OCR look-alikes) are real clients.
+route('POST', '/receipts/check', 'payments.create', async (ctx) => {
+  const r = ctx.body?.receipt || {};
+  const key = receiptKey({ transactionId: str(r.transactionId, 60), amount: Number(r.amount) || null, paidAt: str(r.paidAt, 20), senderCard: str(r.senderCard, 40) });
   const used = key ? await usedReceipt(null, key) : undefined;
-  await audit(null, ctx.user, 'receipt_read', 'receipt', null, {
-    bank: read.receipt?.bank, transactionId: read.receipt?.transactionId, amount: read.receipt?.amount, orders: orders.length,
-  });
+  const codes = (Array.isArray(ctx.body?.codes) ? ctx.body.codes : [])
+    .map((c: unknown) => str(c, 40).toUpperCase()).filter((c: string) => /^[A-Z0-9-]{1,40}$/.test(c)).slice(0, 200);
+  const rows = codes.length ? await query(
+    `SELECT c.code, c.full_name, (SELECT COUNT(*) FROM payments p WHERE p.client_code = c.code AND p.voided_at IS NULL)::int AS count
+       FROM clients c WHERE c.code = ANY($1)`, [codes]) : [];
   return {
-    receipt: read.receipt,
-    orders,
-    ordersTotal: read.ordersTotal,
-    notes: read.notes,
     duplicate: used?.active ? { at: used.created_at, by: used.created_by_name } : null,
+    clients: Object.fromEntries(rows.map((c: any) => [c.code, { name: c.full_name, count: c.count }])),
   };
 });
 

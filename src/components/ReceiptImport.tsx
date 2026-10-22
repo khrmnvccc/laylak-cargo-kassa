@@ -2,46 +2,18 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { AlertTriangle, ArrowLeft, CheckCircle2, ImagePlus, Loader2, ReceiptText, ScanText, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { CARD_METHODS, groupDigits, money } from '../lib/format';
+import { readScreenshots } from '../lib/ocr';
+import { clientCodeOf, codeVariants, reconcile, type Order, type Receipt } from '../lib/receiptParse';
 import type { Method, Payment } from '../lib/types';
 import { Alert, Badge, Button, Field, Input, Modal, cx, useToast } from './ui';
 
 // "Chek orqali": a photo of the client's bank receipt (any bank app) plus a screenshot of their
-// orders. The server reads both, the cashier checks what was read, and one card payment per
-// client goes into the kassa with the receipt number in the note.
+// orders. The cashier's own device reads both for free (no photo leaves it), the cashier checks
+// what was read, and one card payment per client goes into the kassa with the receipt number.
 
-interface Shot { mediaType: string; data: string; url: string }
-interface Receipt {
-  bank: string | null; transactionId: string | null; amount: number | null; commission: number | null; total: number | null;
-  paidAt: string | null; sender: string | null; senderCard: string | null; recipient: string | null; recipientCard: string | null; status: string | null;
-}
-interface Order { clientName: string | null; code: string | null; orderNo: string | null; transport: string | null; weight: string | null; amount: number | null; clientCode: string }
-interface ReadResponse { receipt: Receipt; orders: Order[]; ordersTotal: number | null; notes: string | null; duplicate: { at: string; by: string } | null }
-interface Row extends Order { on: boolean; amountText: string }
-
-const MAX_SIDE = 2000;
-const MAX_BYTES = 1_000_000;
-
-/** Shrinks a phone photo/screenshot so several fit in one request, keeping small text readable. */
-async function shrink(file: File): Promise<Shot> {
-  const url = URL.createObjectURL(file);
-  const img = new Image();
-  await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = () => reject(new Error('Rasmni ochib boʻlmadi')); img.src = url; });
-  const scale = Math.min(1, MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.round(img.naturalWidth * scale);
-  canvas.height = Math.round(img.naturalHeight * scale);
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  let quality = 0.85;
-  let dataUrl = canvas.toDataURL('image/jpeg', quality);
-  while (dataUrl.length * 0.75 > MAX_BYTES && quality > 0.4) {
-    quality -= 0.15;
-    dataUrl = canvas.toDataURL('image/jpeg', quality);
-  }
-  return { mediaType: 'image/jpeg', data: dataUrl.split(',')[1], url };
-}
+interface Shot { file: File; url: string }
+interface ClientHit { name: string | null; count: number }
+interface Row extends Order { on: boolean; amountText: string; clientCode: string; amountFixed: boolean; codeFixed: boolean }
 
 const digits = (s: string) => Number(s.replace(/\D/g, '')) || 0;
 
@@ -50,9 +22,11 @@ export function ReceiptImport({ open, onClose, onSaved }: { open: boolean; onClo
   const [receiptShot, setReceiptShot] = useState<Shot | null>(null);
   const [orderShots, setOrderShots] = useState<Shot[]>([]);
   const [reading, setReading] = useState(false);
+  const [step, setStep] = useState('');
+  const [clients, setClients] = useState<Record<string, ClientHit>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [read, setRead] = useState<ReadResponse | null>(null);
+  const [read, setRead] = useState<{ ordersTotal: number | null; duplicate: { at: string; by: string } | null; notes: string | null } | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [amountText, setAmountText] = useState('');
   const [rows, setRows] = useState<Row[]>([]);
@@ -69,11 +43,9 @@ export function ReceiptImport({ open, onClose, onSaved }: { open: boolean; onClo
     try {
       const list = Array.from(files).filter((f) => f.type.startsWith('image/'));
       if (!list.length) throw new Error('Faqat rasm yuklang');
-      if (slot === 'receipt') setReceiptShot(await shrink(list[0]));
-      else {
-        const shots = await Promise.all(list.slice(0, 3).map(shrink));
-        setOrderShots((prev) => [...prev, ...shots].slice(0, 3));
-      }
+      const shots = list.map((file) => ({ file, url: URL.createObjectURL(file) }));
+      if (slot === 'receipt') setReceiptShot(shots[0]);
+      else setOrderShots((prev) => [...prev, ...shots].slice(0, 3));
     } catch (e) {
       setError((e as Error).message);
     }
@@ -97,18 +69,42 @@ export function ReceiptImport({ open, onClose, onSaved }: { open: boolean; onClo
     setReading(true);
     setError(null);
     try {
-      const res = await api<ReadResponse>('/receipts/read', {
-        method: 'POST',
-        body: { images: [receiptShot, ...orderShots].map(({ mediaType, data }) => ({ mediaType, data })) },
+      const res = await readScreenshots(receiptShot.file, orderShots.map((s) => s.file), setStep);
+      setStep('Tekshirilmoqda…');
+      // Prices that do not add up to the receipt: fix the digits OCR most often mixes up.
+      const target = res.receipt.amount ?? res.ordersTotal;
+      const read = res.orders.map((o) => o.amount ?? 0);
+      const fixed = target ? reconcile(read, target) : null;
+      // Client IDs: of every way an ID was read (and its look-alikes), which is a real client.
+      const options = res.orders.map((o, i) => {
+        const seen = [o.code, ...(res.codeReadings[i] || [])].map(clientCodeOf).filter(Boolean);
+        return { seen: [...new Set(seen)], alike: seen[0] ? codeVariants(seen[0]) : [] };
       });
-      setRead(res);
+      const check = await api<{ duplicate: { at: string; by: string } | null; clients: Record<string, ClientHit> }>('/receipts/check', {
+        method: 'POST',
+        body: { receipt: res.receipt, codes: [...new Set(options.flatMap((o) => [...o.seen, ...o.alike]))] },
+      });
+      setClients(check.clients);
+      const rows: Row[] = res.orders.map((o, i) => {
+        const { seen, alike } = options[i];
+        const known = seen.find((c) => check.clients[c]) ?? (alike.filter((c) => check.clients[c]).length === 1 ? alike.find((c) => check.clients[c]) : undefined);
+        const clientCode = known ?? seen[0] ?? '';
+        const amount = fixed?.[i] ?? o.amount;
+        return { ...o, on: true, clientCode, codeFixed: Boolean(seen[0] && clientCode !== seen[0]), amount, amountFixed: Boolean(fixed && fixed[i] !== o.amount), amountText: amount ? groupDigits(amount) : '' };
+      });
+      const notes = !res.receipt.amount ? 'Chekdagi summa topilmadi, uni qoʻlda kiriting.'
+        : !rows.length ? null
+        : fixed == null && read.reduce((s, a) => s + a, 0) !== res.receipt.amount ? 'Buyurtma summalari chekka mos kelmadi. Rasmga qarab toʻgʻrilang.'
+        : null;
+      setRead({ ordersTotal: res.ordersTotal, duplicate: check.duplicate, notes });
       setReceipt(res.receipt);
       setAmountText(res.receipt.amount ? groupDigits(res.receipt.amount) : '');
-      setRows(res.orders.map((o) => ({ ...o, on: true, amountText: o.amount ? groupDigits(o.amount) : '' })));
+      setRows(rows);
     } catch (e) {
-      setError((e as Error).message);
+      setError((e as Error).message || 'Rasmni oʻqib boʻlmadi');
     } finally {
       setReading(false);
+      setStep('');
     }
   }
 
@@ -154,7 +150,7 @@ export function ReceiptImport({ open, onClose, onSaved }: { open: boolean; onClo
       </> : <>
         <Button onClick={close} disabled={reading}>Bekor qilish</Button>
         <Button variant="primary" loading={reading} disabled={!receiptShot || !orderShots.length} onClick={analyze} icon={<ScanText className="size-4" />}>
-          {reading ? 'Oʻqilmoqda…' : 'Tekshirish'}
+          {reading ? 'Oʻqilmoqda…' : 'Oʻqish'}
         </Button>
       </>}>
       <div className="space-y-4">
@@ -170,10 +166,10 @@ export function ReceiptImport({ open, onClose, onSaved }: { open: boolean; onClo
             </div>
             {reading ? (
               <div className="flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-2.5 text-sm text-ink-2">
-                <Loader2 className="size-4 animate-spin" />Rasmlar oʻqilmoqda, bu 10–30 soniya olishi mumkin…
+                <Loader2 className="size-4 animate-spin" />{step || 'Oʻqilmoqda…'}
               </div>
             ) : (
-              <p className="text-xs text-ink-3">Rasmni tanlang yoki skrinshotni shu oynaga Ctrl+V bilan qoʻying. Rasmlar saqlanmaydi, faqat oʻqilgan raqamlar saqlanadi.</p>
+              <p className="text-xs text-ink-3">Rasmni tanlang yoki skrinshotni shu oynaga Ctrl+V bilan qoʻying. Rasmlar telefoningizdan chiqmaydi: ular shu qurilmaning oʻzida oʻqiladi. Oʻqilganini albatta rasm bilan solishtiring.</p>
             )}
           </>
         ) : receipt && (
@@ -191,7 +187,7 @@ export function ReceiptImport({ open, onClose, onSaved }: { open: boolean; onClo
                 {receipt.status && <Badge tone="success">{receipt.status}</Badge>}
               </div>
               <div className="grid gap-3 sm:grid-cols-3">
-                <Field label="Summa (komissiyasiz)" htmlFor="rc-amount" hint={receipt.commission ? `Komissiya: ${groupDigits(receipt.commission)} · jami ${groupDigits(receipt.total || 0)}` : undefined}>
+                <Field label="Summa (komissiyasiz)" htmlFor="rc-amount" hint={receipt.commission ? `Komissiya: ${receipt.commission.toLocaleString('ru-RU')}${receipt.total ? ` · jami ${receipt.total.toLocaleString('ru-RU')}` : ''}` : undefined}>
                   <Input id="rc-amount" inputMode="numeric" className="num font-semibold" value={amountText}
                     onChange={(e) => { const d = e.target.value.replace(/\D/g, '').slice(0, 11); setAmountText(d ? groupDigits(Number(d)) : ''); }} />
                 </Field>
@@ -229,13 +225,14 @@ export function ReceiptImport({ open, onClose, onSaved }: { open: boolean; onClo
                       <label className="col-start-2 sm:col-start-auto">
                         <span className="mb-1 block text-[11px] text-ink-3">Mijoz ID</span>
                         <Input value={r.clientCode} className="h-9 num" invalid={r.on && !/^[A-Z0-9-]{1,40}$/.test(r.clientCode)}
-                          onChange={(e) => setRow(i, { clientCode: e.target.value.toUpperCase().replace(/\s/g, '') })} />
+                          onChange={(e) => setRow(i, { clientCode: e.target.value.toUpperCase().replace(/\s/g, ''), codeFixed: false })} />
                       </label>
                       <label className="col-start-2 sm:col-start-auto">
                         <span className="mb-1 block text-[11px] text-ink-3">Summa</span>
                         <Input value={r.amountText} inputMode="numeric" className="h-9 num"
-                          onChange={(e) => { const d = e.target.value.replace(/\D/g, '').slice(0, 11); setRow(i, { amountText: d ? groupDigits(Number(d)) : '' }); }} />
+                          onChange={(e) => { const d = e.target.value.replace(/\D/g, '').slice(0, 11); setRow(i, { amountText: d ? groupDigits(Number(d)) : '', amountFixed: false }); }} />
                       </label>
+                      <RowNote hit={clients[r.clientCode]} codeFixed={r.codeFixed} amountFixed={r.amountFixed} />
                     </div>
                   ))}
                 </div>
@@ -269,6 +266,20 @@ export function ReceiptImport({ open, onClose, onSaved }: { open: boolean; onClo
         )}
       </div>
     </Modal>
+  );
+}
+
+function RowNote({ hit, codeFixed, amountFixed }: { hit?: ClientHit; codeFixed: boolean; amountFixed: boolean }) {
+  return (
+    <div className="col-start-2 flex flex-wrap gap-x-3 gap-y-1 text-xs sm:col-span-3">
+      {hit ? (
+        <span className="text-success">Mavjud mijoz{hit.name ? `: ${hit.name}` : ''} · {hit.count} ta toʻlov</span>
+      ) : (
+        <span className="inline-flex items-center gap-1 text-warn"><AlertTriangle className="size-3.5" />Bu ID bazada yoʻq. Rasmdagi ID bilan solishtiring</span>
+      )}
+      {codeFixed && <span className="text-ink-3">ID bazadagi mijozga qarab tuzatildi</span>}
+      {amountFixed && <span className="text-ink-3">Summa chekka qarab tuzatildi</span>}
+    </div>
   );
 }
 
