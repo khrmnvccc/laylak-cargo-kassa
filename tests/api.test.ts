@@ -532,3 +532,76 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     delete process.env.CRON_SECRET;
   }
 });
+
+test('receipts: a bank receipt + orders screenshot become card payments, once', async () => {
+  const READ = {
+    receipt: {
+      bank: 'Alif', transactionId: '477924487', amount: 44600, commission: 200.7, total: 44800.7, paidAt: '2026-10-22T13:22',
+      sender: 'Akbarova I.', senderCard: 'UZCARD**4168', recipient: 'Ainiwaer A.', recipientCard: 'UZCARD**4096', status: null,
+    },
+    orders: [
+      { clientName: 'Akbarova Iroda', code: 'TTT-102315', orderNo: '369383', transport: 'Avia', weight: '0.1 kg', amount: 11800 },
+      { clientName: 'Akbarova Iroda', code: 'SSS-102315', orderNo: '873407', transport: 'Avto', weight: '0.4 kg', amount: 32800 },
+    ],
+    ordersTotal: 44600,
+    notes: null,
+  };
+  const realFetch = globalThis.fetch;
+  const requests: any[] = [];
+  globalThis.fetch = (async (url: string, init: any) => {
+    if (String(url).includes('api.telegram.org')) return new Response(JSON.stringify({ ok: true, result: true }));
+    assert.match(String(url), /api\.anthropic\.com\/v1\/messages/);
+    requests.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({
+      id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-opus-5-5', stop_reason: 'end_turn', stop_sequence: null,
+      content: [{ type: 'text', text: JSON.stringify(READ) }], usage: { input_tokens: 10, output_tokens: 10 },
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  const img = { mediaType: 'image/jpeg', data: Buffer.from('fake-jpeg').toString('base64') };
+  try {
+    const w = new Client();
+    assert.equal((await w.call('POST', '/auth/login', { username: 'sardor', password: 'worker123' })).status, 200);
+
+    delete process.env.ANTHROPIC_API_KEY;
+    const off = await w.call('POST', '/receipts/read', { images: [img, img] });
+    assert.equal(off.status, 503);
+    assert.match(off.body.error, /ANTHROPIC_API_KEY/);
+
+    process.env.ANTHROPIC_API_KEY = 'test-key';
+    assert.equal((await w.call('POST', '/receipts/read', { images: [{ mediaType: 'text/html', data: 'x' }] })).status, 400);
+    const read = await w.call('POST', '/receipts/read', { images: [img, img] });
+    assert.equal(read.status, 200, JSON.stringify(read.body));
+    assert.equal(requests[0].model, 'claude-opus-5-5');
+    assert.equal(requests[0].output_config.format.type, 'json_schema');
+    assert.equal(requests[0].messages[0].content.filter((b: any) => b.type === 'image').length, 2);
+    assert.deepEqual(read.body.orders.map((o: any) => o.clientCode), ['102315', '102315']);
+    assert.equal(read.body.duplicate, null);
+
+    const body = { receipt: READ.receipt, method: 'card', orders: read.body.orders };
+    const short = await w.call('POST', '/receipts/confirm', { ...body, orders: read.body.orders.slice(0, 1) });
+    assert.equal(short.status, 400);
+    assert.match(short.body.error, /teng emas/);
+
+    const ok = await w.call('POST', '/receipts/confirm', body);
+    assert.equal(ok.status, 201, JSON.stringify(ok.body));
+    assert.equal(ok.body.payments.length, 1, 'one payment per client');
+    const p = ok.body.payments[0];
+    assert.deepEqual([p.client_code, Number(p.amount), p.method, p.client_name], ['102315', 44600, 'card', 'Akbarova Iroda']);
+    assert.match(p.note, /Alif №477924487.*№369383 Avia TTT-102315, №873407 Avto SSS-102315/);
+
+    // The same receipt again is refused, both when reading and when saving.
+    assert.ok((await w.call('POST', '/receipts/read', { images: [img, img] })).body.duplicate);
+    assert.equal((await w.call('POST', '/receipts/confirm', body)).status, 409);
+
+    // After the payment is cancelled the receipt can be entered again.
+    const owner = new Client();
+    await owner.call('POST', '/auth/login', { username: 'admin', password: 'password123' });
+    assert.equal((await owner.call('POST', `/payments/${p.id}/void`, { reason: 'qayta kiritiladi' })).status, 200);
+    assert.equal((await owner.call('POST', '/receipts/confirm', body)).status, 201);
+    const again = await owner.call('POST', '/receipts/confirm', body);
+    assert.equal(again.status, 409);
+  } finally {
+    globalThis.fetch = realFetch;
+    delete process.env.ANTHROPIC_API_KEY;
+  }
+});

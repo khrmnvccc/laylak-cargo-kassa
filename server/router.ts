@@ -21,6 +21,7 @@ import {
 } from './auth.js';
 import { PERMISSIONS, WORKER_DEFAULT, isPerm, permsOf, type Perm } from './perms.js';
 import { escapeHtml, getTelegram, notify, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
+import { MAX_IMAGE_BYTES, MEDIA_TYPES, clientCodeOf, readImages, receiptKey, type ReceiptImage } from './receipts.js';
 import { gzipSync } from 'node:zlib';
 import { randomInt } from 'node:crypto';
 
@@ -330,6 +331,120 @@ route('POST', '/payments', 'payments.create', async (ctx) => {
     return full.rows[0];
   });
   return { status: 201, body: { payment } };
+});
+
+// ---------- receipts: a bank receipt photo + the client's orders screenshot ----------
+
+const CARD_ONLY = ['card', 'yandex', 'pochta'];
+
+/** A receipt counts as used while any payment saved from it is still active. */
+async function usedReceipt(db: { query: pg.PoolClient['query'] } | null, key: string) {
+  const sql = `SELECT r.id, r.created_at, r.created_by_name, r.amount,
+                      EXISTS (SELECT 1 FROM payments p WHERE p.id = ANY(r.payment_ids) AND p.voided_at IS NULL) AS active
+                 FROM receipts r WHERE r.key = $1`;
+  const rows = db ? (await db.query(sql, [key])).rows : await query(sql, [key]);
+  return rows[0] as { id: string; created_at: string; created_by_name: string; amount: string; active: boolean } | undefined;
+}
+
+route('POST', '/receipts/read', 'payments.create', async (ctx) => {
+  const list = Array.isArray(ctx.body?.images) ? ctx.body.images : [];
+  if (list.length < 1 || list.length > 4) throw new HttpError(400, 'Chek rasmi va 1–3 ta buyurtma rasmini yuklang');
+  const images: ReceiptImage[] = list.map((img: any) => {
+    const mediaType = String(img?.mediaType || '');
+    const data = String(img?.data || '');
+    if (!MEDIA_TYPES.includes(mediaType) || !/^[A-Za-z0-9+/=]+$/.test(data)) throw new HttpError(400, 'Faqat JPG, PNG yoki WEBP rasm yuklang');
+    if (data.length * 0.75 > MAX_IMAGE_BYTES) throw new HttpError(413, 'Rasm juda katta');
+    return { mediaType, data };
+  });
+  const read = await readImages(images);
+  const orders = (read.orders || []).map((o) => ({ ...o, clientCode: clientCodeOf(o.code) }));
+  const key = receiptKey(read.receipt || ({} as any));
+  const used = key ? await usedReceipt(null, key) : undefined;
+  await audit(null, ctx.user, 'receipt_read', 'receipt', null, {
+    bank: read.receipt?.bank, transactionId: read.receipt?.transactionId, amount: read.receipt?.amount, orders: orders.length,
+  });
+  return {
+    receipt: read.receipt,
+    orders,
+    ordersTotal: read.ordersTotal,
+    notes: read.notes,
+    duplicate: used?.active ? { at: used.created_at, by: used.created_by_name } : null,
+  };
+});
+
+route('POST', '/receipts/confirm', 'payments.create', async (ctx) => {
+  const b = ctx.body || {};
+  const r = b.receipt || {};
+  const receipt = {
+    bank: str(r.bank, 60), transactionId: str(r.transactionId, 60), amount: Number(r.amount),
+    paidAt: str(r.paidAt, 20), sender: str(r.sender, 80), senderCard: str(r.senderCard, 40),
+    recipient: str(r.recipient, 80), recipientCard: str(r.recipientCard, 40),
+  };
+  const method = CARD_ONLY.includes(b.method) ? b.method : 'card';
+  if (!Number.isInteger(receipt.amount) || receipt.amount <= 0 || receipt.amount > 10_000_000_000) throw new HttpError(400, 'Chek summasini tekshiring');
+  const rows = Array.isArray(b.orders) ? b.orders : [];
+  if (!rows.length || rows.length > 30) throw new HttpError(400, 'Kamida bitta buyurtma tanlang');
+  const orders = rows.map((o: any) => ({
+    clientCode: str(o.clientCode, 40).toUpperCase(), clientName: str(o.clientName, 80), code: str(o.code, 40),
+    orderNo: str(o.orderNo, 30), transport: str(o.transport, 20), amount: Number(o.amount),
+  }));
+  for (const o of orders) {
+    if (!/^[A-Z0-9-]{1,40}$/.test(o.clientCode)) throw new HttpError(400, `Mijoz ID notoʻgʻri: ${o.clientCode || 'boʻsh'}`);
+    if (!Number.isInteger(o.amount) || o.amount <= 0) throw new HttpError(400, `Buyurtma summasi notoʻgʻri (${o.code || o.clientCode})`);
+  }
+  const ordersSum = orders.reduce((s: number, o: { amount: number }) => s + o.amount, 0);
+  if (ordersSum !== receipt.amount) {
+    throw new HttpError(400, `Chek summasi (${som(receipt.amount)}) buyurtmalar jamiga (${som(ordersSum)}) teng emas`);
+  }
+  const key = receiptKey(receipt);
+  if (!key) throw new HttpError(400, 'Chekda tranzaksiya raqami yoki sana-vaqt boʻlishi kerak');
+
+  // The time printed on the receipt, if this person may enter past dates; otherwise now.
+  let paidAt: string | null = null;
+  const t = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(receipt.paidAt) ? Date.parse(`${receipt.paidAt}:00+05:00`) : NaN;
+  if (Number.isFinite(t) && t <= Date.now() + 5 * 60_000 && ctx.user!.permissions.includes('payments.backdate')) paidAt = new Date(t).toISOString();
+
+  const byClient = new Map<string, typeof orders>();
+  for (const o of orders) byClient.set(o.clientCode, [...(byClient.get(o.clientCode) || []), o]);
+  const head = `Chek${receipt.bank ? ` ${receipt.bank}` : ''}${receipt.transactionId ? ` №${receipt.transactionId}` : ''}`;
+
+  const saved = await transaction(async (db) => {
+    const used = await usedReceipt(db, key);
+    if (used?.active) throw new HttpError(409, `Bu chek allaqachon kiritilgan (${used.created_by_name})`);
+    if (used) await db.query(`DELETE FROM receipts WHERE id = $1`, [used.id]);
+    const ids: string[] = [];
+    for (const [clientCode, list] of byClient) {
+      const clientName = list.find((o: { clientName: string }) => o.clientName)?.clientName || '';
+      const amount = list.reduce((s: number, o: { amount: number }) => s + o.amount, 0);
+      const parts = list.map((o: { orderNo: string; transport: string; code: string }) =>
+        [o.orderNo && `№${o.orderNo}`, o.transport, o.code && o.code !== clientCode ? o.code : ''].filter(Boolean).join(' '));
+      const note = `${head} · Buyurtma: ${parts.join(', ')}`.slice(0, 500);
+      await db.query(
+        `INSERT INTO clients (code, full_name) VALUES ($1, NULLIF($2, ''))
+         ON CONFLICT (code) DO UPDATE SET full_name = COALESCE(clients.full_name, EXCLUDED.full_name)`,
+        [clientCode, clientName],
+      );
+      const inserted = await db.query(
+        `INSERT INTO payments (client_code, client_name, amount, method, note, paid_at, created_by, created_by_name)
+         VALUES ($1, NULLIF($2, ''), $3, $4, $5, COALESCE($6::timestamptz, NOW()), $7, $8) RETURNING id`,
+        [clientCode, clientName, amount, method, note, paidAt, ctx.user!.id, ctx.user!.full_name],
+      );
+      ids.push(inserted.rows[0].id);
+    }
+    const row = await db.query(
+      `INSERT INTO receipts (key, bank, transaction_id, amount, receipt_paid_at, sender, details, payment_ids, created_by, created_by_name)
+       VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), $4, $5, NULLIF($6, ''), $7::jsonb, $8, $9, $10) RETURNING id`,
+      [key, receipt.bank, receipt.transactionId, receipt.amount, Number.isFinite(t) ? new Date(t).toISOString() : null,
+        receipt.sender, JSON.stringify({ receipt, orders, method }), ids, ctx.user!.id, ctx.user!.full_name],
+    );
+    await audit(db, ctx.user, 'receipt_confirm', 'receipt', row.rows[0].id, { key, amount: receipt.amount, payments: ids.length, method });
+    const full = await db.query(
+      `SELECT ${PAYMENT_COLUMNS} FROM payments p LEFT JOIN clients c ON c.code = p.client_code WHERE p.id = ANY($1) ORDER BY p.client_code`,
+      [ids],
+    );
+    return full.rows;
+  });
+  return { status: 201, body: { payments: saved } };
 });
 
 // Admin import of payments from an old Excel report (CSV: sana, id, turi, summa, izoh).

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Banknote, CheckCircle2, ChevronDown, Printer, CreditCard, Loader2, Mail, Navigation, Save, UserCheck, UserPlus } from 'lucide-react';
+import { Banknote, CheckCircle2, ChevronDown, Printer, CreditCard, Loader2, Mail, Navigation, ReceiptText, Save, UserCheck, UserPlus } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useApi, useLive } from '../lib/live';
 import { CARD_METHODS, PAY_GROUPS, cardTotal, dateTime, isCardMethod, groupDigits, methodLabel, money, nowIso, nowMs, timeOf, todayTashkent } from '../lib/format';
 import type { Method, Payment, PaymentList, Summary } from '../lib/types';
 import { PaymentsTable } from '../components/PaymentsTable';
+import { ReceiptImport } from '../components/ReceiptImport';
 import { printPaymentLabel } from '../lib/print';
 import { Alert, Button, Card, CardBreakdown, CardHeader, EmptyState, Field, Input, MethodBadge, Modal, PageHeader, SkeletonRows, Textarea, cx, useToast } from '../components/ui';
 import { can } from '../lib/perms';
@@ -39,6 +40,7 @@ export default function Kassa() {
   const [confirming, setConfirming] = useState(false);
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Payment | null>(null);
+  const [receiptOpen, setReceiptOpen] = useState(false);
   const [autoLabel, setAutoLabel] = useState(() => { try { return localStorage.getItem('lk-auto-label') === '1'; } catch { return false; } });
   const toggleAutoLabel = (on: boolean) => { setAutoLabel(on); try { localStorage.setItem('lk-auto-label', on ? '1' : '0'); } catch { /* ignore */ } };
   const [lookup, setLookup] = useState<{ state: 'idle' | 'loading' | 'found' | 'new'; info?: ClientInfo }>({ state: 'idle' });
@@ -135,7 +137,9 @@ export default function Kassa() {
 
   return (
     <>
-      <PageHeader title="Toʻlov kiritish" subtitle="Saqlangan toʻlov barcha xodimlarga darhol koʻrinadi." />
+      <PageHeader title="Toʻlov kiritish" subtitle="Saqlangan toʻlov barcha xodimlarga darhol koʻrinadi."
+        actions={<Button icon={<ReceiptText className="size-4" />} onClick={() => setReceiptOpen(true)}>Chek orqali</Button>} />
+      <ReceiptImport open={receiptOpen} onClose={() => setReceiptOpen(false)} onSaved={(list) => { if (list.length === 1) setLastSaved(list[0]); bump(); }} />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
         <Card>

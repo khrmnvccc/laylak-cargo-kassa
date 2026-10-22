@@ -9,7 +9,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '8mb' }));
 
 // Local development / self-hosting: the same handler Vercel runs in api/index.ts.
 app.all('/api/*', async (req, res) => {
