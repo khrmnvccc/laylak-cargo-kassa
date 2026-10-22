@@ -686,4 +686,13 @@ export const ENTRIES: Array<[string, string, string]> = [
   ['Telegram bot ulanmagan: Sozlamalar sahifasida ulang. Toʻlov saqlandi', 'Telegram-бот не подключён: подключите в Настройках. Оплата сохранена', 'Telegram 机器人未连接：请在设置中连接。付款已保存'],
   ['Telegram bilan aloqa boʻlmadi. Toʻlov saqlandi, rasmni adminga qoʻlda yuboring', 'Нет связи с Telegram. Оплата сохранена, отправьте фото админу вручную', '无法连接 Telegram。付款已保存，请手动将图片发给管理员'],
   ['Rasmni olib tashlash', 'Убрать фото', '移除图片'],
+  // Telegram group
+  ['Guruh', 'Группа', '群组'],
+  ['Har bir toʻlovning rasmi: naqd yoki karta, summa, mijoz va kim kiritgani.', 'Фото каждой оплаты: наличные или карта, сумма, клиент и кто внёс.', '每笔付款的图片：现金或卡、金额、客户和录入人。'],
+  ['Toʻlov rasmlari va bekor qilingan toʻlovlar bu guruhga ham keladi. Kunlik hisobot va zaxira fayli faqat sizga keladi.', 'Фото оплат и отменённые оплаты приходят и в эту группу. Дневной отчёт и резервная копия — только вам.', '付款图片和已取消的付款也会发到这个群。每日报表和备份只发给您。'],
+  ['Guruhni uzish', 'Отключить группу', '断开群组'],
+  ['Guruhni tekshirish', 'Проверить группу', '检查群组'],
+  ['Toʻlov rasmlari guruhga ham kelsin desangiz: botni guruhga oʻzingiz qoʻshing, keyin “Guruhni tekshirish”ni bosing. Kunlik hisobot va zaxira fayli guruhga bormaydi.', 'Чтобы фото оплат приходили и в группу: сами добавьте бота в группу и нажмите «Проверить группу». Отчёт и резервная копия в группу не уходят.', '如需把付款图片也发到群里：请亲自把机器人加入群，然后点“检查群组”。日报和备份不会发到群里。'],
+  ['Telegram guruhini uladi', 'Подключил группу Telegram', '连接了 Telegram 群组'],
+  ['Telegram guruhini uzdi', 'Отключил группу Telegram', '断开了 Telegram 群组'],
 ];
