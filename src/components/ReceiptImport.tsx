@@ -3,7 +3,7 @@ import { AlertTriangle, ArrowLeft, CheckCircle2, ImagePlus, Loader2, ReceiptText
 import { api } from '../lib/api';
 import { CARD_METHODS, groupDigits, money } from '../lib/format';
 import { readScreenshots } from '../lib/ocr';
-import { clientCodeOf, codeVariants, reconcile, type Order, type Receipt } from '../lib/receiptParse';
+import { clientCodeOf, codeVariants, reconcile, variants, type Order, type Receipt } from '../lib/receiptParse';
 import type { Method, Payment } from '../lib/types';
 import { Alert, Badge, Button, Field, Input, Modal, cx, useToast } from './ui';
 
@@ -72,9 +72,22 @@ export function ReceiptImport({ open, onClose, onSaved }: { open: boolean; onClo
       const res = await readScreenshots(receiptShot.file, orderShots.map((s) => s.file), setStep);
       setStep('Tekshirilmoqda…');
       // Prices that do not add up to the receipt: fix the digits OCR most often mixes up.
-      const target = res.receipt.amount ?? res.ordersTotal;
       const read = res.orders.map((o) => o.amount ?? 0);
-      const fixed = target ? reconcile(read, target) : null;
+      let fixed = res.receipt.amount ? reconcile(read, res.receipt.amount) : null;
+      // The receipt's own sum misread by a digit (a photo of a phone, a stylised "3"): when the
+      // orders agree on a sum one OCR slip away from it, that sum is the one paid.
+      let receiptFixed = false;
+      if (!fixed && res.receipt.amount && read.length) {
+        const near = new Set(variants(res.receipt.amount, 1).map((v) => v.value));
+        const sum = read.reduce((s, a) => s + a, 0);
+        const agreed = near.has(sum) ? sum : res.ordersTotal && near.has(res.ordersTotal) ? res.ordersTotal : null;
+        if (agreed && agreed !== res.receipt.amount) {
+          res.receipt.amount = agreed;
+          receiptFixed = true;
+          fixed = reconcile(read, agreed);
+        }
+      }
+      if (!res.receipt.amount && res.ordersTotal) fixed = reconcile(read, res.ordersTotal);
       // Client IDs: of every way an ID was read (and its look-alikes), which is a real client.
       const options = res.orders.map((o, i) => {
         const seen = [o.code, ...(res.codeReadings[i] || [])].map(clientCodeOf).filter(Boolean);
@@ -93,6 +106,7 @@ export function ReceiptImport({ open, onClose, onSaved }: { open: boolean; onClo
         return { ...o, on: true, clientCode, codeFixed: Boolean(seen[0] && clientCode !== seen[0]), amount, amountFixed: Boolean(fixed && fixed[i] !== o.amount), amountText: amount ? groupDigits(amount) : '' };
       });
       const notes = !res.receipt.amount ? 'Chekdagi summa topilmadi, uni qoʻlda kiriting.'
+        : receiptFixed ? 'Chekdagi summa buyurtmalarga qarab tuzatildi. Chek rasmi bilan solishtiring.'
         : !rows.length ? null
         : fixed == null && read.reduce((s, a) => s + a, 0) !== res.receipt.amount ? 'Buyurtma summalari chekka mos kelmadi. Rasmga qarab toʻgʻrilang.'
         : null;
@@ -194,8 +208,10 @@ export function ReceiptImport({ open, onClose, onSaved }: { open: boolean; onClo
                 <Field label="Tranzaksiya raqami" htmlFor="rc-txn">
                   <Input id="rc-txn" className="num" value={receipt.transactionId || ''} onChange={(e) => setReceipt({ ...receipt, transactionId: e.target.value })} />
                 </Field>
-                <Field label="Sana va vaqt" htmlFor="rc-at">
-                  <Input id="rc-at" type="datetime-local" value={receipt.paidAt || ''} onChange={(e) => setReceipt({ ...receipt, paidAt: e.target.value })} />
+                <Field label="Sana va vaqt" htmlFor="rc-at"
+                  hint={!receipt.paidAt ? 'Chekda sana topilmadi' : !receipt.paidAt.includes('T') ? 'Chekda vaqt koʻrsatilmagan' : undefined}>
+                  <Input id="rc-at" type={receipt.paidAt && !receipt.paidAt.includes('T') ? 'date' : 'datetime-local'} value={receipt.paidAt || ''}
+                    onChange={(e) => setReceipt({ ...receipt, paidAt: e.target.value })} />
                 </Field>
               </div>
               <dl className="mt-3 grid gap-x-4 gap-y-1 text-[13px] sm:grid-cols-2">
