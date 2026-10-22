@@ -632,4 +632,10 @@ export const ENTRIES: Array<[string, string, string]> = [
   ['Oʻzingizda yoʻq ruxsatni boshqaga bera olmaysiz', 'Нельзя выдать право, которого нет у вас', '不能授予您自己没有的权限'],
   ['Tizimda kamida bitta faol Ega qolishi kerak', 'В системе должен остаться хотя бы один активный владелец', '系统中至少要保留一名活跃的所有者'],
   ['O‘z akkauntingizning rolini yoki faolligini o‘zgartira olmaysiz', 'Нельзя менять роль или активность своего аккаунта', '不能更改自己账户的角色或状态'],
+  ['Ilovani oʻrnating', 'Установите приложение', '安装应用'],
+  ['Pastdagi', 'Нажмите внизу кнопку', '点击底部的'],
+  ['“Ulashish” tugmasini bosing, keyin', '«Поделиться», затем', '“分享”按钮，然后选择'],
+  ['“Bosh ekranga qoʻshish”ni tanlang.', 'выберите «На экран “Домой”».', '“添加到主屏幕”。'],
+  ['Kassa telefoningiz yoki kompyuteringizda alohida ilova boʻlib ochiladi.', 'Касса откроется отдельным приложением на телефоне или компьютере.', '收银系统将在手机或电脑上作为独立应用打开。'],
+  ['Oʻrnatish', 'Установить', '安装'],
 ];

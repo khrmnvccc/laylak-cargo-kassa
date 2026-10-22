@@ -8,6 +8,7 @@ import { useTheme } from './lib/theme';
 import { canSee, homePage } from './lib/perms';
 import type { User } from './lib/types';
 import { Layout } from './components/Layout';
+import { InstallPrompt } from './components/InstallPrompt';
 import { ErrorState, ToastProvider } from './components/ui';
 import { LoginPage } from './pages/Login';
 
@@ -84,6 +85,7 @@ export default function App() {
     return (
       <ToastProvider>
         <LoginPage needsSetup={boot.needsSetup} setupKeyConfigured={boot.setupKeyConfigured} onAuthenticated={(user) => setBoot({ state: 'ready', user })} />
+        <InstallPrompt top />
       </ToastProvider>
     );
   }
@@ -103,6 +105,7 @@ export default function App() {
               </div>
             </Suspense>
           </Layout>
+          <InstallPrompt />
         </LiveProvider>
       </ToastProvider>
     </AuthContext.Provider>

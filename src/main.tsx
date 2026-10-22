@@ -2,6 +2,9 @@ import { createRoot } from 'react-dom/client';
 import App from './App';
 import './index.css';
 import { LANG } from './lib/i18n';
+import { registerServiceWorker } from './components/InstallPrompt';
+
+registerServiceWorker();
 
 // Initialize Telegram Mini App if launched inside Telegram.
 const tg = (window as any).Telegram?.WebApp;
