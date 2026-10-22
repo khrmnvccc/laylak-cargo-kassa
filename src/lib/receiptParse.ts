@@ -8,7 +8,6 @@ export interface Receipt {
 export interface Order { clientName: string | null; code: string | null; orderNo: string | null; transport: string | null; weight: string | null; amount: number | null }
 
 const NUM = /(\d{1,3}(?:[   ]\d{3})+|\d+)(?:[.,](\d{1,2}))?/;
-const NUM_G = new RegExp(NUM.source, 'g');
 
 /** "44 600" -> 44600, "200,7" -> 200.7, "44 800,7" -> 44800.7 */
 export function parseNumber(s: string): number | null {
@@ -18,23 +17,37 @@ export function parseNumber(s: string): number | null {
   return m[2] ? Number(`${whole}.${m[2]}`) : whole;
 }
 
+// Payment apps first: the app is what the receipt looks like; a bank name may only be the sender's card.
 const BANKS: Array<[RegExp, string]> = [
-  [/\balif\b/i, 'Alif'], [/\bclick\b/i, 'Click'], [/\bpayme\b/i, 'Payme'], [/\buzum\b/i, 'Uzum'], [/kapital/i, 'Kapitalbank'],
-  [/\banor\b/i, 'Anorbank'], [/\btbc\b/i, 'TBC'], [/hamkor/i, 'Hamkorbank'], [/ipak\s*yo/i, 'Ipak Yoʻli'], [/aloqa/i, 'Aloqabank'],
-  [/xalq|халк/i, 'Xalq banki'], [/\bpaynet\b/i, 'Paynet'], [/\boson\b/i, 'Oson'], [/\bapelsin\b/i, 'Apelsin'], [/agrobank/i, 'Agrobank'],
-  [/asaka/i, 'Asakabank'], [/infin/i, 'InFinBank'], [/davr/i, 'Davr bank'], [/trastbank|трастбанк/i, 'Trastbank'], [/milliy|nbu|нбу/i, 'Milliy bank'],
+  [/paym/i, 'Payme'], [/click/i, 'Click'], [/uzum/i, 'Uzum'], [/paynet/i, 'Paynet'], [/zoomrad/i, 'Zoomrad'], [/\balif\b/i, 'Alif'],
+  [/ipak\s*yu?o?.?li/i, 'Ipak Yoʻli'], [/apelsin/i, 'Apelsin'], [/\boson\b/i, 'Oson'], [/\banor\b/i, 'Anorbank'], [/\btbc\b/i, 'TBC'],
+  [/hamkor/i, 'Hamkorbank'], [/kapital/i, 'Kapitalbank'], [/aloqa/i, 'Aloqabank'], [/xalq|халк/i, 'Xalq banki'], [/agrobank/i, 'Agrobank'],
+  [/asaka/i, 'Asakabank'], [/infin/i, 'InFinBank'], [/davr\s*bank/i, 'Davr bank'], [/trastbank|трастбанк/i, 'Trastbank'],
+  [/milliy|\bnbu\b|нбу/i, 'Milliy bank'],
 ];
 
+// OCR reads Uzbek "q" as "g" and "ʻ" as anything, so labels are matched loosely.
 const KEY = {
-  amount: /(сумма|summa|miqdor|amount|сумма перевода|o.?tkazma)/i,
-  commission: /(комисс|komissiya|commission|xizmat haqi)/i,
-  total: /(итого|jami|всего|total|umumiy|списано|yechildi)/i,
-  txn: /(транзакц|tranzaksiya|transaction|операц|operatsiya|номер чека|chek raqami|check|receipt|kvitansiya|квитанц|\bid\b|\brrn\b)/i,
-  sender: /(отправител|авитель|yuboruvchi|jo.?natuvchi|sender|откуда|qayerdan|плательщик|to.?lovchi)/i,
-  recipient: /(получател|учатель|qabul qiluvchi|oluvchi|recipient|куда|qayerga|beneficiary)/i,
-  status: /(исполнено|успешно|выполнен|muvaffaqiyatli|bajarildi|amalga oshirildi|success|o.?tkazildi)/i,
+  // The sum that reaches the recipient, without the bank's fee.
+  received: /(qabul [qg]ilinadigan|tushum|yuborilgan|получателю|зачисл|к зачислению|o.?tkazma summasi|перевод[а]? сумма|сумма перевода)/i,
+  amount: /(сумма|summa|miqdor|amount)/i,
+  commission: /(комисс|komissiya|commission|xizmat haqi|стоимость услуги|xizmat narxi)/i,
+  total: /(итого|jami|всего|total|umumiy|списано|yechil|списан)/i,
+  txn: /(транзакц|tranzaksiya|transaction|номер операции|operatsiya raqami|номер чека|chek raqami|kvitansiya|квитанция|\bid\b|\brrn\b|o.?tkazma ra[qg]ami)/i,
+  date: /(sana|дата|date|vaqt|время|time)/i,
+  sender: /(отправител|авител|yuboruvchi|jo.?natuvchi|sender|kartadan|плательщик|to.?lovchi|\bmijoz\b|^карта:?$|^karta:?$)/i,
+  recipient: /(получател|[qg]abul [qg]iluvchi|oluvchi|recipient|kartaga|beneficiary)/i,
+  status: /(исполнено|успешно|выполнена?|оплачено|проведен|muvaffa[qg]iyatli|bajarildi|amalga oshirildi|to.?landi|o.?tkazildi|tayyor|success)/i,
 };
-const CARD = /(uzcard|humo|visa|master\s*card|mc)?[\s:]*(?:\d{4}\s*)?[*•·.xх]{2,}\s*(\d{4})/i;
+const MONTHS: Array<[RegExp, number]> = [
+  [/^(yan|янв|jan)/i, 1], [/^(fev|фев|feb)/i, 2], [/^(mar|мар)/i, 3], [/^(apr|апр)/i, 4], [/^(may|мая|май)/i, 5], [/^(iyun|июн|jun)/i, 6],
+  [/^(iyul|июл|jul)/i, 7], [/^(avg|авг|aug)/i, 8], [/^(sen|сен|sep)/i, 9], [/^(okt|окт|oct)/i, 10], [/^(noy|ноя|nov)/i, 11], [/^(dek|дек|dec)/i, 12],
+];
+// A masked card: "561468******4096", "5614 68** **** 4096", "**** 6733", "•••• 9072" (OCR may turn the dots into dashes).
+const CARD = /(uzcard|humo|visa|master\s*card|mc)?[\s:]*(?:\d{4}\s?\d{0,2})?[*•·xх"'+\-]{2,}[\s*•·xх"'+\-]*(\d{4})\b/i;
+// A sum: "460 200", "44 800,7", "557 600.00" (not a fragment of a card number like "561 468****").
+const MONEY = /(?<![\d*])(\d{1,3}(?:[   ]\d{3})+|\d{4,9})(?:[.,](\d{1,2}))?(?![\d*•])/g;
+const CURRENCY = /(сум|so.?m|uzs|сўм|\bсм\b|soʻm)/i;
 
 function cardOf(line: string): string | null {
   const m = line.match(CARD);
@@ -49,6 +62,51 @@ function cleanName(s: string): string | null {
   while (words.length && /^[-.'ʻʼ]+$/.test(words[words.length - 1])) words.pop();
   return words.join(' ') || null;
 }
+function moneyIn(s: string): number | null {
+  for (const m of s.matchAll(MONEY)) {
+    const whole = Number(m[1].replace(/\D/g, ''));
+    return m[2] ? Number(`${whole}.${m[2]}`) : whole;
+  }
+  return null;
+}
+/** A small amount such as a fee: "770.00", "5 062,20", "225" (from "225 0275", where OCR glued "UZS" on). */
+function feeIn(s: string): number | null {
+  const m = s.match(/(?<![\d*])(\d{1,3}(?:[ \u00a0\u202f]\d{3}(?!\d))+|\d{1,7}(?!\d))(?:[.,](\d{1,2}))?/);
+  if (!m) return null;
+  const whole = Number(m[1].replace(/\D/g, ''));
+  return m[2] ? Number(`${whole}.${m[2]}`) : whole;
+}
+const pad = (n: number | string) => String(n).padStart(2, '0');
+
+/** Date and time in any of the forms the apps print. Time only from the same place, never the phone's clock. */
+function findDate(lines: string[]): string | null {
+  const year = new Date().getFullYear();
+  const timeNear = (s: string) => s.match(/\b(\d{1,2}):(\d{2})(?::\d{2})?\b/);
+  for (const [i, line] of lines.entries()) {
+    const next = lines[i + 1] || '';
+    let y: number | null = null, mo: number | null = null, d: number | null = null, rest = '';
+    let m = line.match(/\b(\d{2})[./](\d{2})[./](\d{4})(.*)/);
+    if (m) { d = +m[1]; mo = +m[2]; y = +m[3]; rest = m[4]; }
+    if (!m && (m = line.match(/\b(20\d{2})-(\d{2})-?(\d{2})(.*)/))) { y = +m[1]; mo = +m[2]; d = +m[3]; rest = m[4]; }
+    if (!m && (m = line.match(/\b(\d{1,2})\s+([A-Za-zА-Яа-яЁё]{3,})\.?,?\s*(20\d{2})?(.*)/))) {
+      const month = MONTHS.find(([re]) => re.test(m![2]))?.[1];
+      if (month) { d = +m[1]; mo = month; y = m[3] ? +m[3] : year; rest = m[4]; } else m = null;
+    }
+    // A phone photo can glue it all together: "201020261213" after a date label.
+    if (!m && (m = line.match(/\b(\d{2})(\d{2})(20\d{2})(\d{2})(\d{2})\b/))) {
+      d = +m[1]; mo = +m[2]; y = +m[3]; rest = `${m[4]}:${m[5]}`;
+    }
+    if (!m || !y || !mo || !d || mo > 12 || d > 31) continue;
+    let t = timeNear(rest);
+    if (!t) {
+      // "To'lov vaqti 17:07:50" or a time on the next line.
+      const timeLine = lines.find((l) => /(vaqt|время|time)/i.test(l) && timeNear(l));
+      t = timeLine ? timeNear(timeLine) : /^\s*\d{1,2}:\d{2}(:\d{2})?\s*$/.test(next) ? timeNear(next) : null;
+    }
+    return `${y}-${pad(mo)}-${pad(d)}${t ? `T${pad(t[1])}:${t[2]}` : ''}`;
+  }
+  return null;
+}
 
 export function parseReceipt(text: string): Receipt {
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
@@ -56,38 +114,71 @@ export function parseReceipt(text: string): Receipt {
   r.bank = BANKS.find(([re]) => re.test(text))?.[1] ?? null;
   const st = text.match(KEY.status);
   if (st) r.status = st[0][0].toUpperCase() + st[0].slice(1).toLowerCase();
+  r.paidAt = findDate(lines);
 
-  const d = text.match(/(\d{2})[./-](\d{2})[./-](\d{4})[\s,г.]*(?:(\d{1,2}):(\d{2}))?/);
-  if (d) {
-    const time = d[4] ? `${d[4].padStart(2, '0')}:${d[5]}` : (text.match(/\b(\d{1,2}):(\d{2})\b/)?.slice(1, 3).map((x) => x.padStart(2, '0')).join(':') ?? '00:00');
-    r.paidAt = `${d[3]}-${d[2]}-${d[1]}T${time}`;
-  }
-
+  let received: number | null = null;
+  // A label's value is on the same line ("Summa 500 000 so'm") or right under it ("Summa" / "49 200,00 UZS").
+  const valueOf = (i: number, re: RegExp, read = moneyIn) => read(after(lines[i], re)) ?? (KEY.amount.test(lines[i + 1] || '') ? null : read(lines[i + 1] || ''));
   lines.forEach((line, i) => {
     const next = lines[i + 1] || '';
-    if (KEY.commission.test(line)) r.commission ??= parseNumber(after(line, KEY.commission));
-    else if (KEY.total.test(line)) r.total ??= parseNumber(after(line, KEY.total));
-    else if (KEY.amount.test(line)) r.amount ??= parseNumber(after(line, KEY.amount)) ?? parseNumber(next);
-    if (KEY.txn.test(line) && !r.transactionId) {
-      const tokens = `${after(line, KEY.txn)} ${KEY.txn.test(next) ? '' : next}`.match(/[0-9A-Z]{6,}/g)?.filter((t) => /\d{4}/.test(t));
+    if (KEY.commission.test(line)) r.commission ??= valueOf(i, KEY.commission, feeIn);
+    else if (KEY.total.test(line)) r.total ??= valueOf(i, KEY.total);
+    else if (KEY.received.test(line)) received ??= valueOf(i, KEY.received);
+    else if (KEY.amount.test(line)) r.amount ??= valueOf(i, KEY.amount);
+    if (KEY.txn.test(line) && !KEY.date.test(line) && !r.transactionId) {
+      const tokens = `${after(line, KEY.txn)} ${KEY.txn.test(next) || KEY.date.test(next) ? '' : next}`
+        .match(/[0-9A-Za-z][0-9A-Za-z-]{5,}/g)?.filter((t) => (t.match(/\d/g) || []).length >= 4 && !/^\d{1,2}[-]?\d{1,2}$/.test(t));
       if (tokens?.length) r.transactionId = tokens[0];
     }
-    if (KEY.sender.test(line) && !r.sender) {
-      r.sender = cleanName(after(line, KEY.sender));
-      r.senderCard = cardOf(line) ?? cardOf(next);
+    if (KEY.sender.test(line) && !KEY.recipient.test(line)) {
+      // The name: on the label's line ("Отправитель Akbarova I."), or under a name label ("Yuboruvchining ismi" / "GULNORA S.").
+      const own = cleanName(after(line, KEY.sender).replace(/^(ning )?ismi/i, ''));
+      if (own && !/^(ning|ismi)$/i.test(own)) r.sender ??= own;
+      else if (/(ism|имя)/i.test(line) && !cardOf(next)) r.sender ??= cleanName(next);
+      r.senderCard ??= cardOf(line) ?? cardOf(next);
     }
-    if (KEY.recipient.test(line) && !r.recipient) {
-      r.recipient = cleanName(after(line, KEY.recipient));
-      r.recipientCard = cardOf(line) ?? cardOf(next);
+    if (KEY.recipient.test(line)) {
+      r.recipient ??= cleanName(after(line, KEY.recipient).replace(/^(ning )?ismi|^f\.?i\.?sh/i, ''));
+      r.recipientCard ??= cardOf(line) ?? cardOf(next);
     }
   });
-  if (r.amount != null) r.amount = Math.round(r.amount);
-  // Receipts that print one sum only (no "Сумма" line): take the largest sum written with a currency.
+  if (received != null) r.amount = received;
+  // The sender's card when its label landed apart from it (Payme): the card that is not the recipient's.
+  if (!r.senderCard && r.recipientCard) {
+    const cards = lines.map(cardOf).filter((c): c is string => Boolean(c));
+    r.senderCard = cards.find((c) => c.slice(-4) !== r.recipientCard?.slice(-4)) ?? null;
+  }
+
+  // No labelled sum: the largest sum on the receipt, leaving out the fee and the total charged.
+  let guessed = false;
   if (r.amount == null) {
-    const sums = lines.filter((l) => /(сум|so.?m|uzs|сўм)/i.test(l) && !KEY.commission.test(l)).map(parseNumber).filter((n): n is number => n != null && n >= 100);
-    if (sums.length) r.amount = Math.round(Math.max(...sums));
+    const sums: number[] = [];
+    lines.forEach((line) => {
+      if (KEY.commission.test(line) || KEY.total.test(line) || CARD.test(line) || /(\+998|tel|тел)/i.test(line)) return;
+      for (const m of line.matchAll(MONEY)) {
+        const grouped = /\s/.test(m[1]);
+        if (!grouped && !CURRENCY.test(line)) continue;
+        sums.push(Number(m[1].replace(/\D/g, '')));
+      }
+    });
+    const big = sums.filter((n) => n >= 1000);
+    if (big.length) { r.amount = Math.max(...big); guessed = true; }
+  }
+  if (r.amount != null) r.amount = Math.round(r.amount);
+  // Some apps (Payme) print the sum with the fee included: 385 191 = 381 000 + 4 191.
+  if (r.amount && r.commission && guessed && r.amount % 100 !== 0 && Math.round(r.amount - r.commission) % 100 === 0) {
+    r.total ??= r.amount;
+    r.amount = Math.round(r.amount - r.commission);
   }
   return r;
+}
+
+/** Fill what one reading missed from another reading of the same receipt. */
+export function mergeReceipts(a: Receipt, b: Receipt): Receipt {
+  const out = { ...a };
+  for (const k of Object.keys(out) as Array<keyof Receipt>) if (out[k] == null) (out as any)[k] = b[k];
+  if (a.paidAt && b.paidAt && !a.paidAt.includes('T') && b.paidAt.startsWith(a.paidAt)) out.paidAt = b.paidAt;
+  return out;
 }
 
 // ---------- orders screen ----------

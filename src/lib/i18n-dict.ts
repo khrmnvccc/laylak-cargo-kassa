@@ -672,4 +672,8 @@ export const ENTRIES: Array<[string, string, string]> = [
   ['Hisobotga qoʻshish', 'Добавить в отчёт', '加入报表'],
   ['Orqaga', 'Назад', '返回'],
   ['Chek hisobotga qoʻshildi', 'Чек добавлен в отчёт', '收据已加入报表'],
+  ['Chek yana bir bor oʻqilmoqda…', 'Чек распознаётся ещё раз…', '正在再次识别收据…'],
+  ['Chekdagi summa buyurtmalarga qarab tuzatildi. Chek rasmi bilan solishtiring.', 'Сумма чека исправлена по заказам. Сверьте с фото чека.', '已根据订单修正收据金额，请与收据图片核对。'],
+  ['Chekda sana topilmadi', 'Дата в чеке не найдена', '收据中未找到日期'],
+  ['Chekda vaqt koʻrsatilmagan', 'В чеке нет времени', '收据中没有时间'],
 ];

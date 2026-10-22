@@ -583,6 +583,38 @@ test('receipt reading: OCR text becomes fields, misread digits are fixed by the 
   assert.ok(voted.codeReadings[0].map(clientCodeOf).includes('102315'));
 });
 
+// OCR output of receipts from different apps (names and sender cards changed).
+const BANK_RECEIPTS: Array<[string, string, Partial<Record<'amount' | 'transactionId' | 'paidAt' | 'senderCard' | 'commission', unknown>>]> = [
+  ['Click', `17:15 wll = ©\nO'tkazma amalga oshirildi\n21 okt 17:15\nI\n460 200 so'm\nKomissiya: 5 062,20 so'm\nIS AINIWAER A. X.\nOclick 561468****4096`,
+    { amount: 460200, commission: 5062.2, paidAt: '2026-10-21T17:15', transactionId: null }],
+  ['Uzum', `13:57 Uzum Bank all = [47]\nSana\n21.10.2026 13:57\nYuborilgan\n106 200 so'm\nKomissiya\n955,8 so'm\nPul yechildi\n107 155,8 so'm\nYuboruvchi\nSevara Aliyeva ---- 1111\nQabul giluvehi\nAiniwaer Aierpati Xxx ---- 4096\nE Kvitansiya\nEl Fiskal chek`,
+    { amount: 106200, paidAt: '2026-10-21T13:57', senderCard: '**1111' }],
+  ['Ipak', `18:19 wl @ 0)\nIpak Yuli Mobile ©)\nSana 20.10.2026\nKartadan VISA **** 2222\nKartaga Ш ****4096\nQabul giluvchi AINIWAER A.X.\nYechiladigan summa 30 225 075\nQabul gilinadigan summa 30 000 UzZs\nKomissiya summasi 225 0275\nJami 30 225 UZS`,
+    { amount: 30000, commission: 225, paidAt: '2026-10-20', senderCard: 'VISA**2222' }],
+  ['Payme', `19:23 ® и all = ED\nNBU\n385 191 сум\nv/ Оплачено\n18.10.2026 19:23\nКарта получателя: 561468******4096\nПолучатель: Aierpati A. X.\nСтоимость услуги: 4 191.00 сум\nк U **** 3333\nарта: :\nKapital bank`,
+    { amount: 381000, commission: 4191, paidAt: '2026-10-18T19:23', senderCard: '**3333' }],
+  ['NBU', `KVITANSIYA PP2629256DZF Mm\n2026-1020\n17:07:50\nVALIYEV ANVAR | 4.5. gion ye —\n$ а 561468*+++***12 . 561 468******+*96\nraed 20.10.2026 17:07 MUVAFFAQIYATLITOLANDI : 3 tegobuse 7 НО\nКЕКС 557 600.00 см meas iE`,
+    { amount: 557600, transactionId: 'PP2629256DZF', paidAt: '2026-10-20T17:07' }],
+  ['Kapital', `14:28 4 all = ©2\n20 октября, 2026\n(s На сумовые карты\n232 200 сум\nПолучатель: AINIWAER А1ЕВРАТ| XXX`, { amount: 232200, paidAt: '2026-10-20' }],
+  ['Hamkor', `O'tkazma\nMuvaffagiyatli\nYuboruvchining ismi\nGULNORA S.\nYuboruvchi\n5614 68** **** 4444\nQabul giluvchining ismi\nAINIWAER AIERPATI X.\nQabul giluvchi\n5614 68** **** 4096\nTushum summasi\n280 000 UZS\nKomissiya\n2 800 UZS\nTranzaksiya sanasi\n20.10.2026 11:48\nTranzaksiya ragami О\n1e47a8d5-1400-4b1d-b672-123ce40a7404 Е`,
+    { amount: 280000, commission: 2800, paidAt: '2026-10-20T11:48', senderCard: '**4444', transactionId: '1e47a8d5-1400-4b1d-b672-123ce40a7404' }],
+  ['Paynet', `294 000 сум\n20 октября 2026 г. 10:58\n@ Операция выполнена\nИмя получателя Ainiwaer Aierpati Xxx\nНомер транзакции 100933041850\nКомиссия О сум\nСумма 294 000 сум\nПолучателю зачислится 294 000 сум`,
+    { amount: 294000, paidAt: '2026-10-20T10:58', transactionId: '100933041850' }],
+  ['Zoomrad', `Qabul giluvchi AINIWAER A X\nKartaga 5614 68** **** 4096\nKartadan 5614 68** **** 5555\nVaqt 2026-10-19 17:19\nID tranzaksiya 032137420854\nMerchant 903100000038004\nTerminal 97015508\nKomissiya 2500\nSumma 500 000 so'm`,
+    { amount: 500000, commission: 2500, paidAt: '2026-10-19T17:19', senderCard: '**5555', transactionId: '032137420854' }],
+  ['Anor', `Muvaffaqiyatli to'lov\nServis\nUzcard kartalari o‘rtasida o‘tkazma\nQabul giluvchi F.I.SH\nAIERPATI A.\nQabul giluvchi\n56146819****4096\nSumma\n49 200,00 UZS`, { amount: 49200, paidAt: null }],
+  ['Uzum short', `15:21 # Uzum Bank Wo! LTE (97 |\nTayyor\nO'tkazildi\n94 400 so'm\nAiniwaer Aierpati Xxx\nо 4096\nxaridlarga 7% kesh че ’ 30k`, { amount: 94400, paidAt: null }],
+  ['Photo', `| 201020261213 ;\n3 Имя получателя :\nAINIWAER АТЕВРАТТ XXX а\n- Ч Имя отправителя |\n- 1 Отправитель :\n491699"*****6666`, { paidAt: '2026-10-20T12:13', senderCard: '**6666' }],
+];
+
+test('receipt reading: every bank app layout gives the sum, number, date and card', async () => {
+  const { parseReceipt } = await import('../src/lib/receiptParse.js');
+  for (const [bank, text, want] of BANK_RECEIPTS) {
+    const r = parseReceipt(text) as unknown as Record<string, unknown>;
+    for (const [k, v] of Object.entries(want)) assert.deepEqual(r[k], v, `${bank}: ${k}`);
+  }
+});
+
 test('receipts: checked receipt becomes card payments, once', async () => {
   const receipt = { bank: 'Alif', transactionId: '477924487', amount: 44600, paidAt: '2026-10-22T13:22', sender: 'Karimova I.', senderCard: 'UZCARD**4168' };
   const orders = [

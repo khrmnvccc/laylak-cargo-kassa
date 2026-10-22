@@ -1,5 +1,5 @@
 import type { Worker } from 'tesseract.js';
-import { parseOrders, parseReceipt, voteOrders, type Order, type Receipt } from './receiptParse';
+import { mergeReceipts, parseOrders, parseReceipt, voteOrders, type Order, type Receipt } from './receiptParse';
 
 // Free receipt reading on the cashier's own device (tesseract.js). Engine and language files are
 // served from /ocr on our own site (see vite.config.ts); the first use downloads about 10 MB,
@@ -42,7 +42,7 @@ function loadImage(file: Blob): Promise<HTMLImageElement> {
 }
 
 /** Grey, enlarged copy; `contrast` pushes light greys to white and dark to black. */
-function prepare(img: HTMLImageElement, width: number, contrast = 1): HTMLCanvasElement {
+function prepare(img: HTMLImageElement, width: number, contrast = 1, flip = false): HTMLCanvasElement {
   const scale = Math.min(4, Math.max(1, width / img.naturalWidth));
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(img.naturalWidth * scale);
@@ -57,7 +57,8 @@ function prepare(img: HTMLImageElement, width: number, contrast = 1): HTMLCanvas
   // Dark-mode screenshots (light text on dark) read better inverted.
   let sum = 0;
   for (let i = 0; i < px.length; i += 40) sum += px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114;
-  const invert = sum / (px.length / 40) < 110;
+  // `flip` reads it the other way round: for screens that mix light and dark panels.
+  const invert = (sum / (px.length / 40) < 110) !== flip;
   for (let i = 0; i < px.length; i += 4) {
     let g = px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114;
     if (invert) g = 255 - g;
@@ -77,8 +78,23 @@ export async function readScreenshots(receiptFile: Blob, orderFiles: Blob[], onS
 
   onStep('Chek oʻqilmoqda…');
   const rImg = await loadImage(receiptFile);
-  const receiptText = (await worker.recognize(prepare(rImg, 1100))).data.text;
-  const receipt = parseReceipt(receiptText);
+  let receipt = parseReceipt((await worker.recognize(prepare(rImg, 1100))).data.text);
+  // Photos of a phone and small PDFs read better larger and with more contrast: a second look
+  // fills in what the first one missed.
+  if (receipt.amount == null || receipt.paidAt == null || !receipt.paidAt.includes('T')) {
+    onStep('Chek yana bir bor oʻqilmoqda…');
+    const again = parseReceipt((await worker.recognize(prepare(rImg, Math.min(2400, rImg.naturalWidth * 2)))).data.text);
+    receipt = mergeReceipts(receipt, again);
+  }
+  // Still no sum (a photo with light text on a coloured panel): look for scattered text instead
+  // of a page, the other way round too.
+  for (const flip of [false, true]) {
+    if (receipt.amount != null) break;
+    await worker.setParameters({ tessedit_pageseg_mode: '11' as any });
+    const sparse = parseReceipt((await worker.recognize(prepare(rImg, rImg.naturalWidth * 1.5, 1, flip))).data.text);
+    await worker.setParameters({ tessedit_pageseg_mode: '6' as any });
+    receipt = mergeReceipts(receipt, sparse);
+  }
 
   // Order tables are wide with small print: each one is read at a few sizes and contrasts,
   // and every field keeps what most readings agree on.
