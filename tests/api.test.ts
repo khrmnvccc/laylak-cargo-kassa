@@ -477,11 +477,12 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     const body = init.body instanceof FormData ? Object.fromEntries(init.body.entries()) : JSON.parse(init.body);
     sent.push({ method, body });
     const result = method === 'getMe' ? { username: 'laylak_test_bot' }
-      : method === 'getUpdates' ? [{ message: { text: `/start ${codeSeen}`, chat: { id: 777, type: 'private', first_name: 'Ega' } } }]
+      : method === 'getUpdates' ? [{ message: { text: `/start ${codeSeen}`, chat: { id: 777, type: 'private', first_name: 'Ega' } } }, ...groupUpdates]
       : true;
     return new Response(JSON.stringify({ ok: true, result }), { status: 200 });
   }) as typeof fetch;
   let codeSeen = '';
+  const groupUpdates: any[] = [];
   try {
     const owner = new Client();
     assert.equal((await owner.call('POST', '/auth/login', { username: 'admin', password: 'password123' })).status, 200);
@@ -502,6 +503,22 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     assert.ok(!JSON.stringify(check.body).includes(token), 'token never goes back to the browser');
     assert.ok(!JSON.stringify((await owner.call('GET', '/system')).body).includes(token));
 
+    // A group: only one the owner added the bot to counts; a group that became a supergroup keeps working.
+    assert.equal((await owner.call('POST', '/telegram/group')).status, 404);
+    const bot = { id: 1, is_bot: true, username: 'laylak_test_bot' };
+    groupUpdates.push({ message: { chat: { id: -5, type: 'group', title: 'Begona' }, from: { id: 999 }, new_chat_members: [bot] } });
+    assert.equal((await owner.call('POST', '/telegram/group')).status, 404, 'a stranger adding the bot is ignored');
+    groupUpdates.push(
+      { message: { chat: { id: -100, type: 'group', title: 'Kassa guruh' }, from: { id: 777 }, new_chat_members: [bot] } },
+      { message: { chat: { id: -100, type: 'group', title: 'Kassa guruh' }, from: { id: 777 }, migrate_to_chat_id: -1001 } },
+    );
+    sent.length = 0;
+    const group = await owner.call('POST', '/telegram/group');
+    assert.equal(group.status, 200, JSON.stringify(group.body));
+    assert.equal(group.body.telegram.groupName, 'Kassa guruh');
+    assert.equal(sent.find((x) => x.method === 'sendMessage')?.body.chat_id, -1001);
+    assert.equal((await w.call('POST', '/telegram/group')).status, 403);
+
     // Cancelling a payment alerts the owner.
     const pay = await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'TG-1', amount: 55000, method: 'cash' });
     // The orders picture goes to the admin with the type and sum.
@@ -509,10 +526,12 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     const photo = sent.find((x) => x.method === 'sendPhoto');
     assert.ok(photo && photo.body.photo instanceof Blob);
     assert.match(photo.body.caption, /💵 <b>Naqd · 55 000 soʻm<\/b>\nTG-1/);
+    assert.deepEqual(sent.filter((x) => x.method === 'sendPhoto').map((x) => Number(x.body.chat_id)).sort(), [-1001, 777], 'owner and group');
     sent.length = 0;
     assert.equal((await owner.call('POST', `/payments/${pay.body.payment.id}/void`, { reason: 'xato kiritildi' })).status, 200);
     assert.equal(sent[0]?.method, 'sendMessage');
     assert.match(sent[0].body.text, /bekor qilindi[\s\S]*55 000 soʻm[\s\S]*xato kiritildi/);
+    assert.deepEqual(sent.map((x) => x.body.chat_id).sort(), [-1001, 777]);
 
     // Backup: every table, without passwords or the token.
     const backup = await owner.call('GET', '/backup');
@@ -536,6 +555,7 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     assert.equal(first.status, 200, JSON.stringify(first.body));
     assert.equal(first.body.sent, true);
     assert.deepEqual(sent.map((s) => s.method), ['sendMessage', 'sendDocument']);
+    assert.ok(sent.every((x) => Number(x.body.chat_id) === 777), 'report and backup go to the owner only');
     assert.match(sent[0].body.text, /Jami:[\s\S]*Davomat/);
     assert.equal((await cron('Bearer cron-test')).body.reason, 'already-sent');
   } finally {

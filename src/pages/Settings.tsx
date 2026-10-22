@@ -13,7 +13,7 @@ const ACTIONS: Record<string, string> = {
   setup: 'Tizim sozlandi', login: 'Tizimga kirdi', payment_create: 'Toʻlov kiritdi', payment_void: 'Toʻlovni bekor qildi',
   staff_create: 'Xodim qoʻshdi', staff_update: 'Xodimni oʻzgartirdi', client_update: 'Mijozni oʻzgartirdi', password_change: 'Parolini oʻzgartirdi',
   client_import: 'Mijozlar roʻyxatini yukladi', expense_create: 'Rasxod yozdi', expense_void: 'Rasxodni bekor qildi', balance_adjust: 'Qoldiqni tuzatdi',
-  telegram_set: 'Telegram botni kiritdi', telegram_connect: 'Telegramni uladi', telegram_remove: 'Telegramni uzdi', backup_download: 'Zaxirani yuklab oldi',
+  telegram_set: 'Telegram botni kiritdi', telegram_connect: 'Telegramni uladi', telegram_remove: 'Telegramni uzdi', telegram_group: 'Telegram guruhini uladi', telegram_group_remove: 'Telegram guruhini uzdi', backup_download: 'Zaxirani yuklab oldi',
 };
 
 export default function Settings() {
@@ -190,7 +190,7 @@ function AuditLog() {
   );
 }
 
-interface TelegramState { botName: string; connected: boolean; chatName: string | null; code: string | null }
+interface TelegramState { botName: string; connected: boolean; chatName: string | null; code: string | null; groupName: string | null }
 
 /** Owner only: connect a Telegram bot for the evening report and nightly backup, and download a backup now. */
 function TelegramCard() {
@@ -266,8 +266,26 @@ function TelegramCard() {
               <p className="text-ink-2">{`Xabarlar ${tg.chatName} ga @${tg.botName} orqali keladi.`}</p>
               <ul className="list-disc space-y-1 pl-5 text-[13px] text-ink-2">
                 <li>Har kuni 21:00 dan keyin: kunlik hisobot va butun bazaning zaxira nusxasi (fayl).</li>
+                <li>Har bir toʻlovning rasmi: naqd yoki karta, summa, mijoz va kim kiritgani.</li>
                 <li>Toʻlov bekor qilinsa, darhol xabar.</li>
               </ul>
+              <div className="space-y-2 rounded-lg border border-line px-3 py-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="font-medium text-ink">Guruh</div>
+                  {tg.groupName && <Badge tone="success"><span className="size-1.5 rounded-full bg-success" />{tg.groupName}</Badge>}
+                </div>
+                {tg.groupName ? (
+                  <>
+                    <p className="text-[13px] text-ink-2">Toʻlov rasmlari va bekor qilingan toʻlovlar bu guruhga ham keladi. Kunlik hisobot va zaxira fayli faqat sizga keladi.</p>
+                    <Button variant="ghost" size="sm" loading={busy === 'DELETE/telegram/group'} onClick={() => call('DELETE', '/telegram/group')}>Guruhni uzish</Button>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-[13px] text-ink-2">Toʻlov rasmlari guruhga ham kelsin desangiz: botni guruhga oʻzingiz qoʻshing, keyin “Guruhni tekshirish”ni bosing. Kunlik hisobot va zaxira fayli guruhga bormaydi.</p>
+                    <Button size="sm" loading={busy === 'POST/telegram/group'} onClick={() => call('POST', '/telegram/group')}>Guruhni tekshirish</Button>
+                  </>
+                )}
+              </div>
               <div className="flex flex-wrap gap-2">
                 <Button variant="primary" icon={<Send className="size-4" />} loading={busy === 'send'} onClick={sendNow}>Hozir yuborish</Button>
                 <Button variant="ghost" loading={busy === 'DELETE/telegram'} onClick={() => call('DELETE', '/telegram')}>Uzish</Button>
