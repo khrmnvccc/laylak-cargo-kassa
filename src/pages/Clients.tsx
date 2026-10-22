@@ -17,6 +17,11 @@ interface ClientDetail {
   client: { code: string; full_name: string | null; phone: string | null; created_at: string };
   stats: { total: number; cash: number; card: number; yandex: number; pochta: number; count: number; first_paid_at: string | null; last_paid_at: string | null };
   payments: Payment[];
+  orders: ClientOrder[];
+}
+interface ClientOrder {
+  order_no: string | null; code: string | null; transport: string | null; amount: number; paid_at: string;
+  bank: string | null; transaction_id: string | null; created_by_name: string; voided: boolean;
 }
 
 export default function Clients({ params }: { params: URLSearchParams }) {
@@ -274,6 +279,43 @@ function ClientView({ code }: { code: string }) {
               </Card>
             </div>
           </div>
+          <Card className="mt-4" padded={false}>
+            <div className="px-4 pb-3 pt-4 sm:px-5">
+              <h3 className="text-[15px] font-semibold tracking-tight text-ink">Buyurtmalar</h3>
+              <p className="mt-0.5 text-[13px] text-ink-3">“Chek orqali” toʻlangan buyurtmalar. Qoʻlda kiritilgan toʻlovlarning buyurtmalari rasmda, Telegramda qoladi.</p>
+            </div>
+            <div className="border-t border-line">
+              {loading ? <SkeletonRows rows={3} /> : !data?.orders?.length ? <EmptyState title="Buyurtmalar yoʻq" /> : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="border-b border-line bg-surface-2/60">
+                      <tr>
+                        <th className={th}>Sana</th>
+                        <th className={th}>Buyurtma</th>
+                        <th className={cx(th, 'hidden sm:table-cell')}>Usul</th>
+                        <th className={cx(th, 'text-right')}>Summa</th>
+                        <th className={cx(th, 'hidden md:table-cell')}>Chek</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-line">
+                      {data.orders.map((o, i) => (
+                        <tr key={i} className={o.voided ? 'opacity-50' : undefined}>
+                          <td className={cx(td, 'num text-ink-2')}>{formatDate(dateOf(o.paid_at))}</td>
+                          <td className={td}>
+                            <div className="font-medium num">{o.order_no ? `№${o.order_no}` : '—'}</div>
+                            {o.code && <div className="text-xs text-ink-3 num">{o.code}</div>}
+                          </td>
+                          <td className={cx(td, 'hidden sm:table-cell')}>{o.transport || '—'}</td>
+                          <td className={cx(td, 'text-right font-medium num', o.voided && 'line-through')}>{money(o.amount)}</td>
+                          <td className={cx(td, 'hidden text-ink-3 md:table-cell')}>{[o.bank, o.transaction_id && `№${o.transaction_id}`].filter(Boolean).join(' ') || '—'}{o.voided ? ' · bekor qilingan' : ''}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </Card>
           <Card className="mt-4" padded={false}>
             <div className="px-4 pb-3 pt-4 sm:px-5"><h3 className="text-[15px] font-semibold tracking-tight text-ink">Toʻlovlar tarixi</h3></div>
             <div className="border-t border-line">

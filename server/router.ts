@@ -20,7 +20,7 @@ import {
   verifyPassword,
 } from './auth.js';
 import { PERMISSIONS, WORKER_DEFAULT, isPerm, permsOf, type Perm } from './perms.js';
-import { ChatMoved, escapeHtml, getTelegram, notify, photoFromDataUrl, reportPhotos, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
+import { ChatMoved, escapeHtml, getTelegram, notify, photoFromDataUrl, reportPhotos, saveTelegram, sendDocument, sendMessage, sendToTeam, tg } from './telegram.js';
 import { receiptKey } from './receipts.js';
 import { gzipSync } from 'node:zlib';
 import { createHash, randomInt } from 'node:crypto';
@@ -792,7 +792,17 @@ route('GET', '/clients/:code', 'user', async (ctx) => {
       [code],
     ),
   ]);
-  return { client: clients[0], stats: stats[0], payments };
+  // Orders are known for payments made from a receipt ("Chek orqali"): each receipt keeps its order list.
+  const orders = await query(
+    `SELECT o->>'orderNo' AS order_no, o->>'code' AS code, o->>'transport' AS transport, (o->>'amount')::bigint AS amount,
+            COALESCE(r.receipt_paid_at, r.created_at) AS paid_at, r.bank, r.transaction_id, r.created_by_name,
+            NOT EXISTS (SELECT 1 FROM payments p WHERE p.id = ANY(r.payment_ids) AND p.voided_at IS NULL) AS voided
+       FROM receipts r, jsonb_array_elements(COALESCE(r.details->'orders', '[]'::jsonb)) o
+      WHERE upper(o->>'clientCode') = $1
+      ORDER BY paid_at DESC LIMIT 300`,
+    [code],
+  );
+  return { client: clients[0], stats: stats[0], payments, orders };
 });
 
 route('PATCH', '/clients/:code', 'clients.edit', async (ctx) => {
@@ -1387,6 +1397,41 @@ async function backupData() {
   return { gz: gzipSync(json), counts };
 }
 
+/** Monday of the week before the one `date` is in (Tashkent dates, weeks start on Monday). */
+const lastWeekStart = (date: string) => addDays(date, -((new Date(`${date}T00:00:00Z`).getUTCDay() + 6) % 7) - 7);
+const WEEKDAYS = ['Du', 'Se', 'Ch', 'Pa', 'Ju', 'Sh', 'Ya'];
+
+async function weeklyReportText(from: string): Promise<string> {
+  const to = addDays(from, 6);
+  const [totals, before, days, cashiers] = await Promise.all([
+    totalsFor(from, to),
+    totalsFor(addDays(from, -7), addDays(from, -1)),
+    query(`SELECT to_char(p.paid_at AT TIME ZONE '${TZ}', 'YYYY-MM-DD') AS day, SUM(p.amount)::bigint AS total, COUNT(*)::int AS n
+             FROM payments p WHERE p.voided_at IS NULL AND ${RANGE_SQL(1, 2)} GROUP BY 1`, [from, to]),
+    query(`SELECT created_by_name AS name, SUM(amount)::bigint AS total, COUNT(*)::int AS n FROM payments p
+            WHERE voided_at IS NULL AND ${RANGE_SQL(1, 2)} GROUP BY 1 ORDER BY 2 DESC`, [from, to]),
+  ]);
+  const total = Number(totals.total);
+  const prev = Number(before.total);
+  const change = prev ? Math.round(((total - prev) / prev) * 100) : null;
+  const lines = [`📅 <b>Haftalik hisobot · ${dayLabel(from)} – ${dayLabel(to)}</b>`, ''];
+  lines.push(`💰 Jami: <b>${som(total)}</b> (${totals.count} ta toʻlov, ${totals.clients} mijoz)`);
+  for (const m of ['cash', 'card', 'yandex', 'pochta']) if (Number(totals[m])) lines.push(`   ${METHOD_LABEL[m]}: ${som(totals[m])}`);
+  lines.push(change === null ? `Oldingi hafta: ${som(prev)}` : `Oldingi hafta: ${som(prev)} (${change >= 0 ? '▲' : '▼'} ${Math.abs(change)}%)`);
+  const byDay = Object.fromEntries(days.map((d: any) => [d.day, d]));
+  lines.push('', '<b>Kunlar boʻyicha</b>');
+  for (let i = 0; i < 7; i++) {
+    const day = addDays(from, i);
+    const d = byDay[day];
+    lines.push(`${WEEKDAYS[i]} ${day.slice(8)}.${day.slice(5, 7)}: ${d ? `${som(d.total)} (${d.n} ta)` : '—'}`);
+  }
+  if (cashiers.length) {
+    lines.push('', '<b>Kim qancha kiritdi</b>');
+    for (const c of cashiers) lines.push(`• ${escapeHtml(c.name || '—')}: ${som(c.total)} (${c.n} ta)`);
+  }
+  return lines.join('\n');
+}
+
 async function sendDailyReport(date: string) {
   const text = await dailyReportText(date);
   if (!(await sendMessage(text))) throw new HttpError(400, 'Telegram ulanmagan');
@@ -1484,6 +1529,13 @@ route('DELETE', '/telegram', 'owner', async (ctx) => {
   return { telegram: null };
 });
 
+// Last full week (Monday to Sunday) to the group now, as Monday's cron would.
+route('POST', '/telegram/weekly', 'owner', async () => {
+  const to = await sendToTeam(await weeklyReportText(lastWeekStart(todayTashkent())));
+  if (!to) throw new HttpError(400, 'Telegram ulanmagan');
+  return { ok: true, to };
+});
+
 route('POST', '/telegram/send', 'owner', async () => {
   await sendDailyReport(todayTashkent());
   return { ok: true };
@@ -1503,6 +1555,8 @@ route('GET', '/cron/daily', 'public', async (ctx) => {
   if (secret && ctx.headers.authorization !== `Bearer ${secret}`) return { status: 401, body: { error: 'Ruxsat yoʻq' } };
   if (tashkentHour() < 20) return { sent: false, reason: 'early' };
   const date = todayTashkent();
+  // Mondays: last week's totals go to the group, once per week.
+  const weekly = new Date(`${date}T00:00:00Z`).getUTCDay() === 1 ? await sendWeeklyOnce(lastWeekStart(date)) : undefined;
   const claimed = await query(
     `INSERT INTO app_meta (key, value) VALUES ('daily_report', $1::jsonb)
      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
@@ -1510,13 +1564,31 @@ route('GET', '/cron/daily', 'public', async (ctx) => {
      RETURNING key`,
     [JSON.stringify({ date }), date],
   );
-  if (!claimed.length) return { sent: false, reason: 'already-sent' };
+  if (!claimed.length) return { sent: false, reason: 'already-sent', weekly };
   try {
     await sendDailyReport(date);
   } catch (error) {
     await query(`DELETE FROM app_meta WHERE key = 'daily_report'`);
-    if (error instanceof HttpError && error.status === 400) return { sent: false, reason: 'not-connected' };
+    if (error instanceof HttpError && error.status === 400) return { sent: false, reason: 'not-connected', weekly };
     throw error;
   }
-  return { sent: true };
+  return { sent: true, weekly };
 });
+
+async function sendWeeklyOnce(from: string): Promise<string> {
+  const claimed = await query(
+    `INSERT INTO app_meta (key, value) VALUES ('weekly_report', $1::jsonb)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+      WHERE app_meta.value->>'week' IS DISTINCT FROM $2
+     RETURNING key`,
+    [JSON.stringify({ week: from }), from],
+  );
+  if (!claimed.length) return 'already-sent';
+  try {
+    return (await sendToTeam(await weeklyReportText(from))) || 'not-connected';
+  } catch (error) {
+    await query(`DELETE FROM app_meta WHERE key = 'weekly_report'`);
+    console.error('Weekly report failed', error);
+    return 'failed';
+  }
+}

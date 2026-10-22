@@ -571,6 +571,23 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     assert.ok(sent.every((x) => Number(x.body.chat_id) === 777), 'report and backup go to the owner only');
     assert.match(sent[0].body.text, /Jami:[\s\S]*Davomat/);
     assert.equal((await cron('Bearer cron-test')).body.reason, 'already-sent');
+
+    // The weekly report: by hand, and on Monday evening once, to the group's topic.
+    sent.length = 0;
+    Date.now = realNow;
+    const weekly = await owner.call('POST', '/telegram/weekly');
+    assert.equal(weekly.status, 200, JSON.stringify(weekly.body));
+    assert.equal(weekly.body.to, 'group');
+    assert.deepEqual([sent[0].method, sent[0].body.chat_id, sent[0].body.message_thread_id], ['sendMessage', -1001, 42]);
+    assert.match(sent[0].body.text, /Haftalik hisobot[\s\S]*Jami:[\s\S]*Oldingi hafta[\s\S]*Du \d\d\.\d\d/);
+    assert.equal((await w.call('POST', '/telegram/weekly')).status, 403);
+    Date.now = () => Date.parse('2026-10-26T16:05:00Z'); // Monday 21:05 in Tashkent
+    await getPool().query(`DELETE FROM app_meta WHERE key IN ('daily_report', 'weekly_report')`);
+    sent.length = 0;
+    const monday = await cron('Bearer cron-test');
+    assert.equal(monday.body.weekly, 'group');
+    assert.ok(sent.some((x) => x.body.text?.includes('19-oktabr, 2026 – 25-oktabr, 2026')), 'last Monday to Sunday');
+    assert.equal((await cron('Bearer cron-test')).body.weekly, 'already-sent');
   } finally {
     globalThis.fetch = realFetch;
     Date.now = realNow;
@@ -683,6 +700,10 @@ test('receipts: checked receipt becomes card payments, once', async () => {
   const p = ok.body.payments[0];
   assert.deepEqual([p.client_code, Number(p.amount), p.method, p.client_name], ['102315', 44600, 'card', 'Karimova Iroda']);
   assert.match(p.note, /Alif №477924487.*№369383 Avia TTT-102315, №873407 Avto SSS-102315/);
+  // The client's card lists those orders.
+  const card = (await w.call('GET', '/clients/102315')).body;
+  assert.deepEqual(card.orders.map((o: any) => [o.order_no, o.transport, Number(o.amount), o.voided]).sort(),
+    [['369383', 'Avia', 11800, false], ['873407', 'Avto', 32800, false]]);
 
   // Now the client is known, and the same receipt is refused.
   const after = await w.call('POST', '/receipts/check', { receipt, codes: ['102315', '182315'] });
