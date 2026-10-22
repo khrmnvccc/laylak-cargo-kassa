@@ -271,7 +271,27 @@ UPDATE app_users SET role = 'owner' WHERE role = 'admin';
 ALTER TABLE app_users ADD CONSTRAINT app_users_role_check CHECK (role IN ('owner', 'admin', 'worker'));
 `;
 
-const SCHEMA_VERSION = 4;
+// Bank receipts read from a photo ("Chek orqali"). Only what was read is kept, never the image;
+// key is the bank's transaction number so the same receipt cannot be counted twice.
+const SCHEMA_V5_SQL = `
+CREATE TABLE IF NOT EXISTS receipts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  key TEXT NOT NULL UNIQUE,
+  bank TEXT,
+  transaction_id TEXT,
+  amount BIGINT NOT NULL CHECK (amount > 0),
+  receipt_paid_at TIMESTAMPTZ,
+  sender TEXT,
+  details JSONB NOT NULL DEFAULT '{}'::jsonb,
+  payment_ids UUID[] NOT NULL DEFAULT '{}',
+  created_by UUID REFERENCES app_users(id) ON DELETE SET NULL,
+  created_by_name TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE receipts ENABLE ROW LEVEL SECURITY;
+`;
+
+const SCHEMA_VERSION = 5;
 
 export function ensureSchema(): Promise<void> {
   if (!globalForPool.__kassaSchema) {
@@ -300,6 +320,7 @@ async function migrate() {
       if (current < 2) await client.query(SCHEMA_V2_SQL);
       if (current < 3) await client.query(SCHEMA_V3_SQL);
       if (current < 4) await client.query(SCHEMA_V4_SQL);
+      if (current < 5) await client.query(SCHEMA_V5_SQL);
       await client.query(
         `INSERT INTO app_meta (key, value) VALUES ('schema_version', $1::jsonb)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
