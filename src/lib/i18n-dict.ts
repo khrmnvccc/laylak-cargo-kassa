@@ -676,4 +676,14 @@ export const ENTRIES: Array<[string, string, string]> = [
   ['Chekdagi summa buyurtmalarga qarab tuzatildi. Chek rasmi bilan solishtiring.', 'Сумма чека исправлена по заказам. Сверьте с фото чека.', '已根据订单修正收据金额，请与收据图片核对。'],
   ['Chekda sana topilmadi', 'Дата в чеке не найдена', '收据中未找到日期'],
   ['Chekda vaqt koʻrsatilmagan', 'В чеке нет времени', '收据中没有时间'],
+  // Orders picture on every payment
+  ['Buyurtmalar rasmi', 'Фото заказов', '订单截图'],
+  ['Mijozning buyurtmalari koʻringan skrinshot. Saqlangach adminga Telegram orqali yuboriladi. Ctrl+V bilan ham qoʻyish mumkin', 'Скриншот с заказами клиента. После сохранения уйдёт админу в Telegram. Можно вставить через Ctrl+V', '显示客户订单的截图。保存后通过 Telegram 发送给管理员。也可用 Ctrl+V 粘贴'],
+  ['Rasm yuklash', 'Загрузить фото', '上传图片'],
+  ['Yana', 'Ещё', '再加'],
+  ['Buyurtmalar rasmini yuklang', 'Загрузите фото заказов', '请上传订单截图'],
+  ['Rasm adminga yuborilmadi', 'Фото не отправлено админу', '图片未发送给管理员'],
+  ['Telegram bot ulanmagan: Sozlamalar sahifasida ulang. Toʻlov saqlandi', 'Telegram-бот не подключён: подключите в Настройках. Оплата сохранена', 'Telegram 机器人未连接：请在设置中连接。付款已保存'],
+  ['Telegram bilan aloqa boʻlmadi. Toʻlov saqlandi, rasmni adminga qoʻlda yuboring', 'Нет связи с Telegram. Оплата сохранена, отправьте фото админу вручную', '无法连接 Telegram。付款已保存，请手动将图片发给管理员'],
+  ['Rasmni olib tashlash', 'Убрать фото', '移除图片'],
 ];

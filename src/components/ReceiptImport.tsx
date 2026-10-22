@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowLeft, CheckCircle2, ImagePlus, Loader2, ReceiptText
 import { api } from '../lib/api';
 import { CARD_METHODS, groupDigits, money } from '../lib/format';
 import { readScreenshots } from '../lib/ocr';
+import { TELEGRAM_MISS, photoDataUrl } from '../lib/photo';
 import { clientCodeOf, codeVariants, reconcile, variants, type Order, type Receipt } from '../lib/receiptParse';
 import type { Method, Payment } from '../lib/types';
 import { Alert, Badge, Button, Field, Input, Modal, cx, useToast } from './ui';
@@ -134,15 +135,20 @@ export function ReceiptImport({ open, onClose, onSaved }: { open: boolean; onClo
     setSaving(true);
     setError(null);
     try {
-      const { payments } = await api<{ payments: Payment[] }>('/receipts/confirm', {
+      // The receipt and orders pictures go to the admin on Telegram with the payment.
+      const shots = [receiptShot, ...orderShots].filter((x): x is Shot => Boolean(x)).slice(0, 4);
+      const photos = await Promise.all(shots.map((x) => photoDataUrl(x.file)));
+      const { payments, telegram } = await api<{ payments: Payment[]; telegram?: 'sent' | 'off' | 'failed' }>('/receipts/confirm', {
         method: 'POST',
         body: {
           receipt: { ...receipt, amount },
           method,
+          photos,
           orders: chosen.map((r) => ({ clientCode: r.clientCode, clientName: r.clientName, code: r.code, orderNo: r.orderNo, transport: r.transport, amount: digits(r.amountText) })),
         },
       });
       toast({ tone: 'success', title: 'Chek hisobotga qoʻshildi', description: `${payments.map((p) => p.client_code).join(', ')} · ${money(amount)}` });
+      if (telegram && telegram !== 'sent') toast({ tone: 'error', title: 'Rasm adminga yuborilmadi', description: TELEGRAM_MISS[telegram] });
       onSaved(payments);
       reset();
       onClose();

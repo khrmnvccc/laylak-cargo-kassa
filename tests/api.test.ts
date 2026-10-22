@@ -20,6 +20,8 @@ class Client {
   }
 }
 
+// Every payment now carries a picture of the orders (a tiny but real PNG).
+const PHOTOS = ['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='];
 const today = new Date(Date.now() + 5 * 3600_000).toISOString().slice(0, 10);
 
 const LEGACY_SEED = [
@@ -89,19 +91,24 @@ test('setup, roles, shared data, and report math', async () => {
   assert.equal((await vali.call('POST', '/auth/login', { username: 'vali', password: 'worker123' })).status, 200);
 
   // Validation errors are reported per field.
-  const bad = await ali.call('POST', '/payments', { clientCode: '', amount: -5, method: 'crypto' });
+  const bad = await ali.call('POST', '/payments', { photos: PHOTOS, clientCode: '', amount: -5, method: 'crypto' });
   assert.equal(bad.status, 400);
   assert.deepEqual(Object.keys(bad.body.fields).sort(), ['amount', 'clientCode', 'method']);
+  // No picture of the orders, no payment.
+  const noPhoto = await ali.call('POST', '/payments', { clientCode: 'A1', amount: 1000, method: 'cash' });
+  assert.equal(noPhoto.status, 400);
+  assert.deepEqual(Object.keys(noPhoto.body.fields), ['photos']);
+  assert.equal((await ali.call('POST', '/payments', { photos: ['data:text/html;base64,PGI+'], clientCode: 'A1', amount: 1000, method: 'cash' })).body.fields.photos, 'Rasm ochilmadi yoki juda katta. Boshqa rasm tanlang');
   // Workers cannot backdate.
-  assert.equal((await ali.call('POST', '/payments', { clientCode: 'A1', amount: 1000, method: 'cash', paidAt: '2026-01-01T10:00:00Z' })).status, 400);
+  assert.equal((await ali.call('POST', '/payments', { photos: PHOTOS, clientCode: 'A1', amount: 1000, method: 'cash', paidAt: '2026-01-01T10:00:00Z' })).status, 400);
 
   const v0 = (await vali.call('GET', '/version')).body.version;
-  const p1 = await ali.call('POST', '/payments', { clientCode: 'lc-777', clientName: 'Karim', amount: 120000, method: 'cash', note: 'Posilka' });
+  const p1 = await ali.call('POST', '/payments', { photos: PHOTOS, clientCode: 'lc-777', clientName: 'Karim', amount: 120000, method: 'cash', note: 'Posilka' });
   assert.equal(p1.status, 201, JSON.stringify(p1.body));
   assert.equal(p1.body.payment.client_code, 'LC-777');
-  await ali.call('POST', '/payments', { clientCode: 'LC-777', amount: 80000, method: 'card' });
-  await vali.call('POST', '/payments', { clientCode: 'LC-900', amount: 50000, method: 'card' });
-  const toVoid = await vali.call('POST', '/payments', { clientCode: 'LC-900', amount: 999000, method: 'cash' });
+  await ali.call('POST', '/payments', { photos: PHOTOS, clientCode: 'LC-777', amount: 80000, method: 'card' });
+  await vali.call('POST', '/payments', { photos: PHOTOS, clientCode: 'LC-900', amount: 50000, method: 'card' });
+  const toVoid = await vali.call('POST', '/payments', { photos: PHOTOS, clientCode: 'LC-900', amount: 999000, method: 'cash' });
 
   // Vali sees Ali's payments and the version changed (drives live refresh).
   const v1 = (await vali.call('GET', '/version')).body.version;
@@ -160,7 +167,7 @@ test('setup, roles, shared data, and report math', async () => {
 
   // Cross-origin writes are refused.
   const evil = await handleApi({
-    method: 'POST', path: '/payments', query: {}, body: { clientCode: 'X', amount: 1, method: 'cash' },
+    method: 'POST', path: '/payments', query: {}, body: { photos: PHOTOS, clientCode: 'X', amount: 1, method: 'cash' },
     headers: { cookie: ali.cookie, host: 'kassa.test', origin: 'https://evil.example' },
   });
   assert.equal(evil.status, 403);
@@ -186,8 +193,8 @@ test('yandex/pochta payments, expenses and kassa balance', async () => {
   const before = (await admin.call('GET', '/balance', undefined, { date: today })).body;
   const cur = (src: string, b = before) => b.sources.find((s: any) => s.source === src);
 
-  assert.equal((await ali.call('POST', '/payments', { clientCode: 'LC-1', amount: 40000, method: 'yandex' })).status, 201);
-  assert.equal((await ali.call('POST', '/payments', { clientCode: 'LC-1', amount: 25000, method: 'pochta' })).status, 201);
+  assert.equal((await ali.call('POST', '/payments', { photos: PHOTOS, clientCode: 'LC-1', amount: 40000, method: 'yandex' })).status, 201);
+  assert.equal((await ali.call('POST', '/payments', { photos: PHOTOS, clientCode: 'LC-1', amount: 25000, method: 'pochta' })).status, 201);
   const summary = (await ali.call('GET', '/summary', undefined, { from: today, to: today })).body;
   assert.equal(summary.totals.yandex, 40000);
   assert.equal(summary.totals.pochta, 25000);
@@ -365,7 +372,7 @@ test('worker permissions are set by the admin and enforced by the server', async
   assert.deepEqual((await w.call('GET', '/auth/me')).body.user.permissions, ['balance.view'], 'applies without signing in again');
   assert.equal((await w.call('GET', '/summary')).status, 403);
   assert.equal((await w.call('GET', '/balance')).status, 200);
-  assert.equal((await w.call('POST', '/payments', { clientCode: 'P-1', amount: 1000, method: 'cash' })).status, 403);
+  assert.equal((await w.call('POST', '/payments', { photos: PHOTOS, clientCode: 'P-1', amount: 1000, method: 'cash' })).status, 403);
   const own = await w.call('GET', '/payments');
   assert.equal(own.status, 200);
   assert.equal(own.body.items.length, 0, 'without reports a worker sees only their own payments');
@@ -496,7 +503,12 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     assert.ok(!JSON.stringify((await owner.call('GET', '/system')).body).includes(token));
 
     // Cancelling a payment alerts the owner.
-    const pay = await owner.call('POST', '/payments', { clientCode: 'TG-1', amount: 55000, method: 'cash' });
+    const pay = await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'TG-1', amount: 55000, method: 'cash' });
+    // The orders picture goes to the admin with the type and sum.
+    assert.equal(pay.body.telegram, 'sent');
+    const photo = sent.find((x) => x.method === 'sendPhoto');
+    assert.ok(photo && photo.body.photo instanceof Blob);
+    assert.match(photo.body.caption, /💵 <b>Naqd · 55 000 soʻm<\/b>\nTG-1/);
     sent.length = 0;
     assert.equal((await owner.call('POST', `/payments/${pay.body.payment.id}/void`, { reason: 'xato kiritildi' })).status, 200);
     assert.equal(sent[0]?.method, 'sendMessage');
@@ -632,7 +644,7 @@ test('receipts: checked receipt becomes card payments, once', async () => {
   assert.equal(short.status, 400);
   assert.match(short.body.error, /teng emas/);
 
-  const ok = await w.call('POST', '/receipts/confirm', { receipt, method: 'card', orders });
+  const ok = await w.call('POST', '/receipts/confirm', { receipt, method: 'card', orders, photos: [...PHOTOS, ...PHOTOS] });
   assert.equal(ok.status, 201, JSON.stringify(ok.body));
   assert.equal(ok.body.payments.length, 1, 'one payment per client');
   const p = ok.body.payments[0];
