@@ -381,14 +381,19 @@ route('GET', '/orders', 'payments.create', async (ctx) => {
   return { items };
 });
 
-route('POST', '/orders', 'payments.create', async (ctx) => {
-  const b = ctx.body || {};
-  const o = {
-    clientCode: str(b.clientCode, 40).toUpperCase(), clientName: str(b.clientName, 80), phone: str(b.phone, 30),
+type NewOrder = {
+  clientCode: string; clientName: string; phone: string; orderNo: string; transport: string; note: string;
+  places: number | null; weight: number | null; amount: number; receivedAt: string;
+};
+
+/** Reads one order from the form or an import row; errors are keyed by field. */
+function readOrder(b: any, defaultDate: string): { order: NewOrder; errors: Record<string, string> } {
+  const o: NewOrder = {
+    clientCode: str(b.clientCode, 40).toUpperCase().replace(/\s+/g, ''), clientName: str(b.clientName, 80), phone: str(b.phone, 30),
     orderNo: str(b.orderNo, 30), transport: str(b.transport, 20), note: str(b.note, 300),
     places: b.places === '' || b.places == null ? null : Number(b.places),
     weight: b.weight === '' || b.weight == null ? null : Number(String(b.weight).replace(',', '.')),
-    amount: Number(b.amount), receivedAt: str(b.receivedAt, 10) || todayTashkent(),
+    amount: Number(b.amount), receivedAt: str(b.receivedAt, 10) || defaultDate,
   };
   const errors: Record<string, string> = {};
   if (!o.clientCode) errors.clientCode = 'Mijoz ID raqamini kiriting';
@@ -398,25 +403,70 @@ route('POST', '/orders', 'payments.create', async (ctx) => {
   if (o.places !== null && (!Number.isInteger(o.places) || o.places < 1 || o.places > 1000)) errors.places = 'Joylar sonini tekshiring';
   if (o.weight !== null && (!Number.isFinite(o.weight) || o.weight <= 0 || o.weight > 100000)) errors.weight = 'Ogʻirlikni tekshiring';
   if (!DATE_RE.test(o.receivedAt) || o.receivedAt > todayTashkent()) errors.receivedAt = 'Qabul qilingan sanani tekshiring';
-  if (Object.keys(errors).length) return { status: 400, body: { error: 'Ma’lumotlarni tekshiring', fields: errors } };
+  return { order: o, errors };
+}
 
+async function insertOrder(db: pg.PoolClient, user: AuthUser, o: NewOrder) {
+  // Fill in the client's name and phone only where the kassa does not know them yet.
+  await db.query(
+    `INSERT INTO clients (code, full_name, phone) VALUES ($1, NULLIF($2, ''), NULLIF($3, ''))
+     ON CONFLICT (code) DO UPDATE SET full_name = COALESCE(clients.full_name, EXCLUDED.full_name), phone = COALESCE(clients.phone, EXCLUDED.phone)`,
+    [o.clientCode, o.clientName, o.phone],
+  );
+  const inserted = await db.query(
+    `INSERT INTO orders (scan_code, client_code, client_name, phone, order_no, transport, places, weight, amount, received_at, note, created_by, created_by_name)
+     VALUES ('77' || lpad(nextval('orders_scan_seq')::text, 8, '0'), $1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, $7, $8, $9, NULLIF($10, ''), $11, $12)
+     RETURNING id`,
+    [o.clientCode, o.clientName, o.phone, o.orderNo, o.transport, o.places, o.weight, o.amount, o.receivedAt, o.note, user.id, user.full_name],
+  );
+  return inserted.rows[0].id as string;
+}
+
+route('POST', '/orders', 'payments.create', async (ctx) => {
+  const { order: o, errors } = readOrder(ctx.body || {}, todayTashkent());
+  if (Object.keys(errors).length) return { status: 400, body: { error: 'Ma’lumotlarni tekshiring', fields: errors } };
   const order = await transaction(async (db) => {
-    // Fill in the client's name and phone only where the kassa does not know them yet.
-    await db.query(
-      `INSERT INTO clients (code, full_name, phone) VALUES ($1, NULLIF($2, ''), NULLIF($3, ''))
-       ON CONFLICT (code) DO UPDATE SET full_name = COALESCE(clients.full_name, EXCLUDED.full_name), phone = COALESCE(clients.phone, EXCLUDED.phone)`,
-      [o.clientCode, o.clientName, o.phone],
-    );
-    const inserted = await db.query(
-      `INSERT INTO orders (scan_code, client_code, client_name, phone, order_no, transport, places, weight, amount, received_at, note, created_by, created_by_name)
-       VALUES ('77' || lpad(nextval('orders_scan_seq')::text, 8, '0'), $1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, $7, $8, $9, NULLIF($10, ''), $11, $12)
-       RETURNING id`,
-      [o.clientCode, o.clientName, o.phone, o.orderNo, o.transport, o.places, o.weight, o.amount, o.receivedAt, o.note, ctx.user!.id, ctx.user!.full_name],
-    );
-    await audit(db, ctx.user, 'order_create', 'order', inserted.rows[0].id, { clientCode: o.clientCode, amount: o.amount, orderNo: o.orderNo });
-    return (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = $1`, [inserted.rows[0].id])).rows[0];
+    const id = await insertOrder(db, ctx.user!, o);
+    await audit(db, ctx.user, 'order_create', 'order', id, { clientCode: o.clientCode, amount: o.amount, orderNo: o.orderNo });
+    return (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = $1`, [id])).rows[0];
   });
   return { status: 201, body: { order } };
+});
+
+// A whole list at once (copied from the admin panel or Excel). An order already in the kassa
+// (same client and order number) is skipped, so the same list can be loaded twice safely.
+route('POST', '/orders/import', 'payments.create', async (ctx) => {
+  const b = ctx.body || {};
+  const list = Array.isArray(b.rows) ? b.rows : [];
+  if (!list.length) throw new HttpError(400, 'Roʻyxat boʻsh');
+  if (list.length > 1000) throw new HttpError(400, 'Bir martada 1000 tadan koʻp buyurtma yuklab boʻlmaydi');
+  const date = str(b.receivedAt, 10) || todayTashkent();
+  const parsed = list.map((r: any, i: number) => ({ row: i + 1, ...readOrder({ ...r, receivedAt: date }, date) }));
+  const invalid = parsed.filter((p: any) => Object.keys(p.errors).length)
+    .map((p: any) => ({ row: p.row, code: p.order.clientCode, error: Object.values(p.errors)[0] as string }));
+  const good: NewOrder[] = parsed.filter((p: any) => !Object.keys(p.errors).length).map((p: any) => p.order);
+
+  return transaction(async (db) => {
+    const keys = good.filter((o) => o.orderNo).map((o) => `${o.clientCode}|${o.orderNo}`);
+    const existing = new Set((await db.query(
+      `SELECT client_code || '|' || order_no AS k FROM orders WHERE deleted_at IS NULL AND client_code || '|' || order_no = ANY($1)`, [keys],
+    )).rows.map((r: any) => r.k));
+    const seen = new Set<string>();
+    const fresh = good.filter((o) => {
+      if (!o.orderNo) return true;
+      const k = `${o.clientCode}|${o.orderNo}`;
+      if (existing.has(k) || seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    const summary = { adding: fresh.length, total: fresh.reduce((s, o) => s + o.amount, 0), skipped: good.length - fresh.length, invalid };
+    if (b.dryRun) return { dryRun: true, ...summary };
+    const ids: string[] = [];
+    for (const o of fresh) ids.push(await insertOrder(db, ctx.user!, o));
+    await audit(db, ctx.user, 'order_import', 'order', null, { count: ids.length, total: summary.total, skipped: summary.skipped });
+    const orders = ids.length ? (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = ANY($1) ORDER BY o.scan_code`, [ids])).rows : [];
+    return { dryRun: false, ...summary, orders };
+  });
 });
 
 route('GET', '/orders/scan/:code', 'payments.create', async (ctx) => {

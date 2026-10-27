@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Loader2, Printer, ScanLine, Search, Trash2, UserCheck } from 'lucide-react';
+import { FileSpreadsheet, Loader2, Printer, ScanLine, Search, Trash2, UserCheck } from 'lucide-react';
+import { ImportOrders } from '../components/ImportOrders';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useApi, useLive } from '../lib/live';
@@ -26,6 +27,7 @@ export default function Orders() {
   const [status, setStatus] = useState<'all' | 'unpaid' | 'paid'>('all');
   const [manual, setManual] = useState('');
   const [removing, setRemoving] = useState<Order | null>(null);
+  const [importing, setImporting] = useState(false);
   const list = useApi<{ items: Order[] }>('/orders', { q: q.trim(), status: status === 'all' ? '' : status });
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
   const code = form.clientCode.trim().toUpperCase();
@@ -93,11 +95,15 @@ export default function Orders() {
     <>
       <PageHeader title="Buyurtmalar" subtitle="Har bir buyurtmaga stiker chop eting. Kassada skaner qilinsa toʻlov oynasi ochiladi."
         actions={(
-          <form className="flex w-full gap-2 sm:w-auto" onSubmit={(e) => { e.preventDefault(); if (manual.trim()) { openSticker(manual.replace(/\D/g, '')); setManual(''); } }}>
+          <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+          <Button variant="primary" icon={<FileSpreadsheet className="size-4" />} onClick={() => setImporting(true)}>Roʻyxatdan yuklash</Button>
+          <form className="flex min-w-0 flex-1 gap-2 sm:flex-none" onSubmit={(e) => { e.preventDefault(); if (manual.trim()) { openSticker(manual.replace(/\D/g, '')); setManual(''); } }}>
             <Input value={manual} onChange={(e) => setManual(e.target.value)} placeholder="Stiker kodi" inputMode="numeric" className="h-9 min-w-0 flex-1 sm:w-36 sm:flex-none num" aria-label="Stiker kodi" />
             <Button type="submit" icon={<ScanLine className="size-4" />}>Ochish</Button>
           </form>
+          </div>
         )} />
+      <ImportOrders open={importing} onClose={() => setImporting(false)} />
 
       <div className="grid gap-4 xl:grid-cols-[420px_minmax(0,1fr)]">
         <Card className="min-w-0">
