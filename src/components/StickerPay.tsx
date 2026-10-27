@@ -101,18 +101,19 @@ export function StickerPay() {
             <div className="space-y-2">
               {view.error && <Alert>{view.error}</Alert>}
               <div className="text-[13px] font-medium text-ink-2">{view.step === 'method' ? 'Qanday toʻlaydi?' : 'Qaysi kartaga?'}</div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className={cx('grid gap-2', view.step === 'method' ? 'grid-cols-2' : 'grid-cols-3')}>
                 {(view.step === 'method'
                   ? [
                     { key: 'cash', label: 'Naqd', icon: Banknote, color: 'var(--cash)', run: () => pay('cash') },
                     { key: 'card', label: 'Karta', icon: CreditCard, color: 'var(--card)', run: () => setView({ ...view, step: 'card', error: undefined }) },
                   ]
                   : [
-                    { key: 'yandex', label: 'Yandex karta', icon: Navigation, color: 'var(--yandex)', run: () => pay('yandex') },
+                    { key: 'card', label: 'Karta', icon: CreditCard, color: 'var(--card)', run: () => pay('card') },
+                    { key: 'yandex', label: 'Yandex', icon: Navigation, color: 'var(--yandex)', run: () => pay('yandex') },
                     { key: 'pochta', label: 'Pochta', icon: Mail, color: 'var(--pochta)', run: () => pay('pochta') },
                   ]).map((b) => (
-                  <button key={b.key} type="button" data-autofocus={b.key === 'cash' || b.key === 'yandex' ? '' : undefined} onClick={b.run} disabled={Boolean(view.saving)}
-                    className={cx('flex h-16 items-center justify-center gap-2 rounded-xl border border-line bg-surface text-base font-semibold text-ink transition-colors hover:bg-surface-2 disabled:opacity-60')}
+                  <button key={b.key} type="button" onClick={b.run} disabled={Boolean(view.saving)}
+                    className={cx('flex h-16 flex-wrap items-center justify-center gap-x-2 gap-y-0.5 rounded-xl px-2 text-center border border-line bg-surface text-base font-semibold text-ink transition-colors hover:bg-surface-2 disabled:opacity-60')}
                     style={{ boxShadow: `inset 0 -3px 0 ${b.color}` }}>
                     {view.saving === b.key ? <Loader2 className="size-5 animate-spin" /> : <b.icon className="size-5" style={{ color: b.color }} />}
                     {b.label}
