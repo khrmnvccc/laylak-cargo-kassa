@@ -31,6 +31,9 @@ function grab(url: string, prefix: string) {
   // The tick box: a real checkbox, else the first icon or small empty square in the row (the panel may draw
   // the box as a bare SVG icon). A bare icon is taken with its empty wrapper, where a colour or state may sit.
   const boxOf = (row: HTMLElement) => {
+    // The LAYLAK admin panel uses a "… tanlash" toggle button with aria-pressed.
+    const toggle = row.querySelector<HTMLElement>('input[type=checkbox],[role=checkbox],[aria-pressed],[class*=elector],[aria-label*=tanla]');
+    if (toggle) return toggle;
     const el = Array.from(row.querySelectorAll<Element>('*')).find((e) => {
       if (e.matches('input[type=checkbox],[role=checkbox]')) return true;
       if (e instanceof SVGSVGElement) return shown(e);
@@ -47,7 +50,7 @@ function grab(url: string, prefix: string) {
     const all = deep ? [el, ...Array.from(el.querySelectorAll('*'))] : [el];
     for (const e of all) {
       if (e instanceof HTMLInputElement && e.type === 'checkbox') return e.checked;
-      const a = e.getAttribute('aria-checked') || e.getAttribute('aria-selected') || e.getAttribute('data-state') || e.getAttribute('data-checked');
+      const a = e.getAttribute('aria-checked') || e.getAttribute('aria-pressed') || e.getAttribute('aria-selected') || e.getAttribute('data-state') || e.getAttribute('data-checked');
       if (a) return /^(true|checked|on|)$/i.test(a);
     }
     return null;
