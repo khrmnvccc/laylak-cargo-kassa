@@ -11,12 +11,14 @@ function grab(url: string, prefix: string) {
   const text = (el: Element) => (el as HTMLElement).innerText || '';
   // A row is the largest element that holds exactly one client code.
   const rows: HTMLElement[] = [];
-  const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-  for (let n = walk.nextNode(); n; n = walk.nextNode()) {
-    if (!/[A-Z]{2,6}-\d{3,}/.test(n.nodeValue || '')) continue;
-    let row = n.parentElement;
+  // Start from the innermost elements that show a code; a code may be split over several text pieces.
+  const CODE = /[A-Z]{2,6}-\d{3,}/;
+  const hasCode = (el: Element) => !/^(SCRIPT|STYLE|NOSCRIPT)$/.test(el.tagName) && CODE.test(el.textContent || '');
+  for (const leaf of Array.from(document.body.querySelectorAll('*'))) {
+    if (!hasCode(leaf) || Array.from(leaf.children).some(hasCode)) continue;
+    let row: Element | null = leaf;
     while (row && row.parentElement && row.parentElement !== document.body && codes(text(row.parentElement)) === 1) row = row.parentElement;
-    if (row && codes(text(row)) === 1 && !rows.includes(row)) rows.push(row);
+    if (row instanceof HTMLElement && codes(text(row)) === 1 && !rows.includes(row)) rows.push(row);
   }
   const shown = (el: Element) => {
     for (let e: Element | null = el; e; e = e.parentElement) {
@@ -26,13 +28,21 @@ function grab(url: string, prefix: string) {
     const r = el.getBoundingClientRect();
     return r.width > 0 && r.height > 0;
   };
-  // The tick box: a real checkbox, or the first small empty square in the row.
-  const boxOf = (row: HTMLElement) => Array.from(row.querySelectorAll<HTMLElement>('*')).find((el) => {
-    if (el.matches('input[type=checkbox],[role=checkbox]')) return true;
-    if (el instanceof SVGElement || text(el).trim()) return false;
-    const r = el.getBoundingClientRect();
-    return r.width >= 10 && r.width <= 32 && Math.abs(r.width - r.height) <= 3;
-  });
+  // The tick box: a real checkbox, else the first icon or small empty square in the row (the panel may draw
+  // the box as a bare SVG icon). A bare icon is taken with its empty wrapper, where a colour or state may sit.
+  const boxOf = (row: HTMLElement) => {
+    const el = Array.from(row.querySelectorAll<Element>('*')).find((e) => {
+      if (e.matches('input[type=checkbox],[role=checkbox]')) return true;
+      if (e instanceof SVGSVGElement) return shown(e);
+      if (e instanceof SVGElement || text(e).trim()) return false;
+      const r = e.getBoundingClientRect();
+      return r.width >= 10 && r.width <= 32 && Math.abs(r.width - r.height) <= 3;
+    });
+    if (!el) return undefined;
+    let box = el as HTMLElement;
+    while (box.parentElement && box.parentElement !== row && !text(box.parentElement).trim() && box.parentElement.children.length === 1) box = box.parentElement;
+    return box;
+  };
   const said = (el: Element, deep = true): boolean | null => {
     const all = deep ? [el, ...Array.from(el.querySelectorAll('*'))] : [el];
     for (const e of all) {
@@ -42,20 +52,36 @@ function grab(url: string, prefix: string) {
     }
     return null;
   };
-  const marked = (box: HTMLElement) => Array.from(box.querySelectorAll('svg,path,polyline')).some(shown) || /[✓✔]/.test(box.textContent || '');
   const plain = (c: string) => /^(transparent|rgba\(.*,\s*0\)|rgb\(255, 255, 255\))$/.test(c);
   // The box may sit inside a small square cell, so its colour is the first one set inside it.
   const coloured = (box: HTMLElement) => [box, ...Array.from(box.querySelectorAll('*'))].some((e) => !(e instanceof SVGElement) && !plain(getComputedStyle(e).backgroundColor));
   const found = rows.map((row) => ({ row, box: boxOf(row) })).filter((r): r is { row: HTMLElement; box: HTMLElement } => Boolean(r.box));
-  let ticked = found.filter((r) => said(r.box) ?? said(r.row, false) ?? marked(r.box));
-  // When every box carries a mark, the mark tells nothing: a ticked box is the coloured one.
-  if (found.length && ticked.length === found.length && found.every((r) => said(r.box) === null)) {
-    ticked = found.filter((r) => coloured(r.box));
-  }
   const page = text(document.body);
   const told = Number(page.match(/(\d+)\s*ta\s+buyurtma\s+tanlandi/i)?.[1] || 0);
+  // What a box looks like, without its text: ticked and unticked boxes look different.
+  const look = (box: HTMLElement) => `${coloured(box)}|${box.outerHTML.replace(/>[^<]*</g, '><').replace(/\s(title|alt|value)="[^"]*"/g, '')}`;
+  const weight = (box: HTMLElement) => (coloured(box) ? 1000 : 0) + Array.from(box.querySelectorAll('path,polyline,line,rect,circle')).filter(shown).length;
+  let ticked: typeof found;
+  if (!found.length && told >= rows.length) {
+    // No box to read, but the panel says at least as many are ticked as there are rows: all of them are.
+    ticked = rows.map((row) => ({ row, box: row }));
+  } else if (found.some((r) => said(r.box) !== null || said(r.row, false) !== null)) {
+    ticked = found.filter((r) => said(r.box) ?? said(r.row, false) ?? false);
+  } else {
+    const groups = new Map<string, typeof found>();
+    found.forEach((r) => groups.set(look(r.box), [...(groups.get(look(r.box)) || []), r]));
+    if (groups.size > 1) {
+      // The ticked look carries the fill or the extra tick stroke.
+      const best = Math.max(...found.map((r) => weight(r.box)));
+      ticked = found.filter((r) => weight(r.box) === best);
+    } else {
+      // One look for all: the panel's own "N ta buyurtma tanlandi" says whether that look is ticked.
+      ticked = told || found.every((r) => coloured(r.box) || /[✓✔]/.test(r.box.textContent || '')) ? found : [];
+    }
+  }
   const report = () => prompt('Zakladka belgilangan buyurtmalarni toʻgʻri topa olmadi. Shu matnni nusxa olib kassa dasturchisiga yuboring:',
-    found.slice(0, 2).map((r) => r.box.outerHTML.replace(/>[^<]+</g, '><').slice(0, 400)).join(' | ') || 'katak topilmadi');
+    `${rows.length} qator, ${found.length} katak: ${(found[0] ? found[0].box.outerHTML : rows[0]?.outerHTML || document.body.outerHTML.slice(0, 3000))
+      .replace(/>[^<]*</g, '><').replace(/\s(title|alt|value|href|src)="[^"]*"/g, '').slice(0, 900)}`);
   if (!ticked.length && told) { report(); return; }
   if (ticked.length && told && told !== ticked.length
     && !confirm(`Admin panelda ${told} ta belgilangan, zakladka ${ticked.length} tasini topdi. Shularni olaymi?`)) { report(); return; }
