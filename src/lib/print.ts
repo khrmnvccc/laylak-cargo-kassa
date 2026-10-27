@@ -3,7 +3,7 @@
 // app's styles and layout never leak into the printout.
 import { LANG } from './i18n';
 import { dateTime, formatDate, methodLabel, money, nowMs, timeOf, todayTashkent } from './format';
-import type { Payment } from './types';
+import type { Order, Payment } from './types';
 
 export type PaperSize = 'label' | 'a4';
 
@@ -35,6 +35,15 @@ html, body { width: 76mm; height: 130mm; }
 .rows b { text-align: right; }
 .note { font-size: 8.5pt; margin-top: 1.5mm; word-break: break-word; }
 .foot { margin-top: auto; font-size: 7pt; text-align: center; color: #333; border-top: 0.3mm solid #000; padding-top: 1.2mm; }
+.sticker > * { flex-shrink: 0; }
+.sticker .code { font-size: 26pt; }
+.split { display: flex; gap: 3mm; align-items: flex-start; margin-top: 1.5mm; }
+.split .rows { flex: 1; min-width: 0; margin-top: 0; font-size: 9.5pt; }
+.split .rows div { padding: 0.9mm 0; }
+.qr { display: flex; flex-direction: column; align-items: center; }
+.qr svg { width: 30mm; height: 30mm; display: block; }
+.qr b { font-family: 'Courier New', monospace; font-size: 10pt; letter-spacing: 0.5pt; margin-top: 1mm; }
+.sticker .amount { font-size: 26pt; }
 .void { font-size: 14pt; font-weight: 700; text-align: center; border: 0.6mm solid #000; margin-top: 2mm; padding: 1mm; }
 `;
 
@@ -123,6 +132,33 @@ export function printPaymentLabel(payment: Payment) {
 
 export function printClientLabel(client: LabelClient, copies = 1) {
   printHtml(Array.from({ length: Math.max(1, copies) }, () => labelHtml(client)).join(''), 'label', `Yorliq ${client.code}`);
+}
+
+/** The kassa sticker for a parcel: what is owed, and a QR the cashier scans to take the payment. */
+export async function printOrderSticker(order: Order) {
+  const { toString } = await import('qrcode');
+  const qr = await toString(order.scan_code, { type: 'svg', margin: 0, errorCorrectionLevel: 'M' });
+  const fit = Math.max(14, Math.min(26, Math.floor(230 / Math.max(order.client_code.length, 1))));
+  const rows = [
+    ['Usul', order.transport],
+    ['Joylar', order.places ? `${order.places} ta` : ''],
+    ['Ogʻirlik', order.weight ? `${order.weight} kg` : ''],
+    ['Buyurtma', order.order_no ? `№${order.order_no}` : ''],
+    ['Qabul', order.received_at.split('-').reverse().join('.')],
+  ].filter(([, v]) => v);
+  const body = `<div class="label sticker">
+    <div class="brand"><b>LAYLAK CARGO</b><span>${esc(formatDate(order.received_at))}</span></div>
+    <div class="cap">Mijoz ID</div><div class="code num" style="font-size:${fit}pt">${esc(order.client_code)}</div>
+    ${order.client_name ? `<div class="name">${esc(order.client_name)}</div>` : ''}
+    ${order.phone ? `<div class="phone num">${esc(order.phone)}</div>` : ''}
+    <div class="split">
+      <div class="rows">${rows.map(([k, v]) => `<div><span>${esc(k)}</span><b class="num">${esc(v)}</b></div>`).join('')}</div>
+      <div class="qr">${qr}<b class="num">${esc(order.scan_code)}</b></div>
+    </div>
+    <div class="sep"></div><div class="cap">Toʻlov</div><div class="amount num">${esc(money(order.amount))}</div>
+    <div class="foot">Kassada skaner qiling</div>
+  </div>`;
+  printHtml(body, 'label', `Stiker ${order.scan_code}`);
 }
 
 // ---------- A4 documents ----------

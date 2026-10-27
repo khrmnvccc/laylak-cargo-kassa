@@ -291,7 +291,35 @@ CREATE TABLE IF NOT EXISTS receipts (
 ALTER TABLE receipts ENABLE ROW LEVEL SECURITY;
 `;
 
-const SCHEMA_VERSION = 5;
+// Parcels with a printed sticker: scanning its code in the kassa shows what the client owes and
+// takes the payment. scan_code is digits only so the scanner types it the same in any keyboard layout.
+const SCHEMA_V6_SQL = `
+CREATE SEQUENCE IF NOT EXISTS orders_scan_seq START 100001;
+CREATE TABLE IF NOT EXISTS orders (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  scan_code TEXT NOT NULL UNIQUE,
+  client_code TEXT NOT NULL REFERENCES clients(code) ON UPDATE CASCADE,
+  client_name TEXT,
+  phone TEXT,
+  order_no TEXT,
+  transport TEXT,
+  places INTEGER,
+  weight NUMERIC(10, 2),
+  amount BIGINT NOT NULL CHECK (amount > 0 AND amount <= 10000000000),
+  received_at DATE NOT NULL,
+  note TEXT,
+  payment_id UUID REFERENCES payments(id) ON DELETE SET NULL,
+  created_by UUID REFERENCES app_users(id) ON DELETE SET NULL,
+  created_by_name TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS orders_client_idx ON orders(client_code, created_at DESC);
+CREATE INDEX IF NOT EXISTS orders_created_idx ON orders(created_at DESC);
+ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
+`;
+
+const SCHEMA_VERSION = 6;
 
 export function ensureSchema(): Promise<void> {
   if (!globalForPool.__kassaSchema) {
@@ -321,6 +349,7 @@ async function migrate() {
       if (current < 3) await client.query(SCHEMA_V3_SQL);
       if (current < 4) await client.query(SCHEMA_V4_SQL);
       if (current < 5) await client.query(SCHEMA_V5_SQL);
+      if (current < 6) await client.query(SCHEMA_V6_SQL);
       await client.query(
         `INSERT INTO app_meta (key, value) VALUES ('schema_version', $1::jsonb)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,

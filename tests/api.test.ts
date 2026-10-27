@@ -698,3 +698,52 @@ test('receipts: checked receipt becomes card payments, once', async () => {
   assert.equal((await owner.call('POST', '/receipts/confirm', { receipt, method: 'card', orders })).status, 201);
   assert.equal((await owner.call('POST', '/receipts/confirm', { receipt, method: 'card', orders })).status, 409);
 });
+
+test('order stickers: scanning the code shows what is owed and takes the payment once', async () => {
+  const owner = new Client();
+  await owner.call('POST', '/auth/login', { username: 'admin', password: 'password123' });
+  const bad = await owner.call('POST', '/orders', { clientCode: 'TTT-102365', amount: 0 });
+  assert.equal(bad.status, 400);
+  assert.ok(bad.body.fields.amount);
+
+  const made = await owner.call('POST', '/orders', {
+    clientCode: 'ttt-102365', clientName: 'Nigora Begimkulova', phone: '+998880104111',
+    orderNo: '691532', transport: 'Avia', places: 1, weight: '1,3', amount: 85000, receivedAt: '2026-10-27',
+  });
+  assert.equal(made.status, 201, JSON.stringify(made.body));
+  const o = made.body.order;
+  assert.match(o.scan_code, /^77\d{8}$/);
+  assert.deepEqual([o.client_code, o.client_name, o.phone, o.weight, o.amount, o.received_at, o.payment_id],
+    ['TTT-102365', 'Nigora Begimkulova', '+998880104111', 1.3, 85000, '2026-10-27', null]);
+  const second = await owner.call('POST', '/orders', { clientCode: 'TTT-102365', amount: 40000 });
+  assert.equal(second.status, 201);
+  assert.notEqual(second.body.order.scan_code, o.scan_code);
+
+  assert.equal((await owner.call('GET', '/orders/scan/123')).status, 404);
+  assert.equal((await owner.call('GET', '/orders/scan/7799999999')).status, 404);
+  const scan = await owner.call('GET', `/orders/scan/${o.scan_code}`);
+  assert.equal(scan.status, 200);
+  assert.equal(scan.body.order.id, o.id);
+  assert.deepEqual(scan.body.unpaid.map((u: any) => u.amount), [40000]);
+
+  assert.equal((await owner.call('POST', `/orders/${o.id}/pay`, { method: 'bitcoin' })).status, 400);
+  const paid = await owner.call('POST', `/orders/${o.id}/pay`, { method: 'yandex' });
+  assert.equal(paid.status, 200, JSON.stringify(paid.body));
+  assert.deepEqual([paid.body.payment.client_code, paid.body.payment.amount, paid.body.payment.method], ['TTT-102365', 85000, 'yandex']);
+  assert.match(paid.body.payment.note, /№691532/);
+  assert.equal(paid.body.order.paid_method, 'yandex');
+  const again = await owner.call('POST', `/orders/${o.id}/pay`, { method: 'cash' });
+  assert.equal(again.status, 409);
+  assert.match(again.body.error, /allaqachon/);
+  assert.equal((await owner.call('DELETE', `/orders/${o.id}`)).status, 409);
+
+  // Cancelling the payment makes the sticker payable again.
+  assert.equal((await owner.call('POST', `/payments/${paid.body.payment.id}/void`, { reason: 'xato tur' })).status, 200);
+  assert.equal((await owner.call('GET', `/orders/scan/${o.scan_code}`)).body.order.payment_id, null);
+  assert.equal((await owner.call('POST', `/orders/${o.id}/pay`, { method: 'cash' })).status, 200);
+
+  const unpaid = await owner.call('GET', '/orders', undefined, { status: 'unpaid', q: 'nigora' });
+  assert.deepEqual(unpaid.body.items.map((i: any) => i.id), [second.body.order.id]);
+  assert.equal((await owner.call('DELETE', `/orders/${second.body.order.id}`)).status, 200);
+  assert.equal((await owner.call('GET', `/orders/scan/${second.body.order.scan_code}`)).status, 404);
+});

@@ -147,3 +147,16 @@ export async function reportPhotos(photos: Buffer[], caption: string): Promise<'
     return 'failed';
   }
 }
+
+/** A text message to the owner and the group that never throws: says whether it was delivered. */
+export async function reportText(text: string): Promise<'sent' | 'off' | 'failed'> {
+  try {
+    const config = await getTelegram();
+    if (!config?.chatId) return 'off';
+    await everyChat(config, (chatId, topic) => tg(config.token, 'sendMessage', { chat_id: chatId, ...topic, text, parse_mode: 'HTML', disable_web_page_preview: true }, 8000));
+    return 'sent';
+  } catch (error) {
+    console.error('Telegram message failed', error);
+    return 'failed';
+  }
+}

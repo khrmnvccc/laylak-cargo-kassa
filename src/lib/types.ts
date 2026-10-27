@@ -176,3 +176,25 @@ export interface MyAttendance {
   officeSet: boolean;
   radius: number | null;
 }
+
+/** A parcel with a printed kassa sticker; paid once a payment is linked and not cancelled. */
+export interface Order {
+  id: string;
+  scan_code: string;
+  client_code: string;
+  client_name: string | null;
+  phone: string | null;
+  order_no: string | null;
+  transport: string | null;
+  places: number | null;
+  weight: number | null;
+  amount: number;
+  received_at: string;
+  note: string | null;
+  created_by_name: string;
+  created_at: string;
+  payment_id: string | null;
+  paid_method: Method | null;
+  paid_at: string | null;
+  paid_by: string | null;
+}
