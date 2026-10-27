@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import {
-  BarChart3, Clock, Landmark, CalendarDays, LayoutDashboard, ListOrdered, LogOut, Menu, Moon, Plus, Settings, Sun, UserSearch, Users, Wallet, X,
+  BarChart3, Clock, Landmark, CalendarDays, LayoutDashboard, ListOrdered, LogOut, Menu, Moon, Package, Plus, Settings, Sun, UserSearch, Users, Wallet, X,
 } from 'lucide-react';
 import { href, type Page } from '../lib/router';
 import { useLive } from '../lib/live';
@@ -8,8 +8,9 @@ import { useTheme } from '../lib/theme';
 import { formatDate, todayTashkent, weekday } from '../lib/format';
 import type { User } from '../lib/types';
 import { LANG, LANGS, setLang } from '../lib/i18n';
-import { canSee, roleLabel } from '../lib/perms';
+import { can, canSee, roleLabel } from '../lib/perms';
 import { AttendanceButton } from './AttendanceButton';
+import { StickerPay } from './StickerPay';
 import { Avatar, Button, IconButton, cx } from './ui';
 
 interface NavItem { page: Page; label: string; icon: typeof Wallet }
@@ -19,6 +20,7 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
     items: [
       { page: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { page: 'kassa', label: 'Toʻlov kiritish', icon: Wallet },
+      { page: 'orders', label: 'Buyurtmalar', icon: Package },
       { page: 'operations', label: 'Operatsiyalar', icon: ListOrdered },
     ],
   },
@@ -42,7 +44,7 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
 ];
 
 export const PAGE_TITLES: Record<Page, string> = {
-  dashboard: 'Dashboard', kassa: 'Toʻlov kiritish', operations: 'Operatsiyalar', daily: 'Kunlik hisobot',
+  dashboard: 'Dashboard', kassa: 'Toʻlov kiritish', orders: 'Buyurtmalar', operations: 'Operatsiyalar', daily: 'Kunlik hisobot',
   periods: 'Haftalik va oylik hisobot', workers: 'Ishchilar', attendance: 'Davomat', clients: 'Mijozlar', balance: 'Kassa balansi', settings: 'Sozlamalar',
 };
 
@@ -166,6 +168,7 @@ export function Layout({ page, user, onLogout, children }: { page: Page; user: U
 
   return (
     <div className="min-h-screen">
+      {can(user, 'payments.create') && <StickerPay />}
       {/* Desktop sidebar */}
       <aside className="no-print fixed inset-y-0 left-0 z-30 hidden w-[248px] flex-col border-r border-line bg-surface glass px-3 py-5 lg:flex">
         <div className="px-2"><Logo /></div>

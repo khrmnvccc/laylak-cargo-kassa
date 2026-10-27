@@ -26,7 +26,7 @@ export const isBoss = (user: { role: string }) => user.role === 'owner' || user.
 /** Which right each page needs; pages not listed are open to everyone. */
 const PAGE_PERM: Partial<Record<Page, Perm>> = {
   dashboard: 'reports.view', operations: 'reports.view', daily: 'reports.view', periods: 'reports.view',
-  kassa: 'payments.create', balance: 'balance.view', workers: 'staff.view',
+  kassa: 'payments.create', orders: 'payments.create', balance: 'balance.view', workers: 'staff.view',
 };
 
 export const canSee = (user: User, page: Page) => {

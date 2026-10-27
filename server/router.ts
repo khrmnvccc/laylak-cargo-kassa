@@ -20,7 +20,7 @@ import {
   verifyPassword,
 } from './auth.js';
 import { PERMISSIONS, WORKER_DEFAULT, isPerm, permsOf, type Perm } from './perms.js';
-import { ChatMoved, escapeHtml, getTelegram, notify, photoFromDataUrl, reportPhotos, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
+import { ChatMoved, escapeHtml, getTelegram, notify, photoFromDataUrl, reportPhotos, reportText, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
 import { receiptKey } from './receipts.js';
 import { gzipSync } from 'node:zlib';
 import { createHash, randomInt } from 'node:crypto';
@@ -353,6 +353,139 @@ function paymentCaption(p: { method: string; amount: number; by: string; at: str
     p.note ? `📝 ${escapeHtml(p.note)}` : '',
   ].filter(Boolean).join('\n');
 }
+
+// ---------- orders with a sticker: scan in the kassa, see what is owed, take the payment ----------
+
+const ORDER_COLUMNS = `o.id, o.scan_code, o.client_code, COALESCE(o.client_name, c.full_name) AS client_name,
+  COALESCE(o.phone, c.phone) AS phone, o.order_no, o.transport, o.places, o.weight::float8 AS weight, o.amount,
+  to_char(o.received_at, 'YYYY-MM-DD') AS received_at, o.note, o.created_by_name, o.created_at,
+  CASE WHEN p.voided_at IS NULL THEN p.id END AS payment_id,
+  CASE WHEN p.voided_at IS NULL THEN p.method END AS paid_method,
+  CASE WHEN p.voided_at IS NULL THEN p.paid_at END AS paid_at,
+  CASE WHEN p.voided_at IS NULL THEN p.created_by_name END AS paid_by`;
+const ORDER_FROM = `orders o LEFT JOIN clients c ON c.code = o.client_code LEFT JOIN payments p ON p.id = o.payment_id`;
+// The printed code: "77" and eight digits, so it never looks like a client ID.
+const SCAN_RE = /^77\d{8}$/;
+
+route('GET', '/orders', 'payments.create', async (ctx) => {
+  const q = str(ctx.query.q, 60).toUpperCase();
+  const where = ['o.deleted_at IS NULL'];
+  const args: unknown[] = [];
+  if (q) {
+    args.push(`%${q}%`);
+    where.push(`(o.scan_code LIKE $1 OR upper(o.client_code) LIKE $1 OR upper(COALESCE(o.client_name, c.full_name, '')) LIKE $1 OR upper(COALESCE(o.order_no, '')) LIKE $1)`);
+  }
+  if (ctx.query.status === 'unpaid') where.push('(p.id IS NULL OR p.voided_at IS NOT NULL)');
+  if (ctx.query.status === 'paid') where.push('(p.id IS NOT NULL AND p.voided_at IS NULL)');
+  const items = await query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE ${where.join(' AND ')} ORDER BY o.created_at DESC LIMIT 200`, args);
+  return { items };
+});
+
+route('POST', '/orders', 'payments.create', async (ctx) => {
+  const b = ctx.body || {};
+  const o = {
+    clientCode: str(b.clientCode, 40).toUpperCase(), clientName: str(b.clientName, 80), phone: str(b.phone, 30),
+    orderNo: str(b.orderNo, 30), transport: str(b.transport, 20), note: str(b.note, 300),
+    places: b.places === '' || b.places == null ? null : Number(b.places),
+    weight: b.weight === '' || b.weight == null ? null : Number(String(b.weight).replace(',', '.')),
+    amount: Number(b.amount), receivedAt: str(b.receivedAt, 10) || todayTashkent(),
+  };
+  const errors: Record<string, string> = {};
+  if (!o.clientCode) errors.clientCode = 'Mijoz ID raqamini kiriting';
+  else if (!/^[A-Z0-9-]{1,40}$/.test(o.clientCode)) errors.clientCode = 'ID faqat harf, raqam va "-" dan iborat bo‘lsin';
+  if (!Number.isInteger(o.amount) || o.amount <= 0) errors.amount = 'Toʻlanadigan summani kiriting';
+  else if (o.amount > 10_000_000_000) errors.amount = 'Summa juda katta';
+  if (o.places !== null && (!Number.isInteger(o.places) || o.places < 1 || o.places > 1000)) errors.places = 'Joylar sonini tekshiring';
+  if (o.weight !== null && (!Number.isFinite(o.weight) || o.weight <= 0 || o.weight > 100000)) errors.weight = 'Ogʻirlikni tekshiring';
+  if (!DATE_RE.test(o.receivedAt) || o.receivedAt > todayTashkent()) errors.receivedAt = 'Qabul qilingan sanani tekshiring';
+  if (Object.keys(errors).length) return { status: 400, body: { error: 'Ma’lumotlarni tekshiring', fields: errors } };
+
+  const order = await transaction(async (db) => {
+    // Fill in the client's name and phone only where the kassa does not know them yet.
+    await db.query(
+      `INSERT INTO clients (code, full_name, phone) VALUES ($1, NULLIF($2, ''), NULLIF($3, ''))
+       ON CONFLICT (code) DO UPDATE SET full_name = COALESCE(clients.full_name, EXCLUDED.full_name), phone = COALESCE(clients.phone, EXCLUDED.phone)`,
+      [o.clientCode, o.clientName, o.phone],
+    );
+    const inserted = await db.query(
+      `INSERT INTO orders (scan_code, client_code, client_name, phone, order_no, transport, places, weight, amount, received_at, note, created_by, created_by_name)
+       VALUES ('77' || lpad(nextval('orders_scan_seq')::text, 8, '0'), $1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, $7, $8, $9, NULLIF($10, ''), $11, $12)
+       RETURNING id`,
+      [o.clientCode, o.clientName, o.phone, o.orderNo, o.transport, o.places, o.weight, o.amount, o.receivedAt, o.note, ctx.user!.id, ctx.user!.full_name],
+    );
+    await audit(db, ctx.user, 'order_create', 'order', inserted.rows[0].id, { clientCode: o.clientCode, amount: o.amount, orderNo: o.orderNo });
+    return (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = $1`, [inserted.rows[0].id])).rows[0];
+  });
+  return { status: 201, body: { order } };
+});
+
+route('GET', '/orders/scan/:code', 'payments.create', async (ctx) => {
+  const code = ctx.params.code.replace(/\D/g, '');
+  if (!SCAN_RE.test(code)) throw new HttpError(404, 'Bu kod kassa stikeri emas');
+  const rows = await query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.scan_code = $1 AND o.deleted_at IS NULL`, [code]);
+  if (!rows.length) throw new HttpError(404, 'Bunday stiker topilmadi');
+  const order = rows[0];
+  const others = await query(
+    `SELECT o.scan_code, o.order_no, o.amount FROM ${ORDER_FROM}
+      WHERE o.client_code = $1 AND o.id <> $2 AND o.deleted_at IS NULL AND (p.id IS NULL OR p.voided_at IS NOT NULL)
+      ORDER BY o.created_at LIMIT 20`,
+    [order.client_code, order.id],
+  );
+  return { order, unpaid: others };
+});
+
+route('POST', '/orders/:id/pay', 'payments.create', async (ctx) => {
+  const method = ctx.body?.method;
+  if (!METHODS.includes(method)) throw new HttpError(400, 'To‘lov turini tanlang');
+  if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Buyurtma topilmadi');
+  const result = await transaction(async (db) => {
+    const found = await db.query(`SELECT * FROM orders WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [ctx.params.id]);
+    const order = found.rows[0];
+    if (!order) throw new HttpError(404, 'Buyurtma topilmadi');
+    if (order.payment_id) {
+      const prev = await db.query(`SELECT paid_at, created_by_name, voided_at FROM payments WHERE id = $1`, [order.payment_id]);
+      if (prev.rows[0] && !prev.rows[0].voided_at) {
+        throw new HttpError(409, `Bu buyurtma allaqachon toʻlangan: ${prev.rows[0].created_by_name}`);
+      }
+    }
+    const note = `Buyurtma ${order.order_no ? `№${order.order_no}` : order.scan_code} · stiker ${order.scan_code}`;
+    const inserted = await db.query(
+      `INSERT INTO payments (client_code, client_name, amount, method, note, created_by, created_by_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [order.client_code, order.client_name, order.amount, method, note, ctx.user!.id, ctx.user!.full_name],
+    );
+    const paymentId = inserted.rows[0].id;
+    await db.query(`UPDATE orders SET payment_id = $2 WHERE id = $1`, [order.id, paymentId]);
+    await audit(db, ctx.user, 'payment_create', 'payment', paymentId, { clientCode: order.client_code, amount: Number(order.amount), method, order: order.scan_code });
+    const payment = (await db.query(`SELECT ${PAYMENT_COLUMNS} FROM payments p LEFT JOIN clients c ON c.code = p.client_code WHERE p.id = $1`, [paymentId])).rows[0];
+    const full = (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = $1`, [order.id])).rows[0];
+    return { payment, order: full };
+  });
+  const o = result.order;
+  const details = [
+    o.order_no ? `Buyurtma №${o.order_no}` : '',
+    [o.transport, o.places ? `${o.places} ta` : '', o.weight ? `${o.weight} kg` : ''].filter(Boolean).join(' · '),
+    `Qabul qilingan: ${o.received_at.slice(8, 10)}.${o.received_at.slice(5, 7)}.${o.received_at.slice(0, 4)}`,
+  ].filter(Boolean);
+  const telegram = await reportText(paymentCaption({
+    method, amount: Number(o.amount), by: ctx.user!.full_name, at: result.payment.paid_at,
+    head: `📦 Stiker ${o.scan_code}`,
+    lines: [`${o.client_code}${o.client_name ? ` · ${o.client_name}` : ''}`, ...details],
+  }));
+  return { ...result, telegram };
+});
+
+route('DELETE', '/orders/:id', 'payments.void', async (ctx) => {
+  if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Buyurtma topilmadi');
+  await transaction(async (db) => {
+    const rows = (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = $1 AND o.deleted_at IS NULL FOR UPDATE OF o`, [ctx.params.id])).rows;
+    if (!rows.length) throw new HttpError(404, 'Buyurtma topilmadi');
+    if (rows[0].payment_id) throw new HttpError(409, 'Toʻlangan buyurtmani oʻchirib boʻlmaydi. Avval toʻlovni bekor qiling');
+    await db.query(`UPDATE orders SET deleted_at = NOW() WHERE id = $1`, [ctx.params.id]);
+    await audit(db, ctx.user, 'order_delete', 'order', ctx.params.id, { scanCode: rows[0].scan_code, amount: Number(rows[0].amount) });
+  });
+  return { ok: true };
+});
 
 // ---------- receipts: a bank receipt photo + the client's orders screenshot ----------
 

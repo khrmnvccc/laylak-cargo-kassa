@@ -15,6 +15,7 @@ import { LoginPage } from './pages/Login';
 const pages = {
   dashboard: lazy(() => import('./pages/Dashboard')),
   kassa: lazy(() => import('./pages/Kassa')),
+  orders: lazy(() => import('./pages/Orders')),
   operations: lazy(() => import('./pages/Operations')),
   daily: lazy(() => import('./pages/DailyReport')),
   periods: lazy(() => import('./pages/PeriodReport')),
