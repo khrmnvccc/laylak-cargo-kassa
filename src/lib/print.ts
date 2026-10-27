@@ -141,9 +141,13 @@ export async function printOrderSticker(order: Order) {
 
 export async function printOrderStickers(orders: Order[]) {
   const { toString } = await import('qrcode');
-  const labels = await Promise.all(orders.map(async (order) => stickerHtml(order, await toString(order.scan_code, { type: 'svg', margin: 0, errorCorrectionLevel: 'M' }))));
+  const labels = await Promise.all(orders.map(async (order) => stickerHtml(order, await toString(orderPageUrl(order), { type: 'svg', margin: 0, errorCorrectionLevel: 'M' }))));
   printHtml(labels.join(''), 'label', orders.length === 1 ? `Stiker ${orders[0].scan_code}` : `Stikerlar (${orders.length})`);
 }
+
+/** What the sticker QR holds: the client's status page. The kassa scanner reads the code out of it. */
+export const orderPageUrl = (order: Pick<Order, 'scan_code' | 'public_token'>) =>
+  `${window.location.origin}/t.html#${order.scan_code}.${order.public_token}`;
 
 function stickerHtml(order: Order, qr: string) {
   const fit = Math.max(14, Math.min(26, Math.floor(230 / Math.max(order.client_code.length, 1))));
@@ -164,7 +168,7 @@ function stickerHtml(order: Order, qr: string) {
       <div class="qr">${qr}<b class="num">${esc(order.scan_code)}</b></div>
     </div>
     <div class="sep"></div><div class="cap">Toʻlov</div><div class="amount num">${esc(money(order.amount))}</div>
-    <div class="foot">Kassada skaner qiling</div>
+    <div class="foot">Telefonda skaner qiling: buyurtma holati</div>
   </div>`;
 }
 

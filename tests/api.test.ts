@@ -738,7 +738,21 @@ test('order stickers: scanning the code shows what is owed and takes the payment
   assert.equal((await owner.call('DELETE', `/orders/${o.id}`)).status, 409);
 
   // Cancelling the payment makes the sticker payable again.
+  // The client's page from the sticker QR: only with the order's secret, without the phone number.
+  assert.match(o.public_token, /^[0-9a-f]{20}$/);
+  const visitor = new Client();
+  assert.equal((await visitor.call('GET', `/public/orders/${o.scan_code}`)).status, 404);
+  assert.equal((await visitor.call('GET', `/public/orders/${o.scan_code}.${'0'.repeat(20)}`)).status, 404);
+  assert.equal((await visitor.call('GET', `/public/orders/${second.body.order.scan_code}.${o.public_token}`)).status, 404);
+  const page = await visitor.call('GET', `/public/orders/${o.scan_code}.${o.public_token}`);
+  assert.equal(page.status, 200, JSON.stringify(page.body));
+  assert.deepEqual([page.body.status, page.body.client_name, page.body.order_no, page.body.amount], ['collected', 'Nigora B.', '691532', 85000]);
+  assert.ok(page.body.paid_at);
+  assert.ok(!JSON.stringify(page.body).includes('998880104111'));
+  assert.ok(!('public_token' in page.body) && !('id' in page.body));
+
   assert.equal((await owner.call('POST', `/payments/${paid.body.payment.id}/void`, { reason: 'xato tur' })).status, 200);
+  assert.equal((await visitor.call('GET', `/public/orders/${o.scan_code}.${o.public_token}`)).body.status, 'waiting');
   assert.equal((await owner.call('GET', `/orders/scan/${o.scan_code}`)).body.order.payment_id, null);
   assert.equal((await owner.call('POST', `/orders/${o.id}/pay`, { method: 'cash' })).status, 200);
 
