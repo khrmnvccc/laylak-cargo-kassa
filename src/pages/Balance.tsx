@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { Ban, ChevronLeft, ChevronRight, Minus, Plus, Scale, Upload, Wallet } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -41,6 +41,7 @@ export default function Balance() {
   const today = todayTashkent();
   const [date, setDate] = useState(today);
   const { data, error, loading, reload } = useApi<BalanceReport>('/balance', { date });
+  const [openDay, setOpenDay] = useState<string | null>(null);
   const [modal, setModal] = useState<'expense' | 'adjust' | 'import' | Expense | null>(null);
 
   const sources = data?.sources || [];
@@ -217,12 +218,25 @@ export default function Balance() {
                     </thead>
                     <tbody className="divide-y divide-line">
                       {data?.recent.map((d) => (
-                        <tr key={d.day} onClick={() => setDate(d.day)} className={cx('cursor-pointer transition-colors hover:bg-surface-2', d.day === date && 'bg-surface-2')}>
-                          <td className={td}>{formatDate(d.day, false)} <span className="text-ink-3">{weekday(d.day, true)}</span></td>
+                        <Fragment key={d.day}>
+                        <tr onClick={() => { setDate(d.day); setOpenDay((o) => (o === d.day ? null : d.day)); }} aria-expanded={openDay === d.day}
+                          className={cx('cursor-pointer transition-colors hover:bg-surface-2', d.day === date && 'bg-surface-2')}>
+                          <td className={td}>
+                            <ChevronRight className={cx('mr-1 inline size-3.5 text-ink-3 transition-transform', openDay === d.day && 'rotate-90')} />
+                            {formatDate(d.day, false)} <span className="text-ink-3">{weekday(d.day, true)}</span>
+                          </td>
                           <td className={cx(td, 'text-right num', !d.income && 'text-ink-3')}>{money(d.income)}</td>
                           <td className={cx(td, 'text-right num', d.expense ? 'text-down' : 'text-ink-3')}>{d.expense ? `−${money(d.expense)}` : money(0)}</td>
                           <td className={cx(td, 'text-right font-medium num', d.income - d.expense < 0 && 'text-danger')}>{signed(d.income - d.expense)}</td>
                         </tr>
+                        {openDay === d.day && (
+                          <tr className="bg-surface-2/60">
+                            <td colSpan={4} className="px-4 pb-3 pt-1 sm:px-5">
+                              <DaySplit day={d} />
+                            </td>
+                          </tr>
+                        )}
+                        </Fragment>
                       ))}
                     </tbody>
                   </table>
@@ -238,6 +252,33 @@ export default function Balance() {
       {modal === 'adjust' && <AdjustForm sources={sources} onClose={() => setModal(null)} />}
       {modal && typeof modal === 'object' && <ExpenseDetail expense={modal} onClose={() => setModal(null)} />}
     </>
+  );
+}
+
+/** One day of the 14-day table opened up: how the takings split between cash and card. */
+function DaySplit({ day }: { day: BalanceReport['recent'][number] }) {
+  const parts = [
+    { label: 'Naqd', amount: day.cash_income, color: 'var(--cash)' },
+    { label: 'Karta', amount: day.card_income, color: methodColor('card') },
+    { label: 'Yandex', amount: day.yandex_income, color: methodColor('yandex') },
+    { label: 'Pochta', amount: day.pochta_income, color: methodColor('pochta') },
+  ];
+  const card = day.card_income + day.yandex_income + day.pochta_income;
+  return (
+    <div className="space-y-2 text-sm">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {parts.map((p) => (
+          <div key={p.label} className="rounded-lg border border-line bg-surface px-3 py-2">
+            <div className="flex items-center gap-1.5 text-xs text-ink-3"><span className="size-2 rounded-full" style={{ background: p.color }} />{p.label}</div>
+            <div className={cx('font-semibold num', !p.amount && 'text-ink-3')}>{money(p.amount)}</div>
+          </div>
+        ))}
+      </div>
+      <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-xs text-ink-2">
+        <span>Jami tushum: <b className="text-ink num">{money(day.income)}</b> · naqd <b className="text-ink num">{money(day.cash_income)}</b> · kartaga <b className="text-ink num">{money(card)}</b></span>
+        {day.expense > 0 && <span>Rasxod: naqd <b className="text-ink num">{money(day.cash_expense)}</b> · karta <b className="text-ink num">{money(day.card_expense)}</b></span>}
+      </div>
+    </div>
   );
 }
 
