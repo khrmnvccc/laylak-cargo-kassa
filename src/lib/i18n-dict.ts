@@ -751,4 +751,6 @@ export const ENTRIES: Array<[string, string, string]> = [
   ['{0} ta buyurtma qoʻshildi', 'Добавлено заказов: {0}', '已添加 {0} 个订单'],
   ['{0} ta buyurtma kassaga qoʻshildi. Endi stikerlarni chop eting: har biri alohida yorliqqa chiqadi.', 'В кассу добавлено заказов: {0}. Теперь напечатайте стикеры: каждый на отдельной этикетке.', '已向收银系统添加 {0} 个订单。现在打印贴纸：每个订单一张。'],
   ['Roʻyxatda buyurtma topilmadi. Admin paneldagi jadvalni belgilab nusxa oling yoki Excel faylni tanlang.', 'В списке не найдено заказов. Скопируйте таблицу из админ-панели или выберите файл Excel.', '列表中未找到订单。请复制管理面板中的表格或选择 Excel 文件。'],
+  ['Kassaga yuklash', 'Загрузить в кассу', '导入收银系统'],
+  ['Bu tugmani sichqoncha bilan zakladkalar paneliga torting. Keyin admin paneldagi buyurtmalar sahifasida shu zakladkani bossangiz, roʻyxat kassada ochiladi.', 'Перетащите эту кнопку мышью на панель закладок. Затем на странице заказов в админ-панели нажмите эту закладку, и список откроется в кассе.', '用鼠标把这个按钮拖到书签栏。然后在管理面板的订单页面点击该书签，列表会在收银系统中打开。'],
 ];
