@@ -109,7 +109,7 @@ function Kpi({ label, value, className }: { label: string; value: string; classN
   return (
     <Card className={cx('!p-4', className)}>
       <div className="text-xs text-ink-3">{label}</div>
-      <div className="mt-1 truncate text-lg font-semibold tracking-tight text-ink num">{value}</div>
+      <div className="mt-1 text-base font-semibold leading-snug tracking-tight text-ink num min-[400px]:text-lg">{value}</div>
     </Card>
   );
 }

@@ -97,8 +97,8 @@ function ClientSearch() {
                       <td className={cx(td, 'hidden text-right text-ink-3 num sm:table-cell')}>{page * PAGE_SIZE + i + 1}</td>
                       <td className={td}>
                         <div className="font-semibold num">{c.code}</div>
-                        <div className="max-w-[160px] truncate text-xs text-ink-3 sm:max-w-[220px]">{[c.full_name, c.phone].filter(Boolean).join(' · ') || 'Ismi kiritilmagan'}</div>
-                        <div className="text-xs text-ink-3 num sm:hidden">Naqd {compactMoney(c.cash)} · Karta {compactMoney(c.card)}</div>
+                        <div className="max-w-[140px] truncate text-xs text-ink-3 sm:max-w-[220px]">{[c.full_name, c.phone].filter(Boolean).join(' · ') || 'Ismi kiritilmagan'}</div>
+                        <div className="flex max-w-[140px] flex-wrap gap-x-2 text-xs text-ink-3 num sm:hidden"><span>Naqd {compactMoney(c.cash)}</span><span>Karta {compactMoney(c.card)}</span></div>
                       </td>
                       <td className={cx(td, 'hidden text-right num text-ink-2 sm:table-cell')}>{groupDigits(c.count)}</td>
                       <td className={cx(td, 'hidden text-right num sm:table-cell', !c.cash && 'text-ink-3')}>{money(c.cash)}</td>

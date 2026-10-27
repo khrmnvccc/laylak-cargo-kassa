@@ -64,12 +64,12 @@ export function PaymentsTable({ items, showDate = true, compact = false, list = 
               <span className="size-2 shrink-0 rounded-full" style={{ background: methodColor(p.method) }} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="truncate text-sm font-medium text-ink num">{p.client_code}</span>
+                  <span className="shrink-0 text-sm font-medium text-ink num">{p.client_code}</span>
                   {p.client_name && <span className="truncate text-xs text-ink-3">{p.client_name}</span>}
                 </div>
                 <div className="mt-0.5 truncate text-xs text-ink-3">{relativeDay(p.paid_at)} · {p.created_by_name}</div>
               </div>
-              <div className="text-right">
+              <div className="shrink-0 text-right">
                 <div className={cx('text-sm font-semibold text-ink num', p.voided_at && 'line-through')}>{money(p.amount)}</div>
                 <div className="text-xs text-ink-3">{p.voided_at ? 'Bekor qilingan' : methodLabel(p.method)}</div>
               </div>

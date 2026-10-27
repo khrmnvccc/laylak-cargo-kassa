@@ -83,7 +83,7 @@ export default function Balance() {
                         <span className="size-2 rounded-full" style={{ background: m.color }} />{m.label}
                       </div>
                       {loading && !data ? <div className="skeleton mt-3 h-7 w-3/4" /> : (
-                        <div className={cx('mt-1.5 text-xl font-semibold tracking-tight num sm:text-2xl', (row?.current || 0) < 0 ? 'text-danger' : 'text-ink')}>{money(row?.current || 0)}</div>
+                        <div className={cx('mt-1.5 text-base font-semibold tracking-tight num min-[400px]:text-lg sm:text-2xl', (row?.current || 0) < 0 ? 'text-danger' : 'text-ink')}>{money(row?.current || 0)}</div>
                       )}
                       <div className="mt-1 text-xs text-ink-3">{m.hint}</div>
                     </Card>
@@ -106,7 +106,28 @@ export default function Balance() {
                 {!isToday && <Button size="sm" variant="ghost" onClick={() => setDate(today)}>Bugun</Button>}
               </div>
             </div>
-            <div className="mt-3 overflow-x-auto scrollbar-thin border-t border-line">
+            {data && (
+              <ul className="mt-3 divide-y divide-line border-t border-line sm:hidden">
+                {sources.map((r) => (
+                  <li key={r.source} className="px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="flex items-center gap-2 text-sm font-medium"><span className="size-2 rounded-full" style={{ background: methodColor(r.source) }} />{accountLabel(r.source)}</span>
+                      <span className={cx('text-sm font-semibold num', r.closing < 0 && 'text-danger')}>{money(r.closing)}</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-ink-3 num">
+                      <span>Boshida {money(r.opening)}</span>
+                      {r.income > 0 && <span className="text-up">+{money(r.income)}</span>}
+                      {r.expense > 0 && <span className="text-down">−{money(r.expense)}</span>}
+                      {r.adjustment !== 0 && <span>tuzatish {signed(r.adjustment)}</span>}
+                    </div>
+                  </li>
+                ))}
+                <li className="flex items-center justify-between gap-3 bg-surface-2/60 px-4 py-3 text-sm font-semibold">
+                  <span>Jami</span><span className="num">{money(sum('closing'))}</span>
+                </li>
+              </ul>
+            )}
+            <div className={cx('mt-3 overflow-x-auto scrollbar-thin border-t border-line', data && 'hidden sm:block')}>
               {loading && !data ? <SkeletonRows rows={4} cols={6} /> : (
                 <table className="w-full">
                   <thead className="border-b border-line bg-surface-2/60">
@@ -212,8 +233,8 @@ export default function Balance() {
                       <tr>
                         <th className={th}>Kun</th>
                         <th className={cx(th, 'text-right')}>Tushum</th>
-                        <th className={cx(th, 'text-right')}>Rasxod</th>
-                        <th className={cx(th, 'text-right')}>Sof</th>
+                        <th className={cx(th, 'hidden text-right sm:table-cell')}>Rasxod</th>
+                        <th className={cx(th, 'hidden text-right sm:table-cell')}>Sof</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-line">
@@ -225,9 +246,12 @@ export default function Balance() {
                             <ChevronRight className={cx('mr-1 inline size-3.5 text-ink-3 transition-transform', openDay === d.day && 'rotate-90')} />
                             {formatDate(d.day, false)} <span className="text-ink-3">{weekday(d.day, true)}</span>
                           </td>
-                          <td className={cx(td, 'text-right num', !d.income && 'text-ink-3')}>{money(d.income)}</td>
-                          <td className={cx(td, 'text-right num', d.expense ? 'text-down' : 'text-ink-3')}>{d.expense ? `−${money(d.expense)}` : money(0)}</td>
-                          <td className={cx(td, 'text-right font-medium num', d.income - d.expense < 0 && 'text-danger')}>{signed(d.income - d.expense)}</td>
+                          <td className={cx(td, 'text-right num', !d.income && 'text-ink-3')}>
+                            {money(d.income)}
+                            {d.expense > 0 && <span className="block text-xs text-down sm:hidden">−{money(d.expense)}</span>}
+                          </td>
+                          <td className={cx(td, 'hidden text-right num sm:table-cell', d.expense ? 'text-down' : 'text-ink-3')}>{d.expense ? `−${money(d.expense)}` : money(0)}</td>
+                          <td className={cx(td, 'hidden text-right font-medium num sm:table-cell', d.income - d.expense < 0 && 'text-danger')}>{signed(d.income - d.expense)}</td>
                         </tr>
                         {openDay === d.day && (
                           <tr className="bg-surface-2/60">
@@ -276,7 +300,7 @@ function DaySplit({ day }: { day: BalanceReport['recent'][number] }) {
       </div>
       <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-xs text-ink-2">
         <span>Jami tushum: <b className="text-ink num">{money(day.income)}</b> · naqd <b className="text-ink num">{money(day.cash_income)}</b> · kartaga <b className="text-ink num">{money(card)}</b></span>
-        {day.expense > 0 && <span>Rasxod: naqd <b className="text-ink num">{money(day.cash_expense)}</b> · karta <b className="text-ink num">{money(day.card_expense)}</b></span>}
+        {day.expense > 0 && <span>Rasxod: <b className="text-down num">−{money(day.expense)}</b> · naqd <b className="text-ink num">{money(day.cash_expense)}</b> · karta <b className="text-ink num">{money(day.card_expense)}</b> · sof <b className="text-ink num">{signed(day.income - day.expense)}</b></span>}
       </div>
     </div>
   );

@@ -109,7 +109,7 @@ export function StatCard({ label, value, previous, hint, accent, loading, format
       {loading ? (
         <div className="skeleton mt-3 h-7 w-3/4" />
       ) : (
-        <div className="mt-2 text-lg font-semibold tracking-tight text-ink num min-[420px]:text-[22px] sm:text-2xl">{format(value)}</div>
+        <div className="mt-2 text-base font-semibold tracking-tight text-ink num min-[400px]:text-lg min-[420px]:text-[22px] sm:text-2xl">{format(value)}</div>
       )}
       <div className="mt-1.5 flex min-h-5 items-center gap-2 text-xs text-ink-3">
         {!loading && previous !== undefined && <Delta current={value} previous={previous} />}
@@ -186,9 +186,9 @@ export function MethodCells({ row, open, bold }: { row?: MethodSums | null; open
 
 // ---------- Form controls ----------
 
-export function Field({ label, error, hint, children, required, htmlFor }: { label: string; error?: string; hint?: ReactNode; children: ReactNode; required?: boolean; htmlFor?: string }) {
+export function Field({ label, error, hint, children, required, htmlFor, className }: { label: string; error?: string; hint?: ReactNode; children: ReactNode; required?: boolean; htmlFor?: string; className?: string }) {
   return (
-    <div className="space-y-1.5">
+    <div className={cx('space-y-1.5', className)}>
       <label htmlFor={htmlFor} className="block text-[13px] font-medium text-ink-2">
         {label}
         {required && <span className="ml-0.5 text-danger">*</span>}
@@ -413,8 +413,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
 // ---------- Table primitives ----------
 
-export const th = 'px-4 py-2.5 text-left text-xs font-medium text-ink-3 whitespace-nowrap';
-export const td = 'px-4 py-3 text-sm text-ink whitespace-nowrap';
+export const th = 'px-3 sm:px-4 py-2.5 text-left text-xs font-medium text-ink-3 whitespace-nowrap';
+export const td = 'px-3 sm:px-4 py-3 text-sm text-ink whitespace-nowrap';
 
 export function Avatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' }) {
   const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join('') || '?';

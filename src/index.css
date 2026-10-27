@@ -108,6 +108,8 @@
 
 @layer base {
   html { -webkit-text-size-adjust: 100%; }
+  /* A grid cell may shrink below its content (a date input, a wide table), so a phone-wide page never scrolls sideways. */
+  .grid > * { min-width: 0; }
   body {
     background: var(--backdrop);
     background-attachment: fixed;
