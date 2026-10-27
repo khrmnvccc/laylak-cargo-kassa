@@ -58,7 +58,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
 export const useLive = () => useContext(LiveContext);
 
 /** Fetches a resource and silently refetches it whenever shared data changes. */
-export function useApi<T>(path: string | null, query?: object) {
+/** keep: on a new query, go on showing the previous answer until the new one arrives instead of blanking the page. */
+export function useApi<T>(path: string | null, query?: object, { keep = false }: { keep?: boolean } = {}) {
   const { tick } = useLive();
   const key = path ? `${path}?${JSON.stringify(query || {})}` : null;
   const [state, setState] = useState<{ data: T | null; error: string | null; loading: boolean; key: string | null }>({
@@ -70,7 +71,7 @@ export function useApi<T>(path: string | null, query?: object) {
     if (!path || !key) return;
     let active = true;
     // Keep showing previous data on background refreshes; only show loading on a new query.
-    setState((s) => (s.key === key ? s : { data: null, error: null, loading: true, key }));
+    setState((s) => (s.key === key ? s : keep && s.data ? { ...s, error: null, loading: true, key } : { data: null, error: null, loading: true, key }));
     api<T>(path, { query: query as Record<string, unknown> | undefined })
       .then((data) => active && setState({ data, error: null, loading: false, key }))
       .catch((error: Error) => active && setState((s) => ({ ...s, error: error.message, loading: false, key })));

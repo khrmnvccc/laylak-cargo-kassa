@@ -40,7 +40,10 @@ export default function Balance() {
   const { user } = useAuth();
   const today = todayTashkent();
   const [date, setDate] = useState(today);
-  const { data, error, loading, reload } = useApi<BalanceReport>('/balance', { date });
+  const { data, error, loading, reload } = useApi<BalanceReport>('/balance', { date }, { keep: true });
+  // The 14-day table always ends today, so picking one of its days does not shift the list.
+  const todays = useApi<BalanceReport>(date === today ? null : '/balance', { date: today }, { keep: true });
+  const recent = (date === today ? data : todays.data || data)?.recent;
   const [openDay, setOpenDay] = useState<string | null>(null);
   const [modal, setModal] = useState<'expense' | 'adjust' | 'import' | Expense | null>(null);
 
@@ -93,7 +96,7 @@ export default function Balance() {
             </div>
           </section>
 
-          <Card className="mt-4" padded={false}>
+          <Card className={cx('mt-4 transition-opacity', loading && data && 'opacity-60')} padded={false}>
             <div className="flex flex-wrap items-center justify-between gap-3 px-4 pt-4 sm:px-5">
               <div>
                 <h3 className="text-[15px] font-semibold tracking-tight text-ink">Kunlik harakat</h3>
@@ -238,7 +241,7 @@ export default function Balance() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-line">
-                      {data?.recent.map((d) => (
+                      {recent?.map((d) => (
                         <Fragment key={d.day}>
                         <tr onClick={() => { setDate(d.day); setOpenDay((o) => (o === d.day ? null : d.day)); }} aria-expanded={openDay === d.day}
                           className={cx('cursor-pointer transition-colors hover:bg-surface-2', d.day === date && 'bg-surface-2')}>
