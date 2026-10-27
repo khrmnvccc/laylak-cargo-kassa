@@ -99,7 +99,7 @@ export default function Orders() {
       <PageHeader title="Buyurtmalar" subtitle="Har bir buyurtmaga stiker chop eting. Kassada skaner qilinsa toʻlov oynasi ochiladi."
         actions={(
           <div className="flex w-full flex-wrap gap-2 sm:w-auto">
-          <Button variant="primary" icon={<FileSpreadsheet className="size-4" />} onClick={() => setImporting(true)}>Roʻyxatdan yuklash</Button>
+          <Button variant="primary" className="w-full sm:w-auto" icon={<FileSpreadsheet className="size-4" />} onClick={() => setImporting(true)}>Roʻyxatdan yuklash</Button>
           <form className="flex min-w-0 flex-1 gap-2 sm:flex-none" onSubmit={(e) => { e.preventDefault(); if (manual.trim()) { openSticker(manual.replace(/\D/g, '')); setManual(''); } }}>
             <Input value={manual} onChange={(e) => setManual(e.target.value)} placeholder="Stiker kodi" inputMode="numeric" className="h-9 min-w-0 flex-1 sm:w-36 sm:flex-none num" aria-label="Stiker kodi" />
             <Button type="submit" icon={<ScanLine className="size-4" />}>Ochish</Button>
@@ -132,14 +132,14 @@ export default function Orders() {
               <Segmented value={form.transport} onChange={(v) => set({ transport: v })} className="w-full"
                 options={[{ value: 'Avia', label: 'Avia' }, { value: 'Avto', label: 'Avto' }]} />
             </Field>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               <Field label="Joylar" htmlFor="o-places" error={errors.places}>
                 <Input id="o-places" value={form.places} onChange={(e) => set({ places: e.target.value.replace(/\D/g, '').slice(0, 4) })} inputMode="numeric" className="num" />
               </Field>
               <Field label="Ogʻirlik, kg" htmlFor="o-weight" error={errors.weight}>
                 <Input id="o-weight" value={form.weight} onChange={(e) => set({ weight: e.target.value.replace(/[^\d.,]/g, '').slice(0, 8) })} inputMode="decimal" className="num" />
               </Field>
-              <Field label="Qabul qilingan" htmlFor="o-date" error={errors.receivedAt}>
+              <Field label="Qabul qilingan" htmlFor="o-date" error={errors.receivedAt} className="col-span-2 sm:col-span-1">
                 <Input id="o-date" type="date" value={form.receivedAt} max={todayTashkent()} onChange={(e) => set({ receivedAt: e.target.value })} className="px-2" />
               </Field>
             </div>
@@ -167,7 +167,28 @@ export default function Orders() {
           {list.loading && !list.data ? <SkeletonRows rows={6} cols={5} /> : list.error ? <div className="p-4"><Alert>{list.error}</Alert></div> : !items.length ? (
             <EmptyState title="Stikerlar yoʻq" description="Chapdagi formadan birinchi stikerni chop eting." />
           ) : (
-            <div className="overflow-x-auto">
+            <>
+            <ul className="divide-y divide-line md:hidden">
+              {items.map((o) => (
+                <li key={o.id} className="flex items-center gap-3 px-4 py-3">
+                  <button type="button" className="min-w-0 flex-1 text-left" onClick={() => openSticker(o.scan_code)}>
+                    <div className="flex items-center gap-2">
+                      <span className="shrink-0 text-sm font-medium text-ink num">{o.client_code}</span>
+                      {o.client_name && <span className="truncate text-xs text-ink-3">{o.client_name}</span>}
+                    </div>
+                    <div className="mt-0.5 truncate text-xs text-ink-3 num">
+                      {[o.scan_code, o.order_no ? `№${o.order_no}` : '', o.transport, o.weight ? `${o.weight} kg` : '', formatDate(o.received_at)].filter(Boolean).join(' · ')}
+                    </div>
+                  </button>
+                  <div className="shrink-0 text-right">
+                    <div className="text-sm font-semibold text-ink num">{money(o.amount)}</div>
+                    <div className="mt-0.5">{o.payment_id ? <Badge tone="success">{methodLabel(o.paid_method!)}</Badge> : <Badge tone="warn">Toʻlanmagan</Badge>}</div>
+                  </div>
+                  <Button size="sm" variant="ghost" icon={<Printer className="size-4" />} onClick={() => void printOrderSticker(o)} aria-label="Chop etish" />
+                </li>
+              ))}
+            </ul>
+            <div className="hidden overflow-x-auto md:block">
               <table className="w-full">
                 <thead className="border-b border-line">
                   <tr><th className={th}>Stiker</th><th className={th}>Mijoz</th><th className={th}>Buyurtma</th><th className={`${th} text-right`}>Summa</th><th className={th}>Holat</th><th className={th} /></tr>
@@ -195,6 +216,7 @@ export default function Orders() {
                 </tbody>
               </table>
             </div>
+            </>
           )}
           {list.loading && list.data && <div className="flex justify-center p-2 text-ink-3"><Loader2 className="size-4 animate-spin" /></div>}
         </Card>
