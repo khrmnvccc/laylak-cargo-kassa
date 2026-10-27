@@ -1193,6 +1193,10 @@ route('GET', '/balance', 'balance.view', async (ctx) => {
     query(
       `SELECT (at AT TIME ZONE '${TZ}')::date AS day,
               COALESCE(SUM(income), 0)::bigint AS income,
+              COALESCE(SUM(income) FILTER (WHERE source = 'cash'), 0)::bigint AS cash_income,
+              COALESCE(SUM(income) FILTER (WHERE source = 'card' AND method = 'card'), 0)::bigint AS card_income,
+              COALESCE(SUM(income) FILTER (WHERE method = 'yandex'), 0)::bigint AS yandex_income,
+              COALESCE(SUM(income) FILTER (WHERE method = 'pochta'), 0)::bigint AS pochta_income,
               COALESCE(SUM(expense), 0)::bigint AS expense,
               COALESCE(SUM(expense) FILTER (WHERE source = 'cash'), 0)::bigint AS cash_expense,
               COALESCE(SUM(expense) FILTER (WHERE source = 'card'), 0)::bigint AS card_expense
@@ -1208,7 +1212,7 @@ route('GET', '/balance', 'balance.view', async (ctx) => {
   const days = [];
   for (let i = 0; i < 14; i++) {
     const day = addDays(date, -i);
-    days.push(recentMap.get(day) || { day, income: 0, expense: 0, cash_expense: 0, card_expense: 0 });
+    days.push(recentMap.get(day) || { day, income: 0, cash_income: 0, card_income: 0, yandex_income: 0, pochta_income: 0, expense: 0, cash_expense: 0, card_expense: 0 });
   }
   return { date, sources: SOURCES.map((src) => bySource[src]), expenses, adjustments, recent: days };
 });

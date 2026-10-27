@@ -19,7 +19,7 @@
   body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
   main { max-width: 520px; margin: 0 auto; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 32px max(16px, env(safe-area-inset-left)); display: grid; gap: 14px; }
   header { display: flex; align-items: center; gap: 12px; padding: 4px 2px; }
-  header img { width: 64px; height: auto; }
+  header img { width: 64px; height: auto; mix-blend-mode: multiply; }
   header b { display: block; color: var(--navy); font-size: 19px; letter-spacing: .06em; }
   header span { color: var(--ink2); font-size: 13px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px; }
@@ -38,8 +38,6 @@
   .due span { opacity: .8; font-size: 14px; }
   .due b { font-size: 22px; }
   .note { margin: 12px 0 0; color: var(--ink2); font-size: 13px; }
-  .promo { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 14px; align-items: center; }
-  .promo img { width: 96px; height: 125px; object-fit: cover; border-radius: 12px; }
   .promo h2 { margin: 0 0 4px; font-size: 17px; color: var(--navy); }
   .promo p { margin: 0; color: var(--ink2); font-size: 14px; }
   .links { display: grid; gap: 8px; margin-top: 14px; }
@@ -64,11 +62,8 @@
 
   <section class="card">
     <div class="promo">
-      <img src="/brand/laylak-qahramon.png" alt="Laylak Cargo qahramoni" width="96" height="125" />
-      <div>
-        <h2>Laylak Cargo bilan bogʻlaning</h2>
-        <p>Savolingiz boʻlsa yoki yangi buyurtma bermoqchi boʻlsangiz, bizga yozing.</p>
-      </div>
+      <h2>Laylak Cargo bilan bogʻlaning</h2>
+      <p>Savolingiz boʻlsa yoki yangi buyurtma bermoqchi boʻlsangiz, bizga yozing.</p>
     </div>
     <div class="links">
       <a class="main" href="https://t.me/laylak_cargo" target="_blank" rel="noopener">

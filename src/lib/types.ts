@@ -151,7 +151,10 @@ export interface BalanceReport {
   sources: SourceBalance[];
   expenses: Expense[];
   adjustments: Adjustment[];
-  recent: Array<{ day: string; income: number; expense: number; cash_expense: number; card_expense: number }>;
+  recent: Array<{
+    day: string; income: number; cash_income: number; card_income: number; yandex_income: number; pochta_income: number;
+    expense: number; cash_expense: number; card_expense: number;
+  }>;
 }
 
 export interface AttendanceRow {
