@@ -181,6 +181,7 @@ export interface MyAttendance {
 export interface Order {
   id: string;
   scan_code: string;
+  public_token: string;
   client_code: string;
   client_name: string | null;
   phone: string | null;

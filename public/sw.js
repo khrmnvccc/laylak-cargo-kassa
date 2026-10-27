@@ -26,7 +26,7 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(req)
         .then((res) => {
-          if (res.ok) caches.open(CACHE).then((c) => c.put('/', res.clone()));
+          if (res.ok && url.pathname === '/') caches.open(CACHE).then((c) => c.put('/', res.clone()));
           return res;
         })
         .catch(() => caches.match('/').then((r) => r || Response.error())),

@@ -319,7 +319,12 @@ CREATE INDEX IF NOT EXISTS orders_created_idx ON orders(created_at DESC);
 ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
 `;
 
-const SCHEMA_VERSION = 6;
+// v7: every order gets a secret for its public status page (the sticker QR), so codes can't be guessed.
+const SCHEMA_V7_SQL = `
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS public_token TEXT NOT NULL DEFAULT substr(replace(gen_random_uuid()::text, '-', ''), 1, 20);
+`;
+
+const SCHEMA_VERSION = 7;
 
 export function ensureSchema(): Promise<void> {
   if (!globalForPool.__kassaSchema) {
@@ -350,6 +355,7 @@ async function migrate() {
       if (current < 4) await client.query(SCHEMA_V4_SQL);
       if (current < 5) await client.query(SCHEMA_V5_SQL);
       if (current < 6) await client.query(SCHEMA_V6_SQL);
+      if (current < 7) await client.query(SCHEMA_V7_SQL);
       await client.query(
         `INSERT INTO app_meta (key, value) VALUES ('schema_version', $1::jsonb)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,

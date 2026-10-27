@@ -60,10 +60,11 @@ export default function Kassa() {
     return () => clearInterval(id);
   }, []);
 
-  // Look up the client as the ID is typed.
+  // Look up the client as the ID is typed. A scanner types very fast, so the state is only replaced when it
+  // really changes: a new object on every key makes React stop with "Maximum update depth exceeded".
   useEffect(() => {
-    if (!normalizedCode || !/^[A-Z0-9-]{1,40}$/.test(normalizedCode)) { setLookup({ state: 'idle' }); return; }
-    setLookup({ state: 'loading' });
+    if (!normalizedCode || !/^[A-Z0-9-]{1,40}$/.test(normalizedCode)) { setLookup((l) => (l.state === 'idle' ? l : { state: 'idle' })); return; }
+    setLookup((l) => (l.state === 'loading' ? l : { state: 'loading' }));
     const timer = setTimeout(async () => {
       try {
         const info = await api<ClientInfo>(`/clients/${encodeURIComponent(normalizedCode)}`);

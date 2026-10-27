@@ -356,7 +356,7 @@ function paymentCaption(p: { method: string; amount: number; by: string; at: str
 
 // ---------- orders with a sticker: scan in the kassa, see what is owed, take the payment ----------
 
-const ORDER_COLUMNS = `o.id, o.scan_code, o.client_code, COALESCE(o.client_name, c.full_name) AS client_name,
+const ORDER_COLUMNS = `o.id, o.scan_code, o.public_token, o.client_code, COALESCE(o.client_name, c.full_name) AS client_name,
   COALESCE(o.phone, c.phone) AS phone, o.order_no, o.transport, o.places, o.weight::float8 AS weight, o.amount,
   to_char(o.received_at, 'YYYY-MM-DD') AS received_at, o.note, o.created_by_name, o.created_at,
   CASE WHEN p.voided_at IS NULL THEN p.id END AS payment_id,
@@ -468,6 +468,30 @@ route('POST', '/orders/import', 'payments.create', async (ctx) => {
     return { dryRun: false, ...summary, orders };
   });
 });
+
+// The page a client opens by scanning the sticker with a phone. It needs the order's secret as well as
+// its code, and shows no phone number and only a shortened name.
+route('GET', '/public/orders/:ref', 'public', async (ctx) => {
+  const ref = ctx.params.ref.match(/^(77\d{8})\.([0-9a-f]{20})$/);
+  if (!ref) throw new HttpError(404, 'Buyurtma topilmadi');
+  const rows = await query<Record<string, any>>(
+    `SELECT o.scan_code, o.client_code, COALESCE(o.client_name, c.full_name) AS client_name, o.order_no, o.transport,
+            o.places, o.weight::float8 AS weight, o.amount, to_char(o.received_at, 'YYYY-MM-DD') AS received_at,
+            CASE WHEN p.voided_at IS NULL THEN p.paid_at END AS paid_at
+       FROM ${ORDER_FROM} WHERE o.scan_code = $1 AND o.public_token = $2 AND o.deleted_at IS NULL`,
+    [ref[1], ref[2]],
+  );
+  if (!rows.length) throw new HttpError(404, 'Buyurtma topilmadi');
+  const { client_name, ...order } = rows[0];
+  return { ...order, client_name: shortName(client_name), status: order.paid_at ? 'collected' : 'waiting' };
+});
+
+/** "Abdumalikova Muslima Odil qizi" → "Abdumalikova M." */
+function shortName(name: string | null): string | null {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return null;
+  return parts.length > 1 ? `${parts[0]} ${parts[1][0].toUpperCase()}.` : parts[0];
+}
 
 route('GET', '/orders/scan/:code', 'payments.create', async (ctx) => {
   const code = ctx.params.code.replace(/\D/g, '');
