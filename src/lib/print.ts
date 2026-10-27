@@ -136,8 +136,16 @@ export function printClientLabel(client: LabelClient, copies = 1) {
 
 /** The kassa sticker for a parcel: what is owed, and a QR the cashier scans to take the payment. */
 export async function printOrderSticker(order: Order) {
+  return printOrderStickers([order]);
+}
+
+export async function printOrderStickers(orders: Order[]) {
   const { toString } = await import('qrcode');
-  const qr = await toString(order.scan_code, { type: 'svg', margin: 0, errorCorrectionLevel: 'M' });
+  const labels = await Promise.all(orders.map(async (order) => stickerHtml(order, await toString(order.scan_code, { type: 'svg', margin: 0, errorCorrectionLevel: 'M' }))));
+  printHtml(labels.join(''), 'label', orders.length === 1 ? `Stiker ${orders[0].scan_code}` : `Stikerlar (${orders.length})`);
+}
+
+function stickerHtml(order: Order, qr: string) {
   const fit = Math.max(14, Math.min(26, Math.floor(230 / Math.max(order.client_code.length, 1))));
   const rows = [
     ['Usul', order.transport],
@@ -146,7 +154,7 @@ export async function printOrderSticker(order: Order) {
     ['Buyurtma', order.order_no ? `№${order.order_no}` : ''],
     ['Qabul', order.received_at.split('-').reverse().join('.')],
   ].filter(([, v]) => v);
-  const body = `<div class="label sticker">
+  return `<div class="label sticker">
     <div class="brand"><b>LAYLAK CARGO</b><span>${esc(formatDate(order.received_at))}</span></div>
     <div class="cap">Mijoz ID</div><div class="code num" style="font-size:${fit}pt">${esc(order.client_code)}</div>
     ${order.client_name ? `<div class="name">${esc(order.client_name)}</div>` : ''}
@@ -158,7 +166,6 @@ export async function printOrderSticker(order: Order) {
     <div class="sep"></div><div class="cap">Toʻlov</div><div class="amount num">${esc(money(order.amount))}</div>
     <div class="foot">Kassada skaner qiling</div>
   </div>`;
-  printHtml(body, 'label', `Stiker ${order.scan_code}`);
 }
 
 // ---------- A4 documents ----------

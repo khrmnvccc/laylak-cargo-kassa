@@ -747,3 +747,27 @@ test('order stickers: scanning the code shows what is owed and takes the payment
   assert.equal((await owner.call('DELETE', `/orders/${second.body.order.id}`)).status, 200);
   assert.equal((await owner.call('GET', `/orders/scan/${second.body.order.scan_code}`)).status, 404);
 });
+
+test('order import: a list from the admin panel becomes stickers, once', async () => {
+  const owner = new Client();
+  await owner.call('POST', '/auth/login', { username: 'admin', password: 'password123' });
+  const rows = [
+    { clientCode: 'TTT-103280', clientName: 'Abdumalikova Muslima', orderNo: '134667', transport: 'Avia', places: 6, weight: 2.1, amount: 247800 },
+    { clientCode: 'TTT-103750', clientName: 'Orifjonov Yahyo', orderNo: '145393', transport: 'Avia', places: 1, weight: 0.85, amount: 106200 },
+    { clientCode: 'TTT-103750', clientName: 'Orifjonov Yahyo', orderNo: '145393', transport: 'Avia', places: 1, weight: 0.85, amount: 106200 },
+    { clientCode: 'BAD CODE!', orderNo: '1', amount: 1000 },
+  ];
+  const dry = await owner.call('POST', '/orders/import', { rows, receivedAt: '2026-10-26', dryRun: true });
+  assert.equal(dry.status, 200, JSON.stringify(dry.body));
+  assert.deepEqual([dry.body.adding, dry.body.total, dry.body.skipped, dry.body.invalid.length], [2, 354000, 1, 1]);
+  assert.equal((await owner.call('GET', '/orders', undefined, { q: '134667' })).body.items.length, 0, 'dry run saves nothing');
+
+  const real = await owner.call('POST', '/orders/import', { rows, receivedAt: '2026-10-26' });
+  assert.equal(real.status, 200, JSON.stringify(real.body));
+  assert.equal(real.body.orders.length, 2);
+  assert.ok(real.body.orders.every((o: any) => /^77\d{8}$/.test(o.scan_code) && o.received_at === '2026-10-26'));
+  const again = await owner.call('POST', '/orders/import', { rows, dryRun: true });
+  assert.deepEqual([again.body.adding, again.body.skipped], [0, 3]);
+  const scan = await owner.call('GET', `/orders/scan/${real.body.orders[0].scan_code}`);
+  assert.equal(scan.body.order.client_name, 'Abdumalikova Muslima');
+});
