@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { FileSpreadsheet, Loader2, Printer, ScanLine, Search, Trash2, UserCheck } from 'lucide-react';
+import { FileSpreadsheet, Loader2, Plus, Printer, ScanLine, Search, Trash2, UserCheck } from 'lucide-react';
 import { ImportOrders } from '../components/ImportOrders';
 import { bookmarkText, clearBookmarkText } from '../lib/bookmarklet';
 import { api, ApiError } from '../lib/api';
@@ -10,7 +10,7 @@ import { printOrderSticker } from '../lib/print';
 import { openSticker } from '../lib/scanner';
 import { can } from '../lib/perms';
 import type { Order } from '../lib/types';
-import { Alert, Badge, Button, Card, CardHeader, EmptyState, Field, Input, Modal, PageHeader, Segmented, SkeletonRows, td, th, useToast } from '../components/ui';
+import { Alert, Badge, Button, Card, EmptyState, Field, Input, Modal, PageHeader, Segmented, SkeletonRows, td, th, useToast } from '../components/ui';
 
 type Errors = Partial<Record<'clientCode' | 'amount' | 'places' | 'weight' | 'receivedAt', string>>;
 const EMPTY = { clientCode: '', clientName: '', phone: '', orderNo: '', transport: 'Avia', places: '1', weight: '', amountText: '', receivedAt: '' };
@@ -28,6 +28,7 @@ export default function Orders() {
   const [status, setStatus] = useState<'all' | 'unpaid' | 'paid'>('all');
   const [manual, setManual] = useState('');
   const [removing, setRemoving] = useState<Order | null>(null);
+  const [creating, setCreating] = useState(false);
   // Opened by the admin panel bookmark: the list comes with the tab.
   const [importText] = useState(bookmarkText);
   const [importing, setImporting] = useState(Boolean(importText));
@@ -71,6 +72,7 @@ export default function Orders() {
       toast({ tone: 'success', title: 'Stiker tayyor', description: `${order.client_code} · ${money(order.amount)} · ${order.scan_code}` });
       setForm({ ...EMPTY, transport: form.transport, receivedAt: form.receivedAt });
       setErrors({});
+      setCreating(false);
       bump();
     } catch (err) {
       if (err instanceof ApiError && err.fields) setErrors(err.fields as Errors);
@@ -99,7 +101,10 @@ export default function Orders() {
       <PageHeader title="Buyurtmalar" subtitle="Har bir buyurtmaga stiker chop eting. Kassada skaner qilinsa toʻlov oynasi ochiladi."
         actions={(
           <div className="flex w-full flex-wrap gap-2 sm:w-auto">
-          <Button variant="primary" className="w-full sm:w-auto" icon={<FileSpreadsheet className="size-4" />} onClick={() => setImporting(true)}>Roʻyxatdan yuklash</Button>
+          <div className="flex w-full gap-2 sm:w-auto">
+            <Button variant="primary" className="flex-1 sm:flex-none" icon={<Plus className="size-4" />} onClick={() => setCreating(true)}>Yangi stiker</Button>
+            <Button className="flex-1 sm:flex-none" icon={<FileSpreadsheet className="size-4" />} onClick={() => setImporting(true)}>Roʻyxatdan yuklash</Button>
+          </div>
           <form className="flex min-w-0 flex-1 gap-2 sm:flex-none" onSubmit={(e) => { e.preventDefault(); if (manual.trim()) { openSticker(manual.replace(/\D/g, '')); setManual(''); } }}>
             <Input value={manual} onChange={(e) => setManual(e.target.value)} placeholder="Stiker kodi" inputMode="numeric" className="h-9 min-w-0 flex-1 sm:w-36 sm:flex-none num" aria-label="Stiker kodi" />
             <Button type="submit" icon={<ScanLine className="size-4" />}>Ochish</Button>
@@ -108,9 +113,7 @@ export default function Orders() {
         )} />
       <ImportOrders open={importing} text={importText} onClose={() => { setImporting(false); clearBookmarkText(); if (window.location.hash.includes('import=')) window.history.replaceState(null, '', '#/orders'); }} />
 
-      <div className="grid gap-4 xl:grid-cols-[420px_minmax(0,1fr)]">
-        <Card className="min-w-0">
-          <CardHeader title="Yangi stiker" subtitle="Saqlangach stiker darhol chop etiladi" />
+      <Modal open={creating} onClose={() => setCreating(false)} title="Yangi stiker" description="Saqlangach stiker darhol chop etiladi">
           <form onSubmit={submit} noValidate className="space-y-4">
             {formError && <Alert>{formError}</Alert>}
             <div className="grid gap-3 sm:grid-cols-2">
@@ -153,7 +156,9 @@ export default function Orders() {
             </Field>
             <Button type="submit" variant="primary" size="lg" className="w-full" loading={saving} icon={<Printer className="size-4" />}>Saqlash va stiker chop etish</Button>
           </form>
-        </Card>
+      </Modal>
+
+      <div>
 
         <Card padded={false} className="min-w-0">
           <div className="flex flex-wrap items-center gap-2 border-b border-line p-3">
@@ -165,7 +170,7 @@ export default function Orders() {
               options={[{ value: 'all', label: 'Hammasi' }, { value: 'unpaid', label: 'Toʻlanmagan' }, { value: 'paid', label: 'Toʻlangan' }]} />
           </div>
           {list.loading && !list.data ? <SkeletonRows rows={6} cols={5} /> : list.error ? <div className="p-4"><Alert>{list.error}</Alert></div> : !items.length ? (
-            <EmptyState title="Stikerlar yoʻq" description="Chapdagi formadan birinchi stikerni chop eting." />
+            <EmptyState title="Stikerlar yoʻq" description="“Yangi stiker” tugmasini bosib birinchi stikerni chop eting." />
           ) : (
             <>
             <ul className="divide-y divide-line md:hidden">
