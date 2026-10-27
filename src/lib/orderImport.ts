@@ -59,7 +59,7 @@ function fromTable(rows: string[][]): ImportOrderRow[] | null {
       clientCode: cell(r, 'clientCode').replace(/\s+/g, '').toUpperCase(),
       clientName: cell(r, 'clientName'),
       phone: cell(r, 'phone'),
-      orderNo: cell(r, 'orderNo').replace(/^(buyurtma\s*)?№?\s*/i, ''),
+      orderNo: cell(r, 'orderNo').match(/([A-Z0-9-]+)\s*$/i)?.[1] || '',
       transport: titleCase(cell(r, 'transport')),
       places: places ? Number(places) : null,
       weight: weight && Number.isFinite(Number(weight)) ? Number(weight) : null,

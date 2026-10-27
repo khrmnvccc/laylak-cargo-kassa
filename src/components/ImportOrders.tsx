@@ -1,5 +1,6 @@
-import { useRef, useState } from 'react';
-import { FileSpreadsheet, Printer } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Bookmark, FileSpreadsheet, Printer } from 'lucide-react';
+import { bookmarkletHref } from '../lib/bookmarklet';
 import { api } from '../lib/api';
 import { useLive } from '../lib/live';
 import { money, todayTashkent } from '../lib/format';
@@ -11,7 +12,7 @@ import { Alert, Button, Field, Input, Modal, Textarea, td, th, useToast } from '
 interface Check { adding: number; total: number; skipped: number; invalid: Array<{ row: number; code: string; error: string }> }
 
 /** Loads a whole list of orders at once: pasted from the admin panel or Excel, or an .xlsx / .csv file. */
-export function ImportOrders({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function ImportOrders({ open, onClose, text }: { open: boolean; onClose: () => void; text?: string | null }) {
   const { bump } = useLive();
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -21,6 +22,15 @@ export function ImportOrders({ open, onClose }: { open: boolean; onClose: () => 
   const [done, setDone] = useState<Order[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const bookmark = useRef<HTMLAnchorElement>(null);
+
+  // A list brought by the browser bookmark from the admin panel.
+  useEffect(() => {
+    if (open && text) { reset(); void load(parseOrderText(text)); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, text]);
+  // React refuses javascript: links in JSX, so the bookmark's address is set directly.
+  useEffect(() => { bookmark.current?.setAttribute('href', bookmarkletHref()); });
 
   function reset() {
     setRows(null); setCheck(null); setDone(null); setError(null);
@@ -113,6 +123,16 @@ export function ImportOrders({ open, onClose }: { open: boolean; onClose: () => 
               <Button className="w-full" icon={<FileSpreadsheet className="size-4" />} onClick={() => fileRef.current?.click()}>Excel fayl tanlash</Button>
             </div>
           </div>
+
+          {!rows && (
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-dashed border-line p-3 text-[13px] text-ink-2">
+              <a ref={bookmark} draggable onClick={(e) => e.preventDefault()}
+                className="inline-flex shrink-0 cursor-grab items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 font-medium text-primary-fg">
+                <Bookmark className="size-4" />Kassaga yuklash
+              </a>
+              <span className="min-w-0 flex-1">Bu tugmani sichqoncha bilan zakladkalar paneliga torting. Keyin admin paneldagi buyurtmalar sahifasida shu zakladkani bossangiz, roʻyxat kassada ochiladi.</span>
+            </div>
+          )}
 
           {check && (
             <div className="grid grid-cols-3 gap-2 text-sm">

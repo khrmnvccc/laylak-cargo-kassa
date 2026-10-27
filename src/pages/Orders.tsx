@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { FileSpreadsheet, Loader2, Printer, ScanLine, Search, Trash2, UserCheck } from 'lucide-react';
 import { ImportOrders } from '../components/ImportOrders';
+import { bookmarkText, clearBookmarkText } from '../lib/bookmarklet';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useApi, useLive } from '../lib/live';
@@ -27,7 +28,9 @@ export default function Orders() {
   const [status, setStatus] = useState<'all' | 'unpaid' | 'paid'>('all');
   const [manual, setManual] = useState('');
   const [removing, setRemoving] = useState<Order | null>(null);
-  const [importing, setImporting] = useState(false);
+  // Opened by the admin panel bookmark: the list comes with the tab.
+  const [importText] = useState(bookmarkText);
+  const [importing, setImporting] = useState(Boolean(importText));
   const list = useApi<{ items: Order[] }>('/orders', { q: q.trim(), status: status === 'all' ? '' : status });
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
   const code = form.clientCode.trim().toUpperCase();
@@ -103,7 +106,7 @@ export default function Orders() {
           </form>
           </div>
         )} />
-      <ImportOrders open={importing} onClose={() => setImporting(false)} />
+      <ImportOrders open={importing} text={importText} onClose={() => { setImporting(false); clearBookmarkText(); if (window.location.hash.includes('import=')) window.history.replaceState(null, '', '#/orders'); }} />
 
       <div className="grid gap-4 xl:grid-cols-[420px_minmax(0,1fr)]">
         <Card className="min-w-0">
