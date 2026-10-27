@@ -71,6 +71,29 @@ function fromTable(rows: string[][]): ImportOrderRow[] | null {
   return usable * 2 >= parsed.length && usable > 0 ? parsed : null;
 }
 
+// One order written on a single line, as a row of a div-based page reads: "Ali Valiyev TTT-200001
+// Buyurtma № 900001 Avia 1 0.5 kg 50 000 so'm 0 kun Naqd".
+function fromLine(line: string, prev: string): ImportOrderRow | null {
+  // Codes are written in capitals (TTT-103280), which also finds them when cells run together.
+  const code = line.match(/([A-Z]{2,6}-\d{3,})/) || line.match(/(?:^|\s)([A-Z]{1,6}-?\d{3,})(?=\s|$)/i);
+  if (!code) return null;
+  const before = line.slice(0, code.index! + code[0].length - code[1].length).trim();
+  const after = line.slice(code.index! + code[0].length);
+  const transport = after.match(/\b(avia|avto|standart)\b(?:\s+(\d{1,4})\b(?!\s*(?:kg|[.,]\d)))?/i);
+  const weight = after.match(/(\d+(?:[.,]\d+)?)\s*kg/i);
+  const sum = after.match(/(\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d+)\s*so.?m/i);
+  return {
+    ...blank(),
+    clientCode: code[1].toUpperCase(),
+    clientName: before || (prev && !CODE_RE.test(prev) && !SUM_RE.test(prev) ? prev : ''),
+    orderNo: after.match(/№\s*([\w-]+)/)?.[1] || '',
+    transport: transport ? titleCase(transport[1]) : '',
+    places: transport?.[2] ? Number(transport[2]) : null,
+    weight: weight ? Number(weight[1].replace(',', '.')) : null,
+    amount: sum ? Number(digits(sum[1])) : 0,
+  };
+}
+
 function fromCells(cells: string[]): ImportOrderRow[] {
   const out: ImportOrderRow[] = [];
   let cur: ImportOrderRow | null = null;
@@ -78,7 +101,12 @@ function fromCells(cells: string[]): ImportOrderRow[] {
   for (const raw of cells) {
     const c = raw.replace(/\s+/g, ' ').trim();
     if (!c) continue;
-    if (CODE_RE.test(c)) {
+    const single = !CODE_RE.test(c) && /so.?m/i.test(c) ? fromLine(c, prev) : null;
+    if (single) {
+      if (cur) out.push(cur);
+      cur = null;
+      out.push(single);
+    } else if (CODE_RE.test(c)) {
       if (cur) out.push(cur);
       cur = { ...blank(), clientCode: c.toUpperCase(), clientName: prev && !CODE_RE.test(prev) && !SUM_RE.test(prev) ? prev : '' };
     } else if (cur) {

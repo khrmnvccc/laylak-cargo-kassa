@@ -130,7 +130,7 @@ export function ImportOrders({ open, onClose, text }: { open: boolean; onClose: 
                 className="inline-flex shrink-0 cursor-grab items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 font-medium text-primary-fg">
                 <Bookmark className="size-4" />Kassaga yuklash
               </a>
-              <span className="min-w-0 flex-1">Bu tugmani sichqoncha bilan zakladkalar paneliga torting. Keyin admin paneldagi buyurtmalar sahifasida shu zakladkani bossangiz, roʻyxat kassada ochiladi.</span>
+              <span className="min-w-0 flex-1">Bu tugmani sichqoncha bilan zakladkalar paneliga torting. Keyin admin panelda kerakli buyurtmalarni belgilab, shu zakladkani bossangiz, belgilanganlar kassada ochiladi.</span>
             </div>
           )}
 
