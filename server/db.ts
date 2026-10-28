@@ -331,7 +331,18 @@ CREATE INDEX IF NOT EXISTS clients_updated_idx ON clients(updated_at);
 CREATE INDEX IF NOT EXISTS expenses_updated_idx ON expenses(updated_at);
 `;
 
-const SCHEMA_VERSION = 8;
+// v9: an order is "handed out" (berildi) on its own, apart from being paid, so the stock left in
+// the warehouse can be listed even when a parcel was paid outside the kassa.
+const SCHEMA_V9_SQL = `
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS issued_at TIMESTAMPTZ;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS issued_by_name TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+CREATE INDEX IF NOT EXISTS orders_updated_idx ON orders(updated_at);
+UPDATE orders o SET issued_at = p.paid_at, issued_by_name = p.created_by_name
+  FROM payments p WHERE p.id = o.payment_id AND p.voided_at IS NULL AND o.issued_at IS NULL;
+`;
+
+const SCHEMA_VERSION = 9;
 
 export function ensureSchema(): Promise<void> {
   if (!globalForPool.__kassaSchema) {
@@ -364,6 +375,7 @@ async function migrate() {
       if (current < 6) await client.query(SCHEMA_V6_SQL);
       if (current < 7) await client.query(SCHEMA_V7_SQL);
       if (current < 8) await client.query(SCHEMA_V8_SQL);
+      if (current < 9) await client.query(SCHEMA_V9_SQL);
       await client.query(
         `INSERT INTO app_meta (key, value) VALUES ('schema_version', $1::jsonb)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
