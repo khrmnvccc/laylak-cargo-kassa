@@ -324,7 +324,14 @@ const SCHEMA_V7_SQL = `
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS public_token TEXT NOT NULL DEFAULT substr(replace(gen_random_uuid()::text, '-', ''), 1, 20);
 `;
 
-const SCHEMA_VERSION = 7;
+// The live-update check reads these maxima every few seconds; indexes keep it from scanning whole tables.
+const SCHEMA_V8_SQL = `
+CREATE INDEX IF NOT EXISTS payments_updated_idx ON payments(updated_at);
+CREATE INDEX IF NOT EXISTS clients_updated_idx ON clients(updated_at);
+CREATE INDEX IF NOT EXISTS expenses_updated_idx ON expenses(updated_at);
+`;
+
+const SCHEMA_VERSION = 8;
 
 export function ensureSchema(): Promise<void> {
   if (!globalForPool.__kassaSchema) {
@@ -356,6 +363,7 @@ async function migrate() {
       if (current < 5) await client.query(SCHEMA_V5_SQL);
       if (current < 6) await client.query(SCHEMA_V6_SQL);
       if (current < 7) await client.query(SCHEMA_V7_SQL);
+      if (current < 8) await client.query(SCHEMA_V8_SQL);
       await client.query(
         `INSERT INTO app_meta (key, value) VALUES ('schema_version', $1::jsonb)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
