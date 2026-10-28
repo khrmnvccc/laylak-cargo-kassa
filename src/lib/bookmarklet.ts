@@ -1,25 +1,30 @@
 // A bookmark the cashier keeps in the browser. Clicked on the admin panel's orders page, it takes the
-// ticked orders (or the whole page) and opens the kassa with that list in the import dialog. The text travels in window.name
+// ticked orders (or, with none ticked, every page of the list) and opens the kassa with that list in the import dialog. The text travels in window.name
 // (not the address), so it never reaches a server or the browser history.
 export const BOOKMARK_PREFIX = 'laylak-orders:';
 
 // Runs on the admin panel page, so it must not use anything from this module. With orders ticked,
-// only their rows are taken; with none ticked, the whole page after a confirmation. The admin panel draws
+// only their rows are taken; with none ticked, after a confirmation it turns the panel's pages itself
+// (the panel shows 50 at a time) and takes every order on every page. The admin panel draws
 // its own tick boxes, so a box counts as ticked by its attributes or, failing those, by a visible tick mark.
 function grab(url: string, prefix: string) {
   const codes = (s: string) => (s.match(/[A-Z]{1,6}-?\d{3,}/gi) || []).length;
   const text = (el: Element) => (el as HTMLElement).innerText || '';
   // A row is the largest element that holds exactly one client code.
-  const rows: HTMLElement[] = [];
-  // Start from the innermost elements that show a code; a code may be split over several text pieces.
   const CODE = /[A-Z]{2,6}-\d{3,}/;
   const hasCode = (el: Element) => !/^(SCRIPT|STYLE|NOSCRIPT)$/.test(el.tagName) && CODE.test(el.textContent || '');
-  for (const leaf of Array.from(document.body.querySelectorAll('*'))) {
-    if (!hasCode(leaf) || Array.from(leaf.children).some(hasCode)) continue;
-    let row: Element | null = leaf;
-    while (row && row.parentElement && row.parentElement !== document.body && codes(text(row.parentElement)) === 1) row = row.parentElement;
-    if (row instanceof HTMLElement && codes(text(row)) === 1 && !rows.includes(row)) rows.push(row);
-  }
+  const pageRows = () => {
+    const found: HTMLElement[] = [];
+    // Start from the innermost elements that show a code; a code may be split over several text pieces.
+    for (const leaf of Array.from(document.body.querySelectorAll('*'))) {
+      if (leaf.closest('#lk-grab') || !hasCode(leaf) || Array.from(leaf.children).some(hasCode)) continue;
+      let row: Element | null = leaf;
+      while (row && row.parentElement && row.parentElement !== document.body && codes(text(row.parentElement)) === 1) row = row.parentElement;
+      if (row instanceof HTMLElement && codes(text(row)) === 1 && !found.includes(row)) found.push(row);
+    }
+    return found;
+  };
+  const rows = pageRows();
   const shown = (el: Element) => {
     for (let e: Element | null = el; e; e = e.parentElement) {
       const st = getComputedStyle(e);
@@ -88,12 +93,63 @@ function grab(url: string, prefix: string) {
   if (!ticked.length && told) { report(); return; }
   if (ticked.length && told && told !== ticked.length
     && !confirm(`Admin panelda ${told} ta belgilangan, zakladka ${ticked.length} tasini topdi. Shularni olaymi?`)) { report(); return; }
-  const out = ticked.length ? ticked.map((r) => text(r.row)).join('\n') : page;
-  if (!codes(out)) { alert('Bu sahifada buyurtmalar topilmadi'); return; }
-  if (!ticked.length && !confirm('Hech qaysi buyurtma belgilanmagan. Sahifadagi hamma buyurtmalarni olaymi?')) return;
-  window.open(url, prefix + out);
+  if (ticked.length) { window.open(url, prefix + ticked.map((r) => text(r.row)).join('\n')); return; }
+  if (!codes(page)) { alert('Bu sahifada buyurtmalar topilmadi'); return; }
+  if (!confirm('Hech qaysi buyurtma belgilanmagan. Hamma sahifalardagi buyurtmalarni olaymi? Sahifalarni oʻzim varaqlayman.')) return;
+  // The kassa tab is opened now, while the click still counts, so the browser does not block it later.
+  const kassa = window.open('about:blank');
+  if (!kassa) { alert('Brauzer yangi oynani ochishga ruxsat bermadi. Bu sayt uchun qalqib chiquvchi oynalarga ruxsat bering.'); return; }
+  const note = document.createElement('div');
+  note.id = 'lk-grab';
+  note.style.cssText = 'position:fixed;z-index:2147483647;right:16px;bottom:16px;padding:12px 16px;border-radius:12px;background:#00204f;color:#fff;font:600 14px/1.4 system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.25)';
+  document.body.appendChild(note);
+  const taken = new Map<string, string>();
+  const sign = () => pageRows().map(text).join('\n');
+  const usable = (el: HTMLElement) => !(el as HTMLButtonElement).disabled && el.getAttribute('aria-disabled') !== 'true'
+    && !/disabled/i.test(String(el.className)) && shown(el);
+  // The control that shows the next part of the list: an arrow or "next" button, the next page number, or "load more".
+  const nextControl = (): HTMLElement | undefined => {
+    // Never a cell of an order row (its number of places reads like a page number).
+    const inRows = pageRows();
+    const all = Array.from(document.querySelectorAll<HTMLElement>('button,a,[role=button],li,span'))
+      .filter((e) => !e.closest('#lk-grab') && !inRows.some((r) => r.contains(e)));
+    const label = (e: HTMLElement) => `${e.getAttribute('aria-label') || ''} ${e.getAttribute('title') || ''} ${e.getAttribute('rel') || ''}`;
+    const arrow = all.find((e) => usable(e) && (/^(›|»|>|→|keyingi|keyingisi|next|далее|следующая|вперед|вперёд)$/i.test(text(e).trim())
+      || (!text(e).trim() || text(e).trim().length <= 2) && /next|keyingi|след|дал/i.test(label(e))));
+    if (arrow) return arrow;
+    const current = all.find((e) => /^\d+$/.test(text(e).trim()) && (e.getAttribute('aria-current') === 'page' || /\b(active|current|selected)\b/i.test(String(e.className))));
+    if (current) {
+      const n = String(Number(text(current).trim()) + 1);
+      const numbered = all.find((e) => e !== current && text(e).trim() === n && usable(e));
+      if (numbered) return numbered;
+    }
+    return all.find((e) => usable(e) && /^(yana|yana yuklash|koʻproq|ko'proq|load more|показать (ещё|еще)|ещё|еще)$/i.test(text(e).trim()));
+  };
+  const finish = () => {
+    note.remove();
+    const out = [...taken.values()].join('\n');
+    if (!codes(out)) { kassa.close(); alert('Buyurtmalar topilmadi'); return; }
+    kassa.name = prefix + out;
+    kassa.location.href = url;
+  };
+  const step = (page: number) => {
+    for (const row of pageRows()) taken.set(text(row), text(row));
+    note.textContent = `Laylak kassa: ${page}-sahifa, ${taken.size} ta buyurtma olindi…`;
+    const next = page < 400 ? nextControl() : undefined;
+    if (!next) { finish(); return; }
+    const before = sign();
+    next.click();
+    // Wait for the panel to show the next part; if nothing changes, the list has ended.
+    let waited = 0;
+    const timer = setInterval(() => {
+      waited += 250;
+      const now = sign();
+      if (now && now !== before) { clearInterval(timer); setTimeout(() => step(page + 1), 300); }
+      else if (waited >= 12000) { clearInterval(timer); finish(); }
+    }, 250);
+  };
+  step(1);
 }
-
 export function bookmarkletHref(origin = window.location.origin): string {
   const code = `(${grab.toString()})(${JSON.stringify(`${origin}/#/orders?import=1`)},${JSON.stringify(BOOKMARK_PREFIX)})`;
   return `javascript:${encodeURIComponent(code)}`;

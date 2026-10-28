@@ -101,7 +101,8 @@ function fromCells(cells: string[]): ImportOrderRow[] {
   for (const raw of cells) {
     const c = raw.replace(/\s+/g, ' ').trim();
     if (!c) continue;
-    const single = !CODE_RE.test(c) && /so.?m/i.test(c) ? fromLine(c, prev) : null;
+    // A whole order on one line; one still being checked may have no sum yet, and is kept so the check shows it.
+    const single = !CODE_RE.test(c) && (/so.?m/i.test(c) || /[A-Z]{2,6}-\d{3,}\s+\S/.test(c)) ? fromLine(c, prev) : null;
     if (single) {
       if (cur) out.push(cur);
       cur = null;
