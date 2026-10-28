@@ -1589,7 +1589,7 @@ function telegramView(config: Awaited<ReturnType<typeof getTelegram>>) {
   if (!config) return { telegram: null };
   return { telegram: {
     botName: config.botName, connected: Boolean(config.chatId), chatName: config.chatName || null, code: config.chatId ? null : config.code,
-    groupName: config.groupId ? config.groupName || 'Guruh' : null, groupCode: config.chatId && !config.groupId ? groupCode(config.token) : null,
+    groupName: config.groupId ? config.groupName || 'Guruh' : null, groupPaused: Boolean(config.groupId && config.groupPaused), groupCode: config.chatId && !config.groupId ? groupCode(config.token) : null,
   } };
 }
 
@@ -1656,10 +1656,21 @@ route('POST', '/telegram/group', 'owner', async (ctx) => {
   return telegramView(next);
 });
 
+// Stop or resume messages to the group without unlinking it; the owner's own chat is not affected.
+route('PUT', '/telegram/group/pause', 'owner', async (ctx) => {
+  const config = await getTelegram();
+  if (!config?.groupId) throw new HttpError(400, 'Guruh ulanmagan');
+  const paused = ctx.body?.paused === true;
+  const next = { ...config, groupPaused: paused };
+  await saveTelegram(next);
+  await audit(null, ctx.user, paused ? 'telegram_group_pause' : 'telegram_group_resume', 'telegram', null, { group: config.groupName });
+  return telegramView(next);
+});
+
 route('DELETE', '/telegram/group', 'owner', async (ctx) => {
   const config = await getTelegram();
   if (!config) throw new HttpError(400, 'Telegram ulanmagan');
-  const { groupId: _id, groupName: _name, groupThreadId: _thread, ...rest } = config;
+  const { groupId: _id, groupName: _name, groupThreadId: _thread, groupPaused: _paused, ...rest } = config;
   await saveTelegram(rest);
   await audit(null, ctx.user, 'telegram_group_remove', 'telegram', null);
   return telegramView(rest);

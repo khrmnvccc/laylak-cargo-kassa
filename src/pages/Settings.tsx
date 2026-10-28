@@ -13,7 +13,7 @@ const ACTIONS: Record<string, string> = {
   setup: 'Tizim sozlandi', login: 'Tizimga kirdi', payment_create: 'Toʻlov kiritdi', payment_void: 'Toʻlovni bekor qildi',
   staff_create: 'Xodim qoʻshdi', staff_update: 'Xodimni oʻzgartirdi', client_update: 'Mijozni oʻzgartirdi', password_change: 'Parolini oʻzgartirdi',
   client_import: 'Mijozlar roʻyxatini yukladi', expense_create: 'Rasxod yozdi', expense_void: 'Rasxodni bekor qildi', balance_adjust: 'Qoldiqni tuzatdi',
-  telegram_set: 'Telegram botni kiritdi', telegram_connect: 'Telegramni uladi', telegram_remove: 'Telegramni uzdi', telegram_group: 'Telegram guruhini uladi', telegram_group_remove: 'Telegram guruhini uzdi', backup_download: 'Zaxirani yuklab oldi',
+  telegram_set: 'Telegram botni kiritdi', telegram_connect: 'Telegramni uladi', telegram_remove: 'Telegramni uzdi', telegram_group: 'Telegram guruhini uladi', telegram_group_remove: 'Telegram guruhini uzdi', telegram_group_pause: 'Guruhga yuborishni toʻxtatdi', telegram_group_resume: 'Guruhga yuborishni qayta yoqdi', backup_download: 'Zaxirani yuklab oldi',
 };
 
 export default function Settings() {
@@ -190,7 +190,7 @@ function AuditLog() {
   );
 }
 
-interface TelegramState { botName: string; connected: boolean; chatName: string | null; code: string | null; groupName: string | null; groupCode: string | null }
+interface TelegramState { botName: string; connected: boolean; chatName: string | null; code: string | null; groupName: string | null; groupPaused?: boolean; groupCode: string | null }
 
 /** Owner only: connect a Telegram bot for the evening report and nightly backup, and download a backup now. */
 function TelegramCard() {
@@ -272,12 +272,22 @@ function TelegramCard() {
               <div className="space-y-2 rounded-lg border border-line px-3 py-2.5">
                 <div className="flex items-center justify-between gap-3">
                   <div className="font-medium text-ink">Guruh</div>
-                  {tg.groupName && <Badge tone="success"><span className="size-1.5 rounded-full bg-success" />{tg.groupName}</Badge>}
+                  {tg.groupName && (tg.groupPaused
+                    ? <Badge tone="warn">{tg.groupName} · toʻxtatilgan</Badge>
+                    : <Badge tone="success"><span className="size-1.5 rounded-full bg-success" />{tg.groupName}</Badge>)}
                 </div>
                 {tg.groupName ? (
                   <>
-                    <p className="text-[13px] text-ink-2">Toʻlov rasmlari va bekor qilingan toʻlovlar bu guruhga ham keladi. Kunlik hisobot va zaxira fayli faqat sizga keladi.</p>
-                    <Button variant="ghost" size="sm" loading={busy === 'DELETE/telegram/group'} onClick={() => call('DELETE', '/telegram/group')}>Guruhni uzish</Button>
+                    <p className="text-[13px] text-ink-2">{tg.groupPaused
+                      ? 'Guruhga hozir hech narsa yuborilmaydi. Toʻlov rasmlari va bekor qilingan toʻlovlar faqat sizga keladi. Ishni tugatgach, “Qayta yoqish”ni bosing.'
+                      : 'Toʻlov rasmlari va bekor qilingan toʻlovlar bu guruhga ham keladi. Kunlik hisobot va zaxira fayli faqat sizga keladi.'}</p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" variant={tg.groupPaused ? 'primary' : 'secondary'} loading={busy === 'PUT/telegram/group/pause'}
+                        onClick={() => call('PUT', '/telegram/group/pause', { paused: !tg.groupPaused })}>
+                        {tg.groupPaused ? 'Qayta yoqish' : 'Vaqtincha toʻxtatish'}
+                      </Button>
+                      <Button variant="ghost" size="sm" loading={busy === 'DELETE/telegram/group'} onClick={() => call('DELETE', '/telegram/group')}>Guruhni uzish</Button>
+                    </div>
                   </>
                 ) : (
                   <>

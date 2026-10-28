@@ -546,6 +546,18 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     assert.match(sent[0].body.text, /bekor qilindi[\s\S]*55 000 soʻm[\s\S]*xato kiritildi/);
     assert.deepEqual(sent.map((x) => x.body.chat_id).sort(), [-1001, 777]);
 
+    // Pausing the group: payments still reach the owner but not the group, until it is resumed.
+    assert.equal((await w.call('PUT', '/telegram/group/pause', { paused: true })).status, 403);
+    const paused = await owner.call('PUT', '/telegram/group/pause', { paused: true });
+    assert.deepEqual([paused.body.telegram.groupName, paused.body.telegram.groupPaused], ['Hisobotlar', true]);
+    sent.length = 0;
+    assert.equal((await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'TG-2', amount: 1000, method: 'cash' })).body.telegram, 'sent');
+    assert.deepEqual(sent.filter((x) => x.method === 'sendPhoto').map((x) => Number(x.body.chat_id)), [777], 'owner only while paused');
+    assert.equal((await owner.call('PUT', '/telegram/group/pause', { paused: false })).body.telegram.groupPaused, false);
+    sent.length = 0;
+    await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'TG-3', amount: 1000, method: 'cash' });
+    assert.deepEqual(sent.filter((x) => x.method === 'sendPhoto').map((x) => Number(x.body.chat_id)).sort(), [-1001, 777], 'group again');
+
     // Backup: every table, without passwords or the token.
     const backup = await owner.call('GET', '/backup');
     assert.equal(backup.status, 200);
