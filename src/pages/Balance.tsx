@@ -46,6 +46,10 @@ export default function Balance() {
   const recent = (date === today ? data : todays.data || data)?.recent;
   const [openDay, setOpenDay] = useState<string | null>(null);
   const [modal, setModal] = useState<'expense' | 'adjust' | 'import' | Expense | null>(null);
+  const [draft, setDraft] = useState<ExpenseDraft | null>(null);
+  // A page left open overnight moves on to the new day instead of staying on yesterday.
+  const [shownToday, setShownToday] = useState(today);
+  if (shownToday !== today) { setShownToday(today); if (date === shownToday) setDate(today); }
 
   const sources = data?.sources || [];
   const sum = (k: keyof Omit<SourceBalance, 'source'>) => sources.reduce((s, r) => s + Number(r[k]), 0);
@@ -274,7 +278,7 @@ export default function Balance() {
         </>
       )}
 
-      {modal === 'expense' && <ExpenseForm date={date} onClose={() => setModal(null)} />}
+      {modal === 'expense' && <ExpenseForm draft={draft} onClose={() => { setModal(null); setDraft(null); }} onFailed={(d) => { setDraft(d); setModal('expense'); }} />}
       {modal === 'import' && <ImportKassa categoryLabel={categoryLabel} onClose={() => setModal(null)} />}
       {modal === 'adjust' && <AdjustForm sources={sources} onClose={() => setModal(null)} />}
       {modal && typeof modal === 'object' && <ExpenseDetail expense={modal} onClose={() => setModal(null)} />}
@@ -309,52 +313,61 @@ function DaySplit({ day }: { day: BalanceReport['recent'][number] }) {
   );
 }
 
-function nowLocal(): string {
-  return new Date(nowMs() + 5 * 3600_000).toISOString().slice(0, 16);
-}
+const nowTime = () => new Date(nowMs() + 5 * 3600_000).toISOString().slice(11, 16);
 
-function ExpenseForm({ date, onClose }: { date: string; onClose: () => void }) {
+type ExpenseDraft = {
+  amountText: string; source: 'cash' | 'card'; category: ExpenseCategory | ''; note: string; day: string; time: string;
+  errors?: Record<string, string>;
+};
+
+// Saving closes the form at once and sends in the background, so a slow connection never holds the
+// screen; if the server refuses or cannot be reached, the form comes back with everything still filled in.
+function ExpenseForm({ draft, onClose, onFailed }: { draft: ExpenseDraft | null; onClose: () => void; onFailed: (d: ExpenseDraft) => void }) {
   const { bump } = useLive();
   const toast = useToast();
-  const [amountText, setAmountText] = useState('');
-  const [source, setSource] = useState<'cash' | 'card'>('cash');
-  const [category, setCategory] = useState<ExpenseCategory | ''>('');
-  const [note, setNote] = useState('');
-  const [at, setAt] = useState(() => (date === todayTashkent() ? nowLocal() : `${date}T18:00`));
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
+  const today = todayTashkent();
+  const [amountText, setAmountText] = useState(draft?.amountText ?? '');
+  const [source, setSource] = useState<'cash' | 'card'>(draft?.source ?? 'cash');
+  const [category, setCategory] = useState<ExpenseCategory | ''>(draft?.category ?? '');
+  const [note, setNote] = useState(draft?.note ?? '');
+  const [day, setDay] = useState(draft?.day ?? today);
+  const [time, setTime] = useState(draft?.time ?? nowTime());
+  const [errors, setErrors] = useState<Record<string, string>>(draft?.errors ?? {});
 
-  async function save() {
+  function save() {
     const amount = parseDigits(amountText);
     const local: Record<string, string> = {};
     if (!amount) local.amount = 'Summani kiriting';
     if (!category) local.category = 'Toifani tanlang';
     if (category === 'boshqa' && note.trim().length < 3) local.note = '“Boshqa” uchun izoh yozing';
-    if (!at) local.at = 'Vaqtni kiriting';
+    if (!day) local.at = 'Sanani kiriting';
+    else if (day > today) local.at = 'Kelajakdagi sana kiritib boʻlmaydi';
     setErrors(local);
     if (Object.keys(local).length) return;
-    setBusy(true);
-    try {
-      await api('/expenses', { method: 'POST', body: { amount, source, category, note: note.trim(), spentAt: new Date(`${at}:00+05:00`).toISOString() } });
-      toast({ tone: 'success', title: 'Rasxod yozildi', description: `${categoryLabel(category)} · ${money(amount)} · ${methodLabel(source)}` });
-      bump();
-      onClose();
-    } catch (e) {
-      if (e instanceof ApiError && e.fields) setErrors(e.fields);
-      toast({ tone: 'error', title: 'Rasxod saqlanmadi', description: (e as Error).message });
-    } finally {
-      setBusy(false);
-    }
+    // Today with a time still ahead (a typo, or the form left open past midnight) is saved as now.
+    const at = day === today && time > nowTime() ? nowTime() : (time || '12:00');
+    const values: ExpenseDraft = { amountText, source, category, note, day, time };
+    const label = `${categoryLabel(category)} · ${money(amount)} · ${methodLabel(source)}`;
+    onClose();
+    api('/expenses', { method: 'POST', body: { amount, source, category, note: note.trim(), spentAt: new Date(`${day}T${at}:00+05:00`).toISOString() } })
+      .then(() => {
+        toast({ tone: 'success', title: 'Rasxod yozildi', description: day === today ? label : `${formatDate(day)} · ${label}` });
+        bump();
+      })
+      .catch((e) => {
+        toast({ tone: 'error', title: 'Rasxod saqlanmadi', description: (e as Error).message });
+        onFailed({ ...values, errors: e instanceof ApiError && e.fields ? e.fields : {} });
+      });
   }
 
   return (
-    <Modal open onClose={() => !busy && onClose()} title="Rasxod qoʻshish" description="Kassadan yoki kartadan chiqqan pul"
-      footer={<><Button onClick={onClose} disabled={busy}>Bekor</Button><Button variant="primary" loading={busy} onClick={save}>Saqlash</Button></>}>
+    <Modal open onClose={onClose} title="Rasxod qoʻshish" description="Kassadan yoki kartadan chiqqan pul"
+      footer={<><Button onClick={onClose}>Bekor</Button><Button variant="primary" onClick={save}>Saqlash</Button></>}>
       <div className="space-y-4">
         <Field label="Summa" required htmlFor="ex-amount" error={errors.amount}>
           <div className="relative">
             <Input id="ex-amount" inputMode="numeric" value={amountText} onChange={(e) => setAmountText(digitsInput(e.target.value))} placeholder="0"
-              className="h-12 pr-14 text-xl font-semibold num" invalid={Boolean(errors.amount)} autoComplete="off" />
+              className="h-12 pr-14 text-xl font-semibold num" invalid={Boolean(errors.amount)} autoComplete="off" autoFocus />
             <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-ink-3">soʻm</span>
           </div>
         </Field>
@@ -370,8 +383,13 @@ function ExpenseForm({ date, onClose }: { date: string; onClose: () => void }) {
         <Field label="Izoh" htmlFor="ex-note" error={errors.note} hint={category === 'boshqa' ? 'Majburiy' : 'Ixtiyoriy'}>
           <Textarea id="ex-note" value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Masalan: 200 ta paket" invalid={Boolean(errors.note)} />
         </Field>
-        <Field label="Sana va vaqt" htmlFor="ex-at" error={errors.at}>
-          <Input id="ex-at" type="datetime-local" value={at} max={nowLocal()} onChange={(e) => setAt(e.target.value)} invalid={Boolean(errors.at)} />
+        <Field label="Sana va vaqt" htmlFor="ex-day" error={errors.at}>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input id="ex-day" type="date" value={day} max={today} onChange={(e) => setDay(e.target.value)} className="w-auto" invalid={Boolean(errors.at)} />
+            <Input id="ex-time" type="time" value={time} onChange={(e) => setTime(e.target.value)} className="w-auto" aria-label="Vaqt" />
+            <Button size="sm" variant={day === today ? 'primary' : 'ghost'} onClick={() => setDay(today)}>Bugun</Button>
+            <Button size="sm" variant={day === addDays(today, -1) ? 'primary' : 'ghost'} onClick={() => setDay(addDays(today, -1))}>Kecha</Button>
+          </div>
         </Field>
       </div>
     </Modal>
