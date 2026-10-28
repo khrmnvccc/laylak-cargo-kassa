@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { ChevronDown, ChevronLeft, ChevronRight, Download, Search, Upload, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { useApi } from '../lib/live';
-import { CARD_METHODS, cardTotal, dateOf, downloadCsv, methodLabel, money, rangeLabel, timeOf } from '../lib/format';
-import type { Method, PaymentList, Summary } from '../lib/types';
+import { CARD_METHODS, cardTotal, methodLabel, money, rangeLabel } from '../lib/format';
+import { downloadKassaXlsx } from '../lib/excel';
+import type { Method, Payment, PaymentList, Summary } from '../lib/types';
 import { DateRangePicker, presetRange, type Range } from '../components/DateRange';
 import { PaymentsTable } from '../components/PaymentsTable';
 import { ImportPayments } from '../components/ImportPayments';
@@ -47,19 +48,16 @@ export default function Operations({ params }: { params: URLSearchParams }) {
   const workerOptions = (workers.data?.byWorker || []).filter((w) => !w.id.startsWith('legacy:'));
   const pages = data ? Math.max(1, Math.ceil(data.count / PAGE_SIZE)) : 1;
 
-  async function exportCsv() {
+  async function exportXlsx() {
     setExporting(true);
     try {
-      const rows: Array<Array<string | number>> = [['Sana', 'Vaqt', 'Mijoz ID', 'Mijoz ismi', 'Toʻlov turi', 'Summa (soʻm)', 'Ishchi', 'Izoh', 'Holat']];
+      const all: Payment[] = [];
       for (let offset = 0; ; offset += 500) {
         const chunk = await api<PaymentList>('/payments', { query: { ...filters, limit: 500, offset } });
-        for (const p of chunk.items) {
-          rows.push([dateOf(p.paid_at), timeOf(p.paid_at), p.client_code, p.client_name || '', methodLabel(p.method), p.amount,
-            p.created_by_name, p.note || '', p.voided_at ? `Bekor qilingan: ${p.void_reason || ''}` : 'Faol']);
-        }
+        all.push(...chunk.items);
         if (chunk.items.length < 500) break;
       }
-      downloadCsv(`operatsiyalar_${range.from}_${range.to}.csv`, rows);
+      await downloadKassaXlsx(`kassa_${range.from}_${range.to}.xlsx`, all);
     } catch (e) {
       toast({ tone: 'error', title: 'Eksport qilinmadi', description: (e as Error).message });
     } finally {
@@ -74,7 +72,7 @@ export default function Operations({ params }: { params: URLSearchParams }) {
         subtitle="Barcha kirimlar tarixi"
         actions={<>
           {can(user, 'payments.import') && <Button icon={<Upload className="size-4" />} onClick={() => setImporting(true)}>Hisobotni yuklash</Button>}
-          <Button icon={<Download className="size-4" />} loading={exporting} onClick={exportCsv} disabled={!data?.count}>Excel (CSV)</Button>
+          <Button icon={<Download className="size-4" />} loading={exporting} onClick={exportXlsx} disabled={!data?.count}>Excel</Button>
           <PrintButton disabled={!data?.count} run={() => printOperations(filters, [method === 'card_all' ? 'Karta (hammasi)' : method !== 'all' && methodLabel(method), status === 'voided' ? 'bekor qilinganlar' : status === 'all' ? 'faol va bekor qilinganlar' : '', debounced && `qidiruv: ${debounced}`].filter(Boolean).join(' · '), user.full_name)} />
         </>}
       />
