@@ -25,5 +25,4 @@ export async function photoDataUrl(file: Blob, maxSide = 1600): Promise<string> 
 /** What the cashier is told when the admin did not get the payment's pictures. */
 export const TELEGRAM_MISS = {
   off: 'Telegram bot ulanmagan: Sozlamalar sahifasida ulang. Toʻlov saqlandi',
-  failed: 'Telegram bilan aloqa boʻlmadi. Toʻlov saqlandi, rasmni adminga qoʻlda yuboring',
 } as const;

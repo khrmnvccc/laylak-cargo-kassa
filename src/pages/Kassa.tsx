@@ -137,7 +137,7 @@ export default function Kassa() {
     setSaving(true);
     setFormError(null);
     try {
-      const { payment, telegram } = await api<{ payment: Payment; telegram?: 'sent' | 'off' | 'failed' }>('/payments', {
+      const { payment, telegram } = await api<{ payment: Payment; telegram?: 'queued' | 'off' }>('/payments', {
         method: 'POST',
         body: {
           clientCode: normalizedCode,
@@ -153,7 +153,7 @@ export default function Kassa() {
       setLastSaved(payment);
       if (autoLabel) printPaymentLabel(payment);
       toast({ tone: 'success', title: 'Toʻlov saqlandi', description: `${payment.client_code} · ${money(payment.amount)} · ${methodLabel(payment.method)}` });
-      if (telegram && telegram !== 'sent') toast({ tone: 'error', title: 'Rasm adminga yuborilmadi', description: TELEGRAM_MISS[telegram] });
+      if (telegram === 'off') toast({ tone: 'error', title: 'Rasm adminga yuborilmadi', description: TELEGRAM_MISS[telegram] });
       setClientCode(''); setClientName(''); setAmountText(''); setNote(''); setPhotos([]); setErrors({}); setCustomTime(false);
       setLookup({ state: 'idle' });
       bump();

@@ -138,7 +138,7 @@ export function ReceiptImport({ open, onClose, onSaved }: { open: boolean; onClo
       // The receipt and orders pictures go to the admin on Telegram with the payment.
       const shots = [receiptShot, ...orderShots].filter((x): x is Shot => Boolean(x)).slice(0, 4);
       const photos = await Promise.all(shots.map((x) => photoDataUrl(x.file)));
-      const { payments, telegram } = await api<{ payments: Payment[]; telegram?: 'sent' | 'off' | 'failed' }>('/receipts/confirm', {
+      const { payments, telegram } = await api<{ payments: Payment[]; telegram?: 'queued' | 'off' }>('/receipts/confirm', {
         method: 'POST',
         body: {
           receipt: { ...receipt, amount },
@@ -148,7 +148,7 @@ export function ReceiptImport({ open, onClose, onSaved }: { open: boolean; onClo
         },
       });
       toast({ tone: 'success', title: 'Chek hisobotga qoʻshildi', description: `${payments.map((p) => p.client_code).join(', ')} · ${money(amount)}` });
-      if (telegram && telegram !== 'sent') toast({ tone: 'error', title: 'Rasm adminga yuborilmadi', description: TELEGRAM_MISS[telegram] });
+      if (telegram === 'off') toast({ tone: 'error', title: 'Rasm adminga yuborilmadi', description: TELEGRAM_MISS[telegram] });
       onSaved(payments);
       reset();
       onClose();

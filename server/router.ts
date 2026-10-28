@@ -22,6 +22,7 @@ import {
 import { PERMISSIONS, WORKER_DEFAULT, isPerm, permsOf, type Perm } from './perms.js';
 import { ChatMoved, escapeHtml, getTelegram, notify, photoFromDataUrl, reportPhotos, reportText, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
 import { receiptKey } from './receipts.js';
+import { background } from './background.js';
 import { gzipSync } from 'node:zlib';
 import { createHash, randomInt } from 'node:crypto';
 
@@ -334,12 +335,23 @@ route('POST', '/payments', 'payments.create', async (ctx) => {
     );
     return full.rows[0];
   });
-  const telegram = await reportPhotos(photos as Buffer[], paymentCaption({
+  const telegram = await reportLater(ctx.user, payment.id, () => reportPhotos(photos as Buffer[], paymentCaption({
     method, amount, by: ctx.user!.full_name, at: payment.paid_at, note,
     lines: [`${clientCode}${clientName ? ` · ${clientName}` : ''}`],
-  }));
+  })));
   return { status: 201, body: { payment, telegram } };
 });
+
+/**
+ * Sends a payment's Telegram message after the answer goes back, so saving never waits on Telegram.
+ * 'off' at once when no bot is linked; a send that fails later is written to the audit log.
+ */
+async function reportLater(user: AuthUser | null, entityId: string | null, send: () => Promise<'sent' | 'off' | 'failed'>): Promise<'queued' | 'off'> {
+  const config = await getTelegram();
+  if (!config?.chatId) return 'off';
+  background(send().then((result) => (result === 'failed' ? audit(null, user, 'telegram_failed', 'payment', entityId) : undefined)));
+  return 'queued';
+}
 
 /** Telegram caption for a payment the kassa just saved: type and sum first, then who and what. */
 function paymentCaption(p: { method: string; amount: number; by: string; at: string | Date; note?: string; lines: string[]; head?: string }) {
@@ -541,11 +553,11 @@ route('POST', '/orders/:id/pay', 'payments.create', async (ctx) => {
     [o.transport, o.places ? `${o.places} ta` : '', o.weight ? `${o.weight} kg` : ''].filter(Boolean).join(' · '),
     `Qabul qilingan: ${o.received_at.slice(8, 10)}.${o.received_at.slice(5, 7)}.${o.received_at.slice(0, 4)}`,
   ].filter(Boolean);
-  const telegram = await reportText(paymentCaption({
+  const telegram = await reportLater(ctx.user, result.payment.id, () => reportText(paymentCaption({
     method, amount: Number(o.amount), by: ctx.user!.full_name, at: result.payment.paid_at,
     head: `📦 Stiker ${o.scan_code}`,
     lines: [`${o.client_code}${o.client_name ? ` · ${o.client_name}` : ''}`, ...details],
-  }));
+  })));
   return { ...result, telegram };
 });
 
@@ -664,12 +676,12 @@ route('POST', '/receipts/confirm', 'payments.create', async (ctx) => {
     );
     return full.rows;
   });
-  const telegram = await reportPhotos(photos, paymentCaption({
+  const telegram = await reportLater(ctx.user, saved[0]?.id ?? null, () => reportPhotos(photos, paymentCaption({
     method, amount: receipt.amount, by: ctx.user!.full_name, at: saved[0]?.paid_at || new Date(),
     head: [head, receipt.sender && `· ${receipt.sender}`].filter(Boolean).join(' '),
     lines: orders.map((o: { clientCode: string; clientName: string; orderNo: string; transport: string; amount: number }) =>
       `• ${o.clientCode}${o.clientName ? ` ${o.clientName}` : ''}${o.orderNo ? ` №${o.orderNo}` : ''}${o.transport ? ` ${o.transport}` : ''} — ${som(o.amount)}`),
-  }));
+  })));
   return { status: 201, body: { payments: saved, telegram } };
 });
 
@@ -811,8 +823,8 @@ route('POST', '/payments/:id/void', 'payments.void', async (ctx) => {
     await audit(db, ctx.user, 'payment_void', 'payment', ctx.params.id, { ...updated.rows[0], reason });
     return updated.rows[0];
   });
-  await notify(`⚠️ <b>Toʻlov bekor qilindi</b>\n${escapeHtml(payment.client_code)} · ${som(payment.amount)} · ${METHOD_LABEL[payment.method] || payment.method}\n`
-    + `Kim: ${escapeHtml(ctx.user!.full_name)}\nSabab: ${escapeHtml(reason)}`);
+  background(notify(`⚠️ <b>Toʻlov bekor qilindi</b>\n${escapeHtml(payment.client_code)} · ${som(payment.amount)} · ${METHOD_LABEL[payment.method] || payment.method}\n`
+    + `Kim: ${escapeHtml(ctx.user!.full_name)}\nSabab: ${escapeHtml(reason)}`));
   return { payment };
 });
 

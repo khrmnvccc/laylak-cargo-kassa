@@ -38,10 +38,10 @@ export function StickerPay() {
     if (view.state !== 'ready' || view.saving) return;
     setView({ ...view, saving: method, error: undefined });
     try {
-      const { order, telegram } = await api<{ order: Order; telegram: 'sent' | 'off' | 'failed' }>(`/orders/${view.order.id}/pay`, { method: 'POST', body: { method } });
+      const { order, telegram } = await api<{ order: Order; telegram: 'queued' | 'off' }>(`/orders/${view.order.id}/pay`, { method: 'POST', body: { method } });
       setView({ state: 'done', order });
       bump();
-      if (telegram !== 'sent') toast({ tone: 'error', title: 'Telegramga yuborilmadi', description: telegram === 'off' ? TELEGRAM_MISS.off : 'Telegram bilan aloqa boʻlmadi. Toʻlov saqlandi' });
+      if (telegram === 'off') toast({ tone: 'error', title: 'Telegramga yuborilmadi', description: TELEGRAM_MISS.off });
     } catch (e) {
       setView({ ...view, saving: undefined, error: (e as Error).message });
     }
