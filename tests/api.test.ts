@@ -348,6 +348,15 @@ test('cash book import: opening balance and expenses, safe to repeat', async () 
   assert.equal(cash.opening, 370000, 'day opens with the cash book amount');
   assert.equal(cash.expense, 200000);
 
+  // The monthly book adds up to the same balance, and carries each expense's reason.
+  const month = (await admin.call('GET', '/balance/month', undefined, { month: '2026-10' })).body;
+  assert.equal(month.first, '2026-10-01');
+  const oct1Flow = month.days.filter((d: any) => d.day === '2026-10-01' && d.source === 'cash')
+    .reduce((t: number, d: any) => t + d.income - d.expense + d.adjustment, 0);
+  assert.equal(month.opening.cash + oct1Flow, cash.closing);
+  assert.ok(month.expenses.some((e: any) => e.amount === 200000 && e.category === 'tovar' && e.note === 'tovarga'));
+  assert.equal((await new Client().call('GET', '/balance/month')).status, 401);
+
   const again = await admin.call('POST', '/expenses/import', { rows });
   assert.equal(again.body.adding.count, 0);
   assert.equal(again.body.opening[0].adjustment, 0, 'second upload needs no correction');

@@ -1,13 +1,14 @@
 import { Fragment, useState } from 'react';
-import { Ban, ChevronLeft, ChevronRight, Minus, Plus, Scale, Upload, Wallet } from 'lucide-react';
+import { Ban, ChevronLeft, ChevronRight, FileSpreadsheet, Minus, Plus, Scale, Upload, Wallet } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { printBalance } from '../lib/reports';
 import { PrintButton } from '../components/PrintButton';
 import { ImportKassa } from '../components/ImportKassa';
 import { useApi, useLive } from '../lib/live';
-import { addDays, dateTime, formatDate, groupDigits, methodColor, methodLabel, money, nowMs, timeOf, todayTashkent, weekday } from '../lib/format';
-import type { BalanceReport, Expense, ExpenseCategory, SourceBalance } from '../lib/types';
+import { addDays, dateTime, formatDate, groupDigits, methodColor, methodLabel, monthLabel, money, nowMs, timeOf, todayTashkent, weekday } from '../lib/format';
+import { downloadMonthXlsx } from '../lib/excel';
+import type { BalanceMonth, BalanceReport, Expense, ExpenseCategory, SourceBalance } from '../lib/types';
 import {
   Alert, Badge, Button, Card, CardHeader, EmptyState, ErrorState, Field, IconButton, Input, MethodBadge, Modal, PageHeader, Segmented, Select,
   SkeletonRows, Textarea, cx, td, th, useToast,
@@ -45,7 +46,7 @@ export default function Balance() {
   const todays = useApi<BalanceReport>(date === today ? null : '/balance', { date: today }, { keep: true });
   const recent = (date === today ? data : todays.data || data)?.recent;
   const [openDay, setOpenDay] = useState<string | null>(null);
-  const [modal, setModal] = useState<'expense' | 'adjust' | 'import' | Expense | null>(null);
+  const [modal, setModal] = useState<'expense' | 'adjust' | 'import' | 'month' | Expense | null>(null);
   const [draft, setDraft] = useState<ExpenseDraft | null>(null);
   // A page left open overnight moves on to the new day instead of staying on yesterday.
   const [shownToday, setShownToday] = useState(today);
@@ -64,6 +65,7 @@ export default function Balance() {
         subtitle="Naqd va kartada qancha pul borligi, kunlik rasxodlar · faqat admin koʻradi"
         actions={<>
           <Button icon={<Upload className="size-4" />} onClick={() => setModal('import')}>Daftarni yuklash</Button>
+          <Button icon={<FileSpreadsheet className="size-4" />} onClick={() => setModal('month')}>Oylik Excel</Button>
           <PrintButton disabled={!data} run={() => data && printBalance(data, user.full_name)} />
           <Button icon={<Scale className="size-4" />} onClick={() => setModal('adjust')}>Qoldiqni tuzatish</Button>
           <Button variant="primary" icon={<Minus className="size-4" />} onClick={() => setModal('expense')}>Rasxod qoʻshish</Button>
@@ -279,6 +281,7 @@ export default function Balance() {
       )}
 
       {modal === 'expense' && <ExpenseForm draft={draft} onClose={() => { setModal(null); setDraft(null); }} onFailed={(d) => { setDraft(d); setModal('expense'); }} />}
+      {modal === 'month' && <MonthExport onClose={() => setModal(null)} />}
       {modal === 'import' && <ImportKassa categoryLabel={categoryLabel} onClose={() => setModal(null)} />}
       {modal === 'adjust' && <AdjustForm sources={sources} onClose={() => setModal(null)} />}
       {modal && typeof modal === 'object' && <ExpenseDetail expense={modal} onClose={() => setModal(null)} />}
@@ -392,6 +395,41 @@ function ExpenseForm({ draft, onClose, onFailed }: { draft: ExpenseDraft | null;
           </div>
         </Field>
       </div>
+    </Modal>
+  );
+}
+
+function MonthExport({ onClose }: { onClose: () => void }) {
+  const toast = useToast();
+  const today = todayTashkent();
+  const months = Array.from({ length: 12 }, (_, i) => {
+    const [y, m] = today.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1 - i, 1)).toISOString().slice(0, 7);
+  });
+  const [month, setMonth] = useState(months[0]);
+  const [busy, setBusy] = useState(false);
+
+  async function download() {
+    setBusy(true);
+    try {
+      await downloadMonthXlsx(await api<BalanceMonth>('/balance/month', { query: { month } }), categoryLabel);
+      onClose();
+    } catch (e) {
+      toast({ tone: 'error', title: 'Excel tayyorlanmadi', description: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open onClose={() => !busy && onClose()} title="Oylik kassa (Excel)" size="sm"
+      description="Har kuni: bor boʻlgan summa, tushum, rasxod va sababi, qolgan summa. Naqd va karta alohida varaqda."
+      footer={<><Button onClick={onClose} disabled={busy}>Bekor</Button><Button variant="primary" loading={busy} onClick={download} icon={<FileSpreadsheet className="size-4" />}>Yuklab olish</Button></>}>
+      <Field label="Oy" htmlFor="xl-month">
+        <Select id="xl-month" value={month} onChange={(e) => setMonth(e.target.value)} className="w-full">
+          {months.map((m) => <option key={m} value={m}>{monthLabel(`${m}-01`)}</option>)}
+        </Select>
+      </Field>
     </Modal>
   );
 }
