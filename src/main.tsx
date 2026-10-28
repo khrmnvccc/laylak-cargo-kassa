@@ -17,7 +17,21 @@ if (tg) {
   }
 }
 
-const render = () => createRoot(document.getElementById('root')!).render(<App />);
+// The opening screen in index.html plays to the end (about 1.8 s from the start), then fades into the app.
+function hideSplash() {
+  const el = document.getElementById('splash');
+  if (!el) return;
+  const wait = Math.max(0, 1800 - performance.now());
+  setTimeout(() => {
+    el.classList.add('sp-out');
+    setTimeout(() => el.remove(), 400);
+  }, wait);
+}
+
+const render = () => {
+  createRoot(document.getElementById('root')!).render(<App />);
+  requestAnimationFrame(hideSplash);
+};
 // Russian / Chinese: start translating before the first render so Uzbek never flashes.
 const lang = LANG;
 if (lang === 'uz') render();

@@ -52,6 +52,8 @@
   --ink-2: rgb(60 60 67 / 0.80);
   --ink-3: rgb(60 60 67 / 0.55);
   --primary: #007aff;
+  --brand-ink: #00204f;
+  --brand-beak: #ea7612;
   --primary-fg: #ffffff;
   --cash: #34c759;
   --card: #007aff;
@@ -88,6 +90,8 @@
   --ink-2: rgb(235 235 245 / 0.72);
   --ink-3: rgb(235 235 245 / 0.45);
   --primary: #0a84ff;
+  --brand-ink: #e8eefb;
+  --brand-beak: #f28a24;
   --primary-fg: #ffffff;
   --cash: #30d158;
   --card: #0a84ff;

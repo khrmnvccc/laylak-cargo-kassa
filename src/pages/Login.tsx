@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import type { User } from '../lib/types';
 import { Alert, Button, Field, Input } from '../components/ui';
 import { LangSwitch } from '../components/Layout';
+import { StorkMark } from '../components/Brand';
 
 export function LoginPage({ needsSetup, setupKeyConfigured, onAuthenticated }: {
   needsSetup: boolean; setupKeyConfigured: boolean; onAuthenticated: (u: User) => void;
@@ -41,9 +42,7 @@ export function LoginPage({ needsSetup, setupKeyConfigured, onAuthenticated }: {
         <div className="absolute inset-0" style={{ backgroundImage: 'linear-gradient(#ffffff08 1px, transparent 1px), linear-gradient(90deg, #ffffff08 1px, transparent 1px)', backgroundSize: '48px 48px' }} />
         <div className="relative flex h-full flex-col justify-between p-12 text-white">
           <div className="flex items-center gap-2.5">
-            <div className="flex size-9 items-center justify-center rounded-lg bg-white text-[#0b0d10]">
-              <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M7 5v14h11" /></svg>
-            </div>
+            <StorkMark className="h-9 w-auto [--brand-ink:#ffffff]" />
             <span className="text-base font-semibold tracking-tight">Laylak Cargo</span>
           </div>
           <div className="max-w-lg">
@@ -60,9 +59,7 @@ export function LoginPage({ needsSetup, setupKeyConfigured, onAuthenticated }: {
         <form onSubmit={submit} className="w-full max-w-sm anim-rise" noValidate>
           <div className="mb-6 ml-auto w-44"><LangSwitch /></div>
           <div className="mb-8 lg:hidden">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-fg">
-              <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M7 5v14h11" /></svg>
-            </div>
+            <StorkMark className="h-11 w-auto" title="Laylak Cargo" />
           </div>
           <h1 className="text-2xl font-semibold tracking-tight text-ink">{needsSetup ? 'Tizimni sozlash' : 'Tizimga kirish'}</h1>
           <p className="mt-1.5 text-sm text-ink-3">
