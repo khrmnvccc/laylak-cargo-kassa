@@ -74,7 +74,7 @@ export function InstallPrompt({ top = false }: { top?: boolean }) {
     <div className={cx('no-print fixed inset-x-3 z-40 mx-auto max-w-md anim-rise lg:left-auto lg:right-6 lg:mx-0',
       top ? 'top-[calc(0.75rem+env(safe-area-inset-top))] lg:top-6' : 'bottom-[calc(5rem+env(safe-area-inset-bottom))] lg:bottom-6')}>
       <div className="flex items-start gap-3 rounded-2xl border border-line bg-[var(--bg)] p-3.5 shadow-pop">
-        <img src="/icons/icon-192.png" alt="" className="size-11 shrink-0 rounded-xl" />
+        <img src="/icons/stork-192.png" alt="" className="size-11 shrink-0 rounded-xl" />
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold text-ink">Ilovani oʻrnating</div>
           {ios ? (

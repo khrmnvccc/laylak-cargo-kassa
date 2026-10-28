@@ -7,9 +7,10 @@
     <meta name="description" content="Laylak Cargo kunlik kassa, toʻlovlar va hisobotlar tizimi." />
     <meta name="theme-color" content="#f5f6f8" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)" />
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23111827'/%3E%3Cpath d='M10 9v14h12' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+    <link rel="icon" type="image/svg+xml" href="/brand/stork.svg" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/stork-192.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" href="/icons/stork-apple-touch.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Laylak Kassa" />
@@ -25,8 +26,34 @@
       } catch (e) {}
     </script>
     <script src="https://telegram.org/js/telegram-web-app.js" async></script>
+    <style>
+      /* Opening screen: the stork lands, then the name opens out beside it, then the app fades in. */
+      #splash { position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; background: #fff; --brand-ink: #00204f; --brand-beak: #ea7612; transition: opacity .35s ease, transform .35s ease; }
+      html.dark #splash { background: #000; --brand-ink: #e8eefb; --brand-beak: #f28a24; }
+      #splash.sp-out { opacity: 0; transform: scale(1.04); pointer-events: none; }
+      .sp-row { display: flex; align-items: center; }
+      .sp-bird { width: clamp(120px, 34vw, 210px); height: auto; flex: none; animation: sp-land .6s cubic-bezier(.2,.8,.2,1) both; }
+      .sp-word { overflow: hidden; max-width: 0; opacity: 0; white-space: nowrap; color: var(--brand-ink); font-size: clamp(26px, 7.4vw, 44px); font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; line-height: 1; animation: sp-open .7s cubic-bezier(.3,.7,.2,1) .5s forwards; }
+      .sp-word b { display: block; padding-left: .45em; font-size: 1em; font-weight: 700; letter-spacing: .04em; }
+      .sp-word span { display: block; padding-left: .95em; margin-top: .35em; font-size: .37em; font-weight: 600; letter-spacing: .5em; color: var(--brand-beak); }
+      @keyframes sp-land { from { opacity: 0; transform: scale(1.9); } to { opacity: 1; transform: none; } }
+      @keyframes sp-open { from { max-width: 0; opacity: 0; letter-spacing: .4em; } to { max-width: 5.2em; opacity: 1; } }
+      @media (prefers-reduced-motion: reduce) { .sp-bird, .sp-word { animation-duration: .01s; animation-delay: 0s; } }
+    </style>
   </head>
   <body>
+    <div id="splash" aria-hidden="true">
+      <div class="sp-row">
+        <svg class="sp-bird" viewBox="0 0 610 247"><path fill="var(--brand-ink)" d="M114.5 237.4C109.4 237.2 100.2 236.8 94 236.5C87.8 236.2 80.3 236 77.4 236C74.4 236 72 235.8 72 235.6C72 235.1 74.3 233.4 76.8 232.1C78.4 231.3 80.5 231 87 230.5C105.6 229.3 110.9 228.9 114.2 228.5C116.2 228.2 121.5 227.6 126 227C130.5 226.4 136.6 225.5 139.5 225C142.4 224.4 146.6 223.7 148.8 223.3C153.1 222.5 167.7 219.3 170.5 218.5C171.5 218.3 174.2 217.6 176.5 217C190.3 213.6 210.1 206.5 221.4 201.1C230.3 196.9 244.7 188 250.3 183.4C251.4 182.5 253.4 181 254.6 180C258.3 177.1 266.3 168.7 269.3 164.6C276.8 154.7 279.8 143.9 277.7 134.7C276.2 128.2 272.9 122.9 267.2 117.6C254.4 105.8 237.9 98.6 209.8 92.5C200.8 90.6 176.5 86.8 156.2 84C148.1 82.9 145.4 82.6 137 81.3C134.4 80.9 131.2 80.4 130 80.3C128.8 80.1 126.8 79.8 125.8 79.5C124.7 79.3 122.3 78.8 120.5 78.5C113 77.1 95.5 73 88.2 70.8C80.5 68.6 59.4 60.8 55.3 58.6C53.3 57.6 53.7 58.5 57.4 63.7C64 72.9 76.2 83.6 89.2 91.5C94.2 94.5 112.4 104 113.2 104C113.3 104 114.9 104.6 116.6 105.4C118.3 106.2 120.5 107.2 121.5 107.6C122.5 108.1 124.4 108.9 125.8 109.5C127.1 110.1 128.9 110.9 129.8 111.2C130.6 111.6 132.6 112.4 134.2 113.1C135.9 113.9 139 115.1 141.2 116C164.1 125 180 136.6 186.5 149C189.9 155.7 192.3 163.8 191.2 165.5C191 165.8 188.6 163.9 185.3 160.6C174.6 150.2 160.1 141.8 142.5 135.8C140.4 135.1 137.5 134.1 136 133.6C134.5 133 130.4 131.6 127 130.3C105.5 122.5 87.2 114.1 73.9 105.7C55.7 94.2 38.2 76.5 27.6 59C22.4 50.3 16 35.4 13.5 26.2C12.9 24 12.2 21.5 11.9 20.5C10.4 15.2 9.6 8 10.5 8C10.8 8 13.8 10 17.3 12.5C31.7 22.7 51.4 32.6 70 38.8C72.1 39.5 74.2 40.3 74.8 40.5C75.3 40.7 77.4 41.4 79.5 42C81.6 42.6 83.8 43.3 84.5 43.5C86 44.1 103.8 48.8 105.5 49.1C106.2 49.3 110.5 50.2 115 51.2C128.3 54.2 142.9 56.9 161.2 59.7C176.6 62.2 188.8 64 192.5 64.5C194.8 64.8 199.3 65.5 202.3 66C205.4 66.6 210.7 67.5 214.1 68C234.4 71.4 255.8 76.8 269.7 82.2C298.5 93.4 324.9 114.9 338.5 138.2C339.5 139.8 340.5 141.2 340.9 141.4C343.1 142.2 360.1 132.8 369.5 125.4C371.1 124.2 374.1 121.9 376.3 120.2C378.5 118.5 382 115.6 384.2 113.7C389.9 108.7 400.2 99.9 404.4 96.4C406.4 94.7 407.9 93.2 407.7 92.9C407.2 92.1 400.4 92.6 394.1 93.9C391.3 94.5 391 93.9 393.2 91.9C403.4 83 413.5 78.2 426.5 76C433.4 74.8 435.7 74.8 442.8 75.8C456.5 77.7 466.1 83.3 474.2 94.2C475.2 95.6 476.9 97.3 477.9 97.9L479.8 99L478.2 99C477 99 476 99.6 474.2 101.2L471.8 103.3L472.4 105.3C472.8 106.8 474.2 108.3 478.6 112.2C481.6 115 484.7 117.6 485.4 118.1L486.8 119L483.8 119C472.1 119 449.4 122.4 437.5 126C421.6 130.7 412.1 136.4 387.1 155.9C385 157.5 382.4 159.4 381.3 160.2C380.1 161.1 375.8 164.1 371.7 167C347.6 184.1 317 202.7 296.8 212.5C290 215.8 277 221.1 274.2 221.8C273.4 222 272.5 222.3 272.2 222.5C272 222.7 269.8 223.4 267.5 224C265.2 224.6 262.8 225.3 262.2 225.5C256.3 227.9 227.3 233.6 214.5 235C212.2 235.2 207.2 235.8 203.6 236.2C199.9 236.7 192.3 237.2 186.8 237.5C175.1 238.1 128 238 114.5 237.4Z"/><path fill="var(--brand-beak)" d="M487.1 118.6C485.9 118.5 484.3 117.3 480.7 114.1C478 111.7 475.2 109.2 474.4 108.6C473.7 108 472.7 106.5 472.4 105.4L471.8 103.3L474.2 101.2C476.7 98.9 477.9 98.6 481 99.5C485.5 100.8 491.2 101.6 503.2 102.8C510.4 103.4 519.4 104.3 523.2 104.8C527.1 105.2 533.2 105.7 536.8 106C553.9 107.3 578.3 109.7 581.2 110.5C582.4 110.8 584.1 111 585 111C586.9 111 588.9 112.5 588.3 113.4C588 114 576.6 114.9 562.2 115.5C555.9 115.8 546.5 116.2 541.2 116.5C528.1 117.2 510.5 117.9 499.2 118.3C494 118.4 489.5 118.6 489.2 118.7C489 118.7 488 118.7 487.1 118.6Z"/></svg>
+        <div class="sp-word"><b>LAYLAK</b><span>CARGO</span></div>
+      </div>
+    </div>
+    <script>
+      // Played once per opening of the app; a reload in the same tab goes straight in.
+      try { if (sessionStorage.getItem('lk_splash')) document.getElementById('splash').remove(); else sessionStorage.setItem('lk_splash', '1'); } catch (e) {}
+      // Never left over the app if the page fails to start.
+      setTimeout(function () { var el = document.getElementById('splash'); if (el) el.remove(); }, 6000);
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

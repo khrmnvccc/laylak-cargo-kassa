@@ -1,7 +1,7 @@
 // Makes the kassa installable as an app. It never caches API answers: money and reports always
 // come fresh from the server. Built files (hashed names) are cached so the app opens quickly, and
 // the start page is kept for when the network drops, so the app shows itself instead of an error.
-const CACHE = 'laylak-kassa-v1';
+const CACHE = 'laylak-kassa-v2';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.add('/')).catch(() => undefined));

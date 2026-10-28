@@ -10,6 +10,7 @@ import type { User } from '../lib/types';
 import { LANG, LANGS, setLang } from '../lib/i18n';
 import { can, canSee, roleLabel } from '../lib/perms';
 import { AttendanceButton } from './AttendanceButton';
+import { StorkMark } from './Brand';
 import { StickerPay } from './StickerPay';
 import { Avatar, Button, IconButton, cx } from './ui';
 
@@ -48,17 +49,13 @@ export const PAGE_TITLES: Record<Page, string> = {
   periods: 'Haftalik va oylik hisobot', workers: 'Ishchilar', attendance: 'Davomat', clients: 'Mijozlar', balance: 'Kassa balansi', settings: 'Sozlamalar',
 };
 
-function Logo() {
+function Logo({ compact }: { compact?: boolean }) {
   return (
-    <div className="flex items-center gap-2.5">
-      <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-fg shadow-soft">
-        <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M7 5v14h11" />
-        </svg>
-      </div>
-      <div className="leading-tight">
+    <div className="flex min-w-0 items-center gap-2.5">
+      <StorkMark className={cx('w-auto shrink-0', compact ? 'h-6' : 'h-7')} />
+      <div className="min-w-0 whitespace-nowrap leading-tight">
         <div className="text-[15px] font-semibold tracking-tight text-ink">Laylak Cargo</div>
-        <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-ink-3">Kassa tizimi</div>
+        <div className={cx('text-[11px] font-medium uppercase tracking-[0.08em] text-ink-3', compact && 'hidden sm:block')}>Kassa tizimi</div>
       </div>
     </div>
   );
@@ -200,7 +197,7 @@ export function Layout({ page, user, onLogout, children }: { page: Page; user: U
           <div className="mx-auto flex h-14 max-w-[1400px] items-center gap-3 px-4 sm:px-6 lg:h-16 lg:px-8">
             <IconButton label="Menyu" className="-ml-2 lg:hidden" onClick={() => setDrawer(true)}><Menu className="size-5" /></IconButton>
             <div className="min-w-0 flex-1">
-              <div className="lg:hidden"><Logo /></div>
+              <div className="lg:hidden"><Logo compact /></div>
               <div className="hidden text-sm text-ink-3 lg:block">
                 <span className="text-ink-2">{weekday(today)}</span>, {formatDate(today)}
               </div>
