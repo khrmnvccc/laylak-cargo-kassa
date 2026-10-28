@@ -32,7 +32,13 @@ export default function Orders() {
   // Opened by the admin panel bookmark: the list comes with the tab.
   const [importText] = useState(bookmarkText);
   const [importing, setImporting] = useState(Boolean(importText));
-  const list = useApi<{ items: Order[] }>('/orders', { q: q.trim(), status: status === 'all' ? '' : status });
+  // Search once typing pauses, not on every key.
+  const [debounced, setDebounced] = useState(q.trim());
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(q.trim()), 250);
+    return () => clearTimeout(id);
+  }, [q]);
+  const list = useApi<{ items: Order[] }>('/orders', { q: debounced, status: status === 'all' ? '' : status }, { keep: true });
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
   const code = form.clientCode.trim().toUpperCase();
   const amount = Number(form.amountText.replace(/\D/g, '')) || 0;

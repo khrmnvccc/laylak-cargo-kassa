@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { api, ApiError, onUnauthorized } from './lib/api';
 import { AuthContext } from './lib/auth';
-import { LiveProvider } from './lib/live';
+import { clearApiCache, LiveProvider } from './lib/live';
 import { useRoute } from './lib/router';
 import { useTheme } from './lib/theme';
 import { canSee, homePage } from './lib/perms';
@@ -12,19 +12,30 @@ import { InstallPrompt } from './components/InstallPrompt';
 import { ErrorState, ToastProvider } from './components/ui';
 import { LoginPage } from './pages/Login';
 
-const pages = {
-  dashboard: lazy(() => import('./pages/Dashboard')),
-  kassa: lazy(() => import('./pages/Kassa')),
-  orders: lazy(() => import('./pages/Orders')),
-  operations: lazy(() => import('./pages/Operations')),
-  daily: lazy(() => import('./pages/DailyReport')),
-  periods: lazy(() => import('./pages/PeriodReport')),
-  workers: lazy(() => import('./pages/Workers')),
-  balance: lazy(() => import('./pages/Balance')),
-  clients: lazy(() => import('./pages/Clients')),
-  attendance: lazy(() => import('./pages/Attendance')),
-  settings: lazy(() => import('./pages/Settings')),
+const loaders = {
+  dashboard: () => import('./pages/Dashboard'),
+  kassa: () => import('./pages/Kassa'),
+  orders: () => import('./pages/Orders'),
+  operations: () => import('./pages/Operations'),
+  daily: () => import('./pages/DailyReport'),
+  periods: () => import('./pages/PeriodReport'),
+  workers: () => import('./pages/Workers'),
+  balance: () => import('./pages/Balance'),
+  clients: () => import('./pages/Clients'),
+  attendance: () => import('./pages/Attendance'),
+  settings: () => import('./pages/Settings'),
 };
+const pages = Object.fromEntries(Object.entries(loaders).map(([k, load]) => [k, lazy(load)])) as { [K in keyof typeof loaders]: ReturnType<typeof lazy> };
+
+// Fetch the opened page's code while the session check is still on its way, then the rest when idle,
+// so moving between pages never waits for a download.
+const firstPage = location.hash.replace(/^#\/?/, '').split(/[/?]/)[0] as keyof typeof loaders;
+loaders[firstPage]?.().catch(() => undefined);
+function preloadPages() {
+  const run = () => Object.values(loaders).forEach((load) => load().catch(() => undefined));
+  if ('requestIdleCallback' in window) (window as any).requestIdleCallback(run, { timeout: 4000 });
+  else setTimeout(run, 2000);
+}
 
 type Boot = { state: 'loading' } | { state: 'error'; message: string } | { state: 'anon'; needsSetup: boolean; setupKeyConfigured: boolean } | { state: 'ready'; user: User };
 
@@ -45,6 +56,7 @@ export default function App() {
     try {
       const { user } = await api<{ user: User }>('/auth/me');
       setBoot({ state: 'ready', user });
+      preloadPages();
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         try {
@@ -61,12 +73,13 @@ export default function App() {
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    const off = onUnauthorized(() => setBoot({ state: 'anon', needsSetup: false, setupKeyConfigured: true }));
+    const off = onUnauthorized(() => { clearApiCache(); setBoot({ state: 'anon', needsSetup: false, setupKeyConfigured: true }); });
     return () => { off(); };
   }, []);
 
   const logout = useCallback(async () => {
     await api('/auth/logout', { method: 'POST' }).catch(() => undefined);
+    clearApiCache();
     setBoot({ state: 'anon', needsSetup: false, setupKeyConfigured: true });
   }, []);
 
@@ -85,7 +98,7 @@ export default function App() {
   if (boot.state === 'anon') {
     return (
       <ToastProvider>
-        <LoginPage needsSetup={boot.needsSetup} setupKeyConfigured={boot.setupKeyConfigured} onAuthenticated={(user) => setBoot({ state: 'ready', user })} />
+        <LoginPage needsSetup={boot.needsSetup} setupKeyConfigured={boot.setupKeyConfigured} onAuthenticated={(user) => { clearApiCache(); setBoot({ state: 'ready', user }); preloadPages(); }} />
         <InstallPrompt top />
       </ToastProvider>
     );

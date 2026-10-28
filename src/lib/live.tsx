@@ -57,23 +57,35 @@ export function LiveProvider({ children }: { children: ReactNode }) {
 
 export const useLive = () => useContext(LiveContext);
 
+// Last answer per query, so a page opened again shows at once and refreshes in the background.
+const cache = new Map<string, unknown>();
+const CACHE_MAX = 40;
+export function clearApiCache() { cache.clear(); }
+
 /** Fetches a resource and silently refetches it whenever shared data changes. */
 /** keep: on a new query, go on showing the previous answer until the new one arrives instead of blanking the page. */
 export function useApi<T>(path: string | null, query?: object, { keep = false }: { keep?: boolean } = {}) {
   const { tick } = useLive();
   const key = path ? `${path}?${JSON.stringify(query || {})}` : null;
-  const [state, setState] = useState<{ data: T | null; error: string | null; loading: boolean; key: string | null }>({
-    data: null, error: null, loading: Boolean(path), key: null,
-  });
+  const [state, setState] = useState<{ data: T | null; error: string | null; loading: boolean; key: string | null }>(() => (
+    key && cache.has(key) ? { data: cache.get(key) as T, error: null, loading: false, key } : { data: null, error: null, loading: Boolean(path), key: null }
+  ));
   const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     if (!path || !key) return;
     let active = true;
     // Keep showing previous data on background refreshes; only show loading on a new query.
-    setState((s) => (s.key === key ? s : keep && s.data ? { ...s, error: null, loading: true, key } : { data: null, error: null, loading: true, key }));
+    setState((s) => (s.key === key ? s
+      : cache.has(key) ? { data: cache.get(key) as T, error: null, loading: false, key }
+      : keep && s.data ? { ...s, error: null, loading: true, key } : { data: null, error: null, loading: true, key }));
     api<T>(path, { query: query as Record<string, unknown> | undefined })
-      .then((data) => active && setState({ data, error: null, loading: false, key }))
+      .then((data) => {
+        cache.delete(key);
+        cache.set(key, data);
+        if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value!);
+        if (active) setState({ data, error: null, loading: false, key });
+      })
       .catch((error: Error) => active && setState((s) => ({ ...s, error: error.message, loading: false, key })));
     return () => { active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
