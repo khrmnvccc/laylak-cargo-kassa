@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { handleApi } from '../server/router.js';
 import { getPool } from '../server/db.js';
+import { backgroundSettled } from '../server/background.js';
 
 process.env.ADMIN_SETUP_KEY ||= 'test-key';
 
@@ -474,6 +475,7 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
   const realNow = Date.now;
   globalThis.fetch = (async (url: string, init: any) => {
     const method = String(url).split('/').pop()!;
+    if (failSends && method.startsWith('send')) throw new Error('network down');
     const body = init.body instanceof FormData ? Object.fromEntries(init.body.entries()) : JSON.parse(init.body);
     sent.push({ method, body });
     const result = method === 'getMe' ? { username: 'laylak_test_bot' }
@@ -482,6 +484,7 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     return new Response(JSON.stringify({ ok: true, result }), { status: 200 });
   }) as typeof fetch;
   let codeSeen = '';
+  let failSends = false;
   const groupUpdates: any[] = [];
   try {
     const owner = new Client();
@@ -533,8 +536,9 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
 
     // Cancelling a payment alerts the owner.
     const pay = await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'TG-1', amount: 55000, method: 'cash' });
-    // The orders picture goes to the admin with the type and sum.
-    assert.equal(pay.body.telegram, 'sent');
+    // The orders picture goes to the admin with the type and sum, after the answer.
+    assert.equal(pay.body.telegram, 'queued');
+    await backgroundSettled();
     const photo = sent.find((x) => x.method === 'sendPhoto');
     assert.ok(photo && photo.body.photo instanceof Blob);
     assert.match(photo.body.caption, /💵 <b>Naqd · 55 000 soʻm<\/b>\nTG-1/);
@@ -542,6 +546,7 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     assert.equal(sent.find((x) => x.method === 'sendPhoto' && Number(x.body.chat_id) === -1001)?.body.message_thread_id, '42', 'into the topic');
     sent.length = 0;
     assert.equal((await owner.call('POST', `/payments/${pay.body.payment.id}/void`, { reason: 'xato kiritildi' })).status, 200);
+    await backgroundSettled();
     assert.equal(sent[0]?.method, 'sendMessage');
     assert.match(sent[0].body.text, /bekor qilindi[\s\S]*55 000 soʻm[\s\S]*xato kiritildi/);
     assert.deepEqual(sent.map((x) => x.body.chat_id).sort(), [-1001, 777]);
@@ -551,12 +556,23 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     const paused = await owner.call('PUT', '/telegram/group/pause', { paused: true });
     assert.deepEqual([paused.body.telegram.groupName, paused.body.telegram.groupPaused], ['Hisobotlar', true]);
     sent.length = 0;
-    assert.equal((await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'TG-2', amount: 1000, method: 'cash' })).body.telegram, 'sent');
+    assert.equal((await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'TG-2', amount: 1000, method: 'cash' })).body.telegram, 'queued');
+    await backgroundSettled();
     assert.deepEqual(sent.filter((x) => x.method === 'sendPhoto').map((x) => Number(x.body.chat_id)), [777], 'owner only while paused');
     assert.equal((await owner.call('PUT', '/telegram/group/pause', { paused: false })).body.telegram.groupPaused, false);
     sent.length = 0;
     await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'TG-3', amount: 1000, method: 'cash' });
+    await backgroundSettled();
     assert.deepEqual(sent.filter((x) => x.method === 'sendPhoto').map((x) => Number(x.body.chat_id)).sort(), [-1001, 777], 'group again');
+
+    // Telegram down: the payment is still saved at once, and the miss is written to the audit log.
+    failSends = true;
+    const offline = await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'TG-4', amount: 1000, method: 'cash' });
+    assert.deepEqual([offline.status, offline.body.telegram], [201, 'queued']);
+    await backgroundSettled();
+    failSends = false;
+    const miss = await getPool().query(`SELECT 1 FROM audit_log WHERE action = 'telegram_failed' AND entity_id = $1`, [offline.body.payment.id]);
+    assert.equal(miss.rowCount, 1);
 
     // Backup: every table, without passwords or the token.
     const backup = await owner.call('GET', '/backup');
