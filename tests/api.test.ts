@@ -569,7 +569,8 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     assert.equal(first.body.sent, true);
     assert.deepEqual(sent.map((s) => s.method), ['sendMessage', 'sendDocument']);
     assert.ok(sent.every((x) => Number(x.body.chat_id) === 777), 'report and backup go to the owner only');
-    assert.match(sent[0].body.text, /Jami:[\s\S]*Davomat/);
+    assert.match(sent[0].body.text, /Jami:/);
+    assert.doesNotMatch(sent[0].body.text, /Kim qancha kiritdi|Davomat|Kelmadi/);
     assert.equal((await cron('Bearer cron-test')).body.reason, 'already-sent');
   } finally {
     globalThis.fetch = realFetch;
