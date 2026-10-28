@@ -1258,6 +1258,41 @@ route('GET', '/balance', 'balance.view', async (ctx) => {
   return { date, sources: SOURCES.map((src) => bySource[src]), expenses, adjustments, recent: days };
 });
 
+// One month of the kassa, day by day per account, for the monthly Excel book: what was there at the
+// start of each day, what came in, what went out (with every expense and its reason) and what was left.
+route('GET', '/balance/month', 'balance.view', async (ctx) => {
+  const today = todayTashkent();
+  const month = /^\d{4}-\d{2}$/.test(ctx.query.month || '') ? ctx.query.month! : today.slice(0, 7);
+  const first = `${month}-01`;
+  const [y, m] = month.split('-').map(Number);
+  const next = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
+  const last = addDays(next, -1) < today ? addDays(next, -1) : today;
+  const start = `($1::date)::timestamp AT TIME ZONE '${TZ}'`;
+  const end = `($2::date)::timestamp AT TIME ZONE '${TZ}'`;
+  const [opening, days, expenses, adjustments] = await Promise.all([
+    query(`SELECT source, COALESCE(SUM(income - expense + adjustment), 0)::bigint AS amount FROM (${LEDGER_SQL}) l WHERE at < ${start} GROUP BY source`, [first]),
+    query(
+      `SELECT (at AT TIME ZONE '${TZ}')::date::text AS day, source,
+              COALESCE(SUM(income), 0)::bigint AS income, COALESCE(SUM(expense), 0)::bigint AS expense,
+              COALESCE(SUM(adjustment), 0)::bigint AS adjustment
+         FROM (${LEDGER_SQL}) l WHERE at >= ${start} AND at < ${end} GROUP BY 1, 2`,
+      [first, next],
+    ),
+    query(
+      `SELECT id, amount, source, category, note, spent_at, created_by_name FROM expenses
+        WHERE voided_at IS NULL AND spent_at >= ${start} AND spent_at < ${end} ORDER BY spent_at`,
+      [first, next],
+    ),
+    query(
+      `SELECT id, amount, source, note, at, created_by_name FROM balance_adjustments
+        WHERE at >= ${start} AND at < ${end} ORDER BY at`,
+      [first, next],
+    ),
+  ]);
+  const open = Object.fromEntries(SOURCES.map((src) => [src, Number(opening.find((r: any) => r.source === src)?.amount || 0)]));
+  return { month, first, last: last < first ? first : last, opening: open, days, expenses, adjustments };
+});
+
 // Admin import of a cash book (kassa daftari): expenses, plus an optional opening balance per
 // account. An expense matching one already recorded (same day, account, category and amount) is
 // skipped; the opening balance becomes the one adjustment that makes the balance at the start of

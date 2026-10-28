@@ -157,6 +157,16 @@ export interface BalanceReport {
   }>;
 }
 
+export interface BalanceMonth {
+  month: string;
+  first: string;
+  last: string;
+  opening: Record<'cash' | 'card', number>;
+  days: Array<{ day: string; source: 'cash' | 'card'; income: number; expense: number; adjustment: number }>;
+  expenses: Array<Pick<Expense, 'id' | 'amount' | 'source' | 'category' | 'note' | 'spent_at' | 'created_by_name'>>;
+  adjustments: Adjustment[];
+}
+
 export interface AttendanceRow {
   id: string;
   user_id: string;
