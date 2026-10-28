@@ -95,7 +95,7 @@ const signedText = (n: number) => `${n > 0 ? '+' : '−'}${groupDigits(Math.abs(
 /**
  * The month's kassa as the cashier used to keep it by hand: for each account a sheet with one row per
  * day (what was there, what came in, what was spent and on what, what was left), then the day's
- * income split cash/card, then every expense with its reason.
+ * income split cash/card. Each account's expenses get a sheet of their own.
  */
 export async function downloadMonthXlsx(data: BalanceMonth, categoryLabel: (c: string) => string) {
   const { default: writeXlsxFile } = await import('write-excel-file/browser');
@@ -153,21 +153,23 @@ export async function downloadMonthXlsx(data: BalanceMonth, categoryLabel: (c: s
     }),
   ];
 
-  const list: unknown[][] = [[head('Sana'), head('Vaqt'), head('Summa'), head('Qayerdan'), head('Toifa'), head('Izoh'), head('Kim yozdi')]];
-  for (const e of data.expenses) {
-    list.push([short(dateOf(e.spent_at)), timeOf(e.spent_at), money0(e.amount), e.source === 'cash' ? 'Naqd' : 'Karta', categoryLabel(e.category), e.note || null, e.created_by_name]);
+  // Expenses on their own sheet per account, oldest first, with the month's total at the bottom.
+  function expenseSheet(src: 'cash' | 'card') {
+    const own = data.expenses.filter((e) => e.source === src);
+    const rows: unknown[][] = [[head('Sana'), head('Vaqt'), head('Summa'), head('Toifa'), head('Izoh'), head('Kim yozdi')]];
+    for (const e of own) rows.push([short(dateOf(e.spent_at)), timeOf(e.spent_at), money0(e.amount), categoryLabel(e.category), e.note || null, e.created_by_name]);
+    if (own.length) {
+      const top = { topBorderStyle: 'thin' as const, fontWeight: 'bold' as const };
+      rows.push([{ value: 'Oy jami', type: String, ...top }, { value: '', type: String, ...top }, money0(own.reduce((t, e) => t + e.amount, 0), { ...top, textColor: RED })]);
+    } else rows.push(['Bu oyda rasxod yozilmagan']);
+    return { data: rows as any, sheet: src === 'cash' ? 'Naqd rasxodlar' : 'Karta rasxodlar', stickyRowsCount: 1, orientation: 'landscape' as const, columns: [{ width: 10 }, { width: 7 }, { width: 15 }, { width: 24 }, { width: 40 }, { width: 16 }] };
   }
-  if (data.expenses.length) {
-    const sum = (src: string) => data.expenses.filter((e) => e.source === src).reduce((t, e) => t + e.amount, 0);
-    list.push([]);
-    list.push([{ value: 'Naqd rasxod', type: String, fontWeight: 'bold' as const }, null, money0(sum('cash'), { textColor: RED, fontWeight: 'bold' as const })]);
-    list.push([{ value: 'Karta rasxod', type: String, fontWeight: 'bold' as const }, null, money0(sum('card'), { textColor: RED, fontWeight: 'bold' as const })]);
-  } else list.push(['Bu oyda rasxod yozilmagan']);
 
   await writeXlsxFile([
     accountSheet('cash'),
+    expenseSheet('cash'),
     accountSheet('card'),
+    expenseSheet('card'),
     { data: income as any, sheet: 'Naqd va karta', stickyRowsCount: 1, columns: [{ width: 10 }, { width: 18 }, { width: 18 }, { width: 20 }] },
-    { data: list as any, sheet: 'Rasxodlar', stickyRowsCount: 1, orientation: 'landscape', columns: [{ width: 10 }, { width: 7 }, { width: 15 }, { width: 10 }, { width: 24 }, { width: 36 }, { width: 16 }] },
   ], { fontFamily: 'Calibri', fontSize: 11 }).toFile(`kassa_${data.month}.xlsx`);
 }
