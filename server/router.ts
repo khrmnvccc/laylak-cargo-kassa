@@ -434,6 +434,36 @@ async function insertOrder(db: pg.PoolClient, user: AuthUser, o: NewOrder) {
   return inserted.rows[0].id as string;
 }
 
+/** Many orders in two statements (not two per order), so a long list loads without the kassa hanging. */
+async function insertOrders(db: pg.PoolClient, user: AuthUser, list: NewOrder[]): Promise<string[]> {
+  if (!list.length) return [];
+  // One row per client: like one-by-one inserts, the first name and phone given win, and known ones stay.
+  const clients = new Map<string, { name: string; phone: string }>();
+  for (const o of list) {
+    const c = clients.get(o.clientCode) || { name: '', phone: '' };
+    clients.set(o.clientCode, { name: c.name || o.clientName, phone: c.phone || o.phone });
+  }
+  await db.query(
+    `INSERT INTO clients (code, full_name, phone)
+     SELECT code, NULLIF(name, ''), NULLIF(phone, '') FROM unnest($1::text[], $2::text[], $3::text[]) AS t(code, name, phone)
+     ON CONFLICT (code) DO UPDATE SET full_name = COALESCE(clients.full_name, EXCLUDED.full_name), phone = COALESCE(clients.phone, EXCLUDED.phone)`,
+    [[...clients.keys()], [...clients.values()].map((c) => c.name), [...clients.values()].map((c) => c.phone)],
+  );
+  const col = <K extends keyof NewOrder>(k: K) => list.map((o) => o[k]);
+  // Sticker numbers follow the list's order.
+  const inserted = await db.query(
+    `INSERT INTO orders (scan_code, client_code, client_name, phone, order_no, transport, places, weight, amount, received_at, note, created_by, created_by_name)
+     SELECT '77' || lpad(nextval('orders_scan_seq')::text, 8, '0'), code, NULLIF(name, ''), NULLIF(phone, ''), NULLIF(no, ''), NULLIF(tr, ''),
+            places, weight, amount, received, NULLIF(note, ''), $11, $12
+       FROM (SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::int[], $7::numeric[], $8::bigint[], $9::date[], $10::text[])
+               WITH ORDINALITY AS t(code, name, phone, no, tr, places, weight, amount, received, note, i) ORDER BY i) AS rows
+     RETURNING id`,
+    [col('clientCode'), col('clientName'), col('phone'), col('orderNo'), col('transport'), col('places'), col('weight'), col('amount'),
+      col('receivedAt'), col('note'), user.id, user.full_name],
+  );
+  return inserted.rows.map((r: any) => r.id as string);
+}
+
 route('POST', '/orders', 'payments.create', async (ctx) => {
   const { order: o, errors } = readOrder(ctx.body || {}, todayTashkent());
   if (Object.keys(errors).length) return { status: 400, body: { error: 'Ma’lumotlarni tekshiring', fields: errors } };
@@ -473,8 +503,7 @@ route('POST', '/orders/import', 'payments.create', async (ctx) => {
     });
     const summary = { adding: fresh.length, total: fresh.reduce((s, o) => s + o.amount, 0), skipped: good.length - fresh.length, invalid };
     if (b.dryRun) return { dryRun: true, ...summary };
-    const ids: string[] = [];
-    for (const o of fresh) ids.push(await insertOrder(db, ctx.user!, o));
+    const ids = await insertOrders(db, ctx.user!, fresh);
     await audit(db, ctx.user, 'order_import', 'order', null, { count: ids.length, total: summary.total, skipped: summary.skipped });
     const orders = ids.length ? (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = ANY($1) ORDER BY o.scan_code`, [ids])).rows : [];
     return { dryRun: false, ...summary, orders };
