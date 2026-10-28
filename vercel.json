@@ -2,7 +2,7 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "crons": [
-    { "path": "/api/cron/daily", "schedule": "0 16 * * *" }
+    { "path": "/api/cron/daily", "schedule": "0 14 * * *" }
   ],
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api?__route=:path*" }

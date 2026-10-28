@@ -594,20 +594,32 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     assert.ok(!('app_sessions' in dump.tables));
     assert.ok(!JSON.stringify(dump).includes('scrypt$') && !JSON.stringify(dump).includes(token));
 
-    // The cron: secret checked, nothing before 20:00 Tashkent, then exactly one report a day.
+    // The cron: secret checked, nothing before 19:00 Tashkent, then exactly one report a day.
     process.env.CRON_SECRET = 'cron-test';
     const cron = (auth?: string) => handleApi({ method: 'GET', path: '/cron/daily', query: {}, body: {}, headers: { authorization: auth } }) as Promise<{ status: number; body: any }>;
     assert.equal((await cron()).status, 401);
     const day = new Date(Date.now() + 5 * 3600_000).toISOString().slice(0, 10);
     Date.now = () => Date.parse(`${day}T10:00:00Z`); // 15:00 in Tashkent
     assert.equal((await cron('Bearer cron-test')).body.reason, 'early');
-    Date.now = () => Date.parse(`${day}T16:05:00Z`); // 21:05 in Tashkent
+    Date.now = () => Date.parse(`${day}T14:05:00Z`); // 19:05 in Tashkent
     sent.length = 0;
     const first = await cron('Bearer cron-test');
     assert.equal(first.status, 200, JSON.stringify(first.body));
     assert.equal(first.body.sent, true);
-    assert.deepEqual(sent.map((s) => s.method), ['sendMessage', 'sendDocument']);
-    assert.ok(sent.every((x) => Number(x.body.chat_id) === 777), 'report and backup go to the owner only');
+    assert.deepEqual(sent.map((s) => s.method), ['sendMessage', 'sendDocument', 'sendDocument', 'sendDocument']);
+    assert.ok(sent.every((x) => Number(x.body.chat_id) === 777), 'report, Excel files and backup go to the owner only');
+    // The two Excel books cover the days since the 8 October inkassa, then comes the backup.
+    const from = day < '2026-10-09' ? day : '2026-10-09';
+    assert.deepEqual(sent.slice(1).map((x) => x.body.document.name),
+      [`kassa_${from}_${day}.xlsx`, `operatsiyalar_${from}_${day}.xlsx`, `laylak-zaxira-${day}.json.gz`]);
+    const { default: readXlsx } = await import('read-excel-file/node');
+    const opsFile = Buffer.from(await sent[2].body.document.arrayBuffer());
+    const ops = await readXlsx(opsFile, { sheet: 'Operatsiyalar' });
+    assert.equal(ops[0][0], 'Sana');
+    assert.ok(ops.length > 1, 'payments are in the operations book');
+    const kassaSheetNames = (await import('read-excel-file/node')).readSheetNames;
+    assert.deepEqual(await kassaSheetNames(Buffer.from(await sent[1].body.document.arrayBuffer())),
+      ['Naqd kassa', 'Naqd rasxodlar', 'Karta kassa', 'Karta rasxodlar', 'Naqd va karta']);
     assert.match(sent[0].body.text, /Jami:/);
     assert.doesNotMatch(sent[0].body.text, /Kim qancha kiritdi|Davomat|Kelmadi/);
     assert.equal((await cron('Bearer cron-test')).body.reason, 'already-sent');
