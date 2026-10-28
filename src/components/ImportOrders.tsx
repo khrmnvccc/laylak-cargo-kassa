@@ -11,6 +11,31 @@ import { Alert, Button, Field, Input, Modal, Textarea, td, th, useToast } from '
 
 interface Check { adding: number; total: number; skipped: number; invalid: Array<{ row: number; code: string; error: string }> }
 
+// The server takes at most 1000 orders a request; a whole admin panel can be several thousand.
+const BATCH = 500;
+async function inBatches<T extends Check>(rows: ImportOrderRow[], body: Record<string, unknown>, each?: (res: T) => void): Promise<Check> {
+  const sum: Check = { adding: 0, total: 0, skipped: 0, invalid: [] };
+  for (let at = 0; at < rows.length; at += BATCH) {
+    const res = await api<T>('/orders/import', { method: 'POST', body: { ...body, rows: rows.slice(at, at + BATCH) } });
+    sum.adding += res.adding; sum.total += res.total; sum.skipped += res.skipped;
+    sum.invalid.push(...res.invalid.map((i) => ({ ...i, row: i.row + at })));
+    each?.(res);
+  }
+  return sum;
+}
+
+// The same order on two pages of the panel is kept once.
+function unique(list: ImportOrderRow[]) {
+  const seen = new Set<string>();
+  return list.filter((r) => {
+    if (!r.orderNo) return true;
+    const k = `${r.clientCode}|${r.orderNo}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
 /** Loads a whole list of orders at once: pasted from the admin panel or Excel, or an .xlsx / .csv file. */
 export function ImportOrders({ open, onClose, text }: { open: boolean; onClose: () => void; text?: string | null }) {
   const { bump } = useLive();
@@ -36,13 +61,14 @@ export function ImportOrders({ open, onClose, text }: { open: boolean; onClose: 
     setRows(null); setCheck(null); setDone(null); setError(null);
   }
 
-  async function load(list: ImportOrderRow[], receivedAt = date) {
+  async function load(all: ImportOrderRow[], receivedAt = date) {
+    const list = unique(all);
     setError(null); setCheck(null);
     if (!list.length) { setRows(null); setError('Roʻyxatda buyurtma topilmadi. Admin paneldagi jadvalni belgilab nusxa oling yoki Excel faylni tanlang.'); return; }
     setRows(list);
     setBusy(true);
     try {
-      setCheck(await api<Check>('/orders/import', { method: 'POST', body: { rows: list, receivedAt, dryRun: true } }));
+      setCheck(await inBatches(list, { receivedAt, dryRun: true }));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -72,10 +98,11 @@ export function ImportOrders({ open, onClose, text }: { open: boolean; onClose: 
     setBusy(true);
     setError(null);
     try {
-      const res = await api<Check & { orders: Order[] }>('/orders/import', { method: 'POST', body: { rows, receivedAt: date } });
-      setDone(res.orders);
+      const added: Order[] = [];
+      const res = await inBatches<Check & { orders: Order[] }>(rows, { receivedAt: date }, (r) => added.push(...r.orders));
+      setDone(added);
       bump();
-      toast({ tone: 'success', title: `${res.orders.length} ta buyurtma qoʻshildi`, description: money(res.total) });
+      toast({ tone: 'success', title: `${added.length} ta buyurtma qoʻshildi`, description: money(res.total) });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -130,7 +157,7 @@ export function ImportOrders({ open, onClose, text }: { open: boolean; onClose: 
                 className="inline-flex shrink-0 cursor-grab items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 font-medium text-primary-fg">
                 <Bookmark className="size-4" />Kassaga yuklash
               </a>
-              <span className="min-w-0 flex-1">Bu tugmani sichqoncha bilan zakladkalar paneliga torting. Keyin admin panelda kerakli buyurtmalarni belgilab, shu zakladkani bossangiz, belgilanganlar kassada ochiladi.</span>
+              <span className="min-w-0 flex-1">Bu tugmani sichqoncha bilan zakladkalar paneliga torting. Keyin admin panelda shu zakladkani bossangiz: belgilangan buyurtmalar, hech biri belgilanmagan boʻlsa esa hamma sahifalardagi buyurtmalar kassada ochiladi.</span>
             </div>
           )}
 
