@@ -266,7 +266,7 @@ function TelegramCard() {
             <div className="space-y-3">
               <p className="text-ink-2">{`Xabarlar ${tg.chatName} ga @${tg.botName} orqali keladi.`}</p>
               <ul className="list-disc space-y-1 pl-5 text-[13px] text-ink-2">
-                <li>Har kuni 21:00 dan keyin: kunlik hisobot va butun bazaning zaxira nusxasi (fayl).</li>
+                <li>Har kuni 19:00 dan keyin: kunlik hisobot, kassa va operatsiyalar Excel fayllari (oxirgi inkassadan beri) va butun bazaning zaxira nusxasi.</li>
                 <li>Har bir toʻlovning rasmi: naqd yoki karta, summa, mijoz va kim kiritgani.</li>
                 <li>Toʻlov bekor qilinsa, darhol xabar.</li>
               </ul>

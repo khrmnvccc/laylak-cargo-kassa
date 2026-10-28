@@ -25,6 +25,8 @@ import { receiptKey } from './receipts.js';
 import { background } from './background.js';
 import { gzipSync } from 'node:zlib';
 import { createHash, randomInt } from 'node:crypto';
+import { EXPENSE_LABELS, XLSX_OPTIONS, kassaSheets, monthSheets } from '../src/lib/excelSheets.js';
+import type { BalanceMonth, Payment } from '../src/lib/types.js';
 
 export interface ApiRequest {
   method: string;
@@ -1303,6 +1305,10 @@ route('GET', '/balance/month', 'balance.view', async (ctx) => {
     last = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
     if (last > today) last = today < first ? first : today;
   }
+  return balanceMonth(first, last);
+});
+
+async function balanceMonth(first: string, last: string) {
   const next = addDays(last, 1);
   const start = `($1::date)::timestamp AT TIME ZONE '${TZ}'`;
   const end = `($2::date)::timestamp AT TIME ZONE '${TZ}'`;
@@ -1328,7 +1334,7 @@ route('GET', '/balance/month', 'balance.view', async (ctx) => {
   ]);
   const open = Object.fromEntries(SOURCES.map((src) => [src, Number(opening.find((r: any) => r.source === src)?.amount || 0)]));
   return { first, last, opening: open, days, expenses, adjustments };
-});
+}
 
 // Admin import of a cash book (kassa daftari): expenses, plus an optional opening balance per
 // account. An expense matching one already recorded (same day, account, category and amount) is
@@ -1687,9 +1693,53 @@ async function backupData() {
   return { gz: gzipSync(json), counts };
 }
 
+// The kassa was handed over (inkassa) on 8 October 2026, so the evening files never reach back before the 9th;
+// after the next inkassa expense they start again from the day after it.
+const KASSA_FROM = '2026-10-09';
+
+async function kassaPeriodStart(date: string) {
+  const rows = await query(
+    `SELECT MAX((spent_at AT TIME ZONE '${TZ}')::date)::text AS day FROM expenses
+      WHERE voided_at IS NULL AND category = 'inkassa' AND spent_at < ($1::date)::timestamp AT TIME ZONE '${TZ}'`,
+    [date],
+  );
+  const after = rows[0]?.day ? addDays(rows[0].day, 1) : KASSA_FROM;
+  const start = after > KASSA_FROM ? after : KASSA_FROM;
+  return start > date ? date : start < addDays(date, -365) ? addDays(date, -365) : start;
+}
+
+/** The two Excel books from the Balans and Operatsiyalar pages, for `from`..`to`, as the day's report attachments. */
+async function reportWorkbooks(from: string, to: string) {
+  const { default: writeXlsxFile } = await import('write-excel-file/node');
+  // Rows go through JSON so dates are ISO strings, exactly as the browser gets them.
+  const plain = <T,>(value: unknown) => JSON.parse(JSON.stringify(value)) as T;
+  const [month, payments] = await Promise.all([
+    balanceMonth(from, to),
+    query(`SELECT ${PAYMENT_COLUMNS} FROM payments p LEFT JOIN clients c ON c.code = p.client_code
+            WHERE ${RANGE_SQL(1, 2)} ORDER BY p.paid_at`, [from, to]),
+  ]);
+  const label = (c: string) => EXPENSE_LABELS[c] ?? c;
+  return {
+    kassa: await writeXlsxFile(monthSheets(plain<BalanceMonth>(month), label), XLSX_OPTIONS).toBuffer(),
+    operations: await writeXlsxFile(kassaSheets(plain<Payment[]>(payments)), XLSX_OPTIONS).toBuffer(),
+    payments: payments.length,
+  };
+}
+
 async function sendDailyReport(date: string) {
   const text = await dailyReportText(date);
   if (!(await sendMessage(text))) throw new HttpError(400, 'Telegram ulanmagan');
+  const from = await kassaPeriodStart(date);
+  const span = from === date ? dayLabel(date) : `${dayLabel(from)} – ${dayLabel(date)}`;
+  try {
+    const books = await reportWorkbooks(from, date);
+    await sendDocument(books.kassa, `kassa_${from}_${date}.xlsx`, `📗 Kassa va rasxodlar · ${span}`);
+    await sendDocument(books.operations, `operatsiyalar_${from}_${date}.xlsx`, `📘 Operatsiyalar · ${span}\n${books.payments} ta toʻlov`);
+  } catch (error) {
+    // The report itself already went out; a failed file must not stop the backup or resend the report.
+    console.error('Daily Excel failed', error);
+    await sendMessage('⚠️ Bugungi Excel fayllarni yuborib boʻlmadi. Ularni saytdagi Balans va Operatsiyalar sahifasidan yuklab olsa boʻladi.').catch(() => {});
+  }
   const { gz, counts } = await backupData();
   await sendDocument(gz, `laylak-zaxira-${date}.json.gz`,
     `🗄 Zaxira nusxa · ${dayLabel(date)}\n${counts.payments ?? 0} toʻlov, ${counts.clients ?? 0} mijoz, ${counts.attendance ?? 0} davomat yozuvi`);
@@ -1812,7 +1862,7 @@ route('GET', '/backup', 'owner', async (ctx) => {
 route('GET', '/cron/daily', 'public', async (ctx) => {
   const secret = process.env.CRON_SECRET;
   if (secret && ctx.headers.authorization !== `Bearer ${secret}`) return { status: 401, body: { error: 'Ruxsat yoʻq' } };
-  if (tashkentHour() < 20) return { sent: false, reason: 'early' };
+  if (tashkentHour() < 19) return { sent: false, reason: 'early' };
   const date = todayTashkent();
   const claimed = await query(
     `INSERT INTO app_meta (key, value) VALUES ('daily_report', $1::jsonb)
