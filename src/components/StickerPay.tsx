@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Banknote, CheckCircle2, CreditCard, Loader2, Mail, Navigation, Package, Printer } from 'lucide-react';
+import { Banknote, CheckCircle2, CreditCard, Loader2, Mail, Navigation, Package, PackageCheck, Printer, Undo2 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useLive } from '../lib/live';
 import { dateTime, formatDate, methodLabel, money } from '../lib/format';
@@ -14,7 +14,7 @@ type View =
   | { state: 'closed' }
   | { state: 'loading'; code: string }
   | { state: 'error'; code: string; message: string }
-  | { state: 'ready'; order: Order; unpaid: Unpaid; step: 'method' | 'card'; saving?: Method; error?: string }
+  | { state: 'ready'; order: Order; unpaid: Unpaid; step: 'method' | 'card'; saving?: Method | 'issue'; error?: string }
   | { state: 'done'; order: Order };
 
 /** Scanning a kassa sticker anywhere in the app opens the parcel: what is owed, then Naqd or Karta (Yandex / Pochta). */
@@ -44,6 +44,21 @@ export function StickerPay() {
       if (telegram === 'off') toast({ tone: 'error', title: 'Telegramga yuborilmadi', description: TELEGRAM_MISS.off });
     } catch (e) {
       setView({ ...view, saving: undefined, error: (e as Error).message });
+    }
+  }
+
+  // Handed over without a payment here (paid elsewhere, or free), or put back by mistake.
+  async function issue(issued: boolean) {
+    if (view.state !== 'ready' || view.saving) return;
+    setView({ ...view, saving: 'issue', error: undefined });
+    try {
+      const { order } = await api<{ order: Order }>(`/orders/${view.order.id}/issue`, { method: 'POST', body: { issued } });
+      setView({ ...view, order, saving: undefined });
+      bump();
+      toast({ tone: 'success', title: issued ? 'Tovar berildi' : 'Omborga qaytarildi', description: `${order.client_code} · stiker ${order.scan_code}` });
+    } catch (e) {
+      setView({ ...view, saving: undefined });
+      toast({ tone: 'error', title: 'Saqlanmadi', description: (e as Error).message });
     }
   }
 
@@ -125,6 +140,19 @@ export function StickerPay() {
               )}
             </div>
           )}
+
+          {view.state === 'ready' && (order.issued_at ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line px-3 py-2 text-[13px] text-ink-2">
+              <span className="inline-flex items-center gap-1.5"><PackageCheck className="size-4 text-ink-3" />Berilgan: {dateTime(order.issued_at)}{order.issued_by_name ? ` · ${order.issued_by_name}` : ''}</span>
+              <button type="button" className="inline-flex items-center gap-1 text-xs font-medium text-ink-3 hover:text-ink" disabled={Boolean(view.saving)} onClick={() => void issue(false)}>
+                <Undo2 className="size-3.5" />Omborga qaytarish
+              </button>
+            </div>
+          ) : order.payment_id ? (
+            <Button className="w-full" variant="primary" loading={view.saving === 'issue'} icon={<PackageCheck className="size-4" />} onClick={() => void issue(true)}>Berildi</Button>
+          ) : (
+            <Button className="w-full" loading={view.saving === 'issue'} icon={<PackageCheck className="size-4" />} onClick={() => void issue(true)}>Toʻlovsiz berildi (toʻlovi boshqa joyda)</Button>
+          ))}
 
           {view.state === 'ready' && view.unpaid.length > 0 && (
             <p className="text-[13px] text-ink-3">

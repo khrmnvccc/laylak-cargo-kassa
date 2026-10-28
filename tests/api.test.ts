@@ -798,6 +798,19 @@ test('order stickers: scanning the code shows what is owed and takes the payment
 
   const unpaid = await owner.call('GET', '/orders', undefined, { status: 'unpaid', q: 'nigora' });
   assert.deepEqual(unpaid.body.items.map((i: any) => i.id), [second.body.order.id]);
+
+  // Paying by the sticker hands the parcel over; one paid elsewhere is marked by hand, and can be put back.
+  const stock = async () => (await owner.call('GET', '/orders', undefined, { status: 'stock', q: 'nigora' })).body;
+  assert.deepEqual((await stock()).items.map((i: any) => i.id), [second.body.order.id]);
+  assert.equal((await stock()).total, 1);
+  const handed = await owner.call('POST', `/orders/${second.body.order.id}/issue`, { issued: true });
+  assert.equal(handed.status, 200, JSON.stringify(handed.body));
+  assert.ok(handed.body.order.issued_at);
+  assert.equal(handed.body.order.payment_id, null, 'handing over takes no payment');
+  assert.equal((await stock()).total, 0);
+  assert.equal((await owner.call('GET', '/orders', undefined, { status: 'issued', q: 'nigora' })).body.total, 2);
+  assert.equal((await owner.call('POST', `/orders/${second.body.order.id}/issue`, { issued: false })).body.order.issued_at, null);
+  assert.equal((await stock()).total, 1);
   assert.equal((await owner.call('DELETE', `/orders/${second.body.order.id}`)).status, 200);
   assert.equal((await owner.call('GET', `/orders/scan/${second.body.order.scan_code}`)).status, 404);
 });

@@ -210,4 +210,6 @@ export interface Order {
   paid_method: Method | null;
   paid_at: string | null;
   paid_by: string | null;
+  issued_at: string | null;
+  issued_by_name: string | null;
 }

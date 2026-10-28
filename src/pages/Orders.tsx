@@ -25,7 +25,7 @@ export default function Orders() {
   const [saving, setSaving] = useState(false);
   const [known, setKnown] = useState<string | null>(null);
   const [q, setQ] = useState('');
-  const [status, setStatus] = useState<'all' | 'unpaid' | 'paid'>('all');
+  const [status, setStatus] = useState<'all' | 'stock' | 'issued' | 'unpaid'>('all');
   const [manual, setManual] = useState('');
   const [removing, setRemoving] = useState<Order | null>(null);
   const [creating, setCreating] = useState(false);
@@ -38,7 +38,7 @@ export default function Orders() {
     const id = setTimeout(() => setDebounced(q.trim()), 250);
     return () => clearTimeout(id);
   }, [q]);
-  const list = useApi<{ items: Order[] }>('/orders', { q: debounced, status: status === 'all' ? '' : status }, { keep: true });
+  const list = useApi<{ items: Order[]; total: number; totalAmount: number }>('/orders', { q: debounced, status: status === 'all' ? '' : status }, { keep: true });
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
   const code = form.clientCode.trim().toUpperCase();
   const amount = Number(form.amountText.replace(/\D/g, '')) || 0;
@@ -173,8 +173,14 @@ export default function Orders() {
               <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ID, ism, buyurtma yoki stiker kodi" className="h-9 pl-9" />
             </div>
             <Segmented value={status} onChange={setStatus}
-              options={[{ value: 'all', label: 'Hammasi' }, { value: 'unpaid', label: 'Toʻlanmagan' }, { value: 'paid', label: 'Toʻlangan' }]} />
+              options={[{ value: 'all', label: 'Hammasi' }, { value: 'stock', label: 'Omborda' }, { value: 'issued', label: 'Berilgan' }, { value: 'unpaid', label: 'Toʻlanmagan' }]} />
           </div>
+          {list.data && (
+            <div className="border-b border-line px-4 py-2 text-[13px] text-ink-2">
+              {{ all: 'Jami', stock: 'Omborda', issued: 'Berilgan', unpaid: 'Toʻlanmagan' }[status]}: <b className="text-ink num">{list.data.total} ta</b> · <b className="text-ink num">{money(list.data.totalAmount)}</b>
+              {list.data.total > items.length && <span className="text-ink-3"> · oxirgi {items.length} tasi koʻrsatilgan, qidiruvdan foydalaning</span>}
+            </div>
+          )}
           {list.loading && !list.data ? <SkeletonRows rows={6} cols={5} /> : list.error ? <div className="p-4"><Alert>{list.error}</Alert></div> : !items.length ? (
             <EmptyState title="Stikerlar yoʻq" description="“Yangi stiker” tugmasini bosib birinchi stikerni chop eting." />
           ) : (
@@ -193,7 +199,7 @@ export default function Orders() {
                   </button>
                   <div className="shrink-0 text-right">
                     <div className="text-sm font-semibold text-ink num">{money(o.amount)}</div>
-                    <div className="mt-0.5">{o.payment_id ? <Badge tone="success">{methodLabel(o.paid_method!)}</Badge> : <Badge tone="warn">Toʻlanmagan</Badge>}</div>
+                    <div className="mt-0.5 flex justify-end gap-1"><IssuedBadge o={o} />{o.payment_id ? <Badge tone="success">{methodLabel(o.paid_method!)}</Badge> : <Badge tone="warn">Toʻlanmagan</Badge>}</div>
                   </div>
                   <Button size="sm" variant="ghost" icon={<Printer className="size-4" />} onClick={() => void printOrderSticker(o)} aria-label="Chop etish" />
                 </li>
@@ -213,7 +219,7 @@ export default function Orders() {
                       <td className={td}><div className="num">{o.order_no ? `№${o.order_no}` : '—'}</div>
                         <div className="text-xs text-ink-3">{[o.transport, o.weight ? `${o.weight} kg` : ''].filter(Boolean).join(' · ')}</div></td>
                       <td className={`${td} text-right font-medium num`}>{money(o.amount)}</td>
-                      <td className={td}>{o.payment_id ? <Badge tone="success">{methodLabel(o.paid_method!)}</Badge> : <Badge tone="warn">Toʻlanmagan</Badge>}</td>
+                      <td className={td}><div className="flex flex-wrap gap-1"><IssuedBadge o={o} />{o.payment_id ? <Badge tone="success">{methodLabel(o.paid_method!)}</Badge> : <Badge tone="warn">Toʻlanmagan</Badge>}</div></td>
                       <td className={`${td} text-right`}>
                         <div className="flex justify-end gap-1">
                           <Button size="sm" variant="ghost" icon={<Printer className="size-4" />} onClick={() => void printOrderSticker(o)} aria-label="Chop etish" />
@@ -240,4 +246,8 @@ export default function Orders() {
       </Modal>
     </>
   );
+}
+
+function IssuedBadge({ o }: { o: Order }) {
+  return o.issued_at ? <Badge tone="neutral">Berildi</Badge> : <Badge tone="card">Omborda</Badge>;
 }

@@ -276,7 +276,8 @@ route('GET', '/version', 'user', async () => {
             COALESCE((SELECT EXTRACT(EPOCH FROM MAX(updated_at)) FROM expenses), 0)::text || ':' ||
             (SELECT COUNT(*) FROM balance_adjustments)::text || ':' ||
             (SELECT COUNT(*) FROM attendance)::text || ':' ||
-            COALESCE((SELECT EXTRACT(EPOCH FROM MAX(GREATEST(check_in_at, check_out_at, edited_at))) FROM attendance), 0)::text AS version`,
+            COALESCE((SELECT EXTRACT(EPOCH FROM MAX(GREATEST(check_in_at, check_out_at, edited_at))) FROM attendance), 0)::text || ':' ||
+            COALESCE((SELECT EXTRACT(EPOCH FROM MAX(updated_at)) FROM orders), 0)::text AS version`,
   );
   return { version: rows[0].version, today: todayTashkent() };
 });
@@ -370,7 +371,7 @@ function paymentCaption(p: { method: string; amount: number; by: string; at: str
 
 const ORDER_COLUMNS = `o.id, o.scan_code, o.public_token, o.client_code, COALESCE(o.client_name, c.full_name) AS client_name,
   COALESCE(o.phone, c.phone) AS phone, o.order_no, o.transport, o.places, o.weight::float8 AS weight, o.amount,
-  to_char(o.received_at, 'YYYY-MM-DD') AS received_at, o.note, o.created_by_name, o.created_at,
+  to_char(o.received_at, 'YYYY-MM-DD') AS received_at, o.note, o.created_by_name, o.created_at, o.issued_at, o.issued_by_name,
   CASE WHEN p.voided_at IS NULL THEN p.id END AS payment_id,
   CASE WHEN p.voided_at IS NULL THEN p.method END AS paid_method,
   CASE WHEN p.voided_at IS NULL THEN p.paid_at END AS paid_at,
@@ -389,8 +390,13 @@ route('GET', '/orders', 'payments.create', async (ctx) => {
   }
   if (ctx.query.status === 'unpaid') where.push('(p.id IS NULL OR p.voided_at IS NOT NULL)');
   if (ctx.query.status === 'paid') where.push('(p.id IS NOT NULL AND p.voided_at IS NULL)');
-  const items = await query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE ${where.join(' AND ')} ORDER BY o.created_at DESC LIMIT 200`, args);
-  return { items };
+  if (ctx.query.status === 'stock') where.push('o.issued_at IS NULL');
+  if (ctx.query.status === 'issued') where.push('o.issued_at IS NOT NULL');
+  const [items, count] = await Promise.all([
+    query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE ${where.join(' AND ')} ORDER BY o.created_at DESC LIMIT 200`, args),
+    query(`SELECT COUNT(*)::int AS n, COALESCE(SUM(o.amount), 0)::bigint AS amount FROM ${ORDER_FROM} WHERE ${where.join(' AND ')}`, args),
+  ]);
+  return { items, total: count[0].n, totalAmount: count[0].amount };
 });
 
 type NewOrder = {
@@ -570,7 +576,11 @@ route('POST', '/orders/:id/pay', 'payments.create', async (ctx) => {
       [order.client_code, order.client_name, order.amount, method, note, ctx.user!.id, ctx.user!.full_name],
     );
     const paymentId = inserted.rows[0].id;
-    await db.query(`UPDATE orders SET payment_id = $2 WHERE id = $1`, [order.id, paymentId]);
+    // Paid at the kassa by scanning its sticker means the parcel is being handed over.
+    await db.query(
+      `UPDATE orders SET payment_id = $2, issued_at = COALESCE(issued_at, NOW()), issued_by_name = COALESCE(issued_by_name, $3), updated_at = NOW() WHERE id = $1`,
+      [order.id, paymentId, ctx.user!.full_name],
+    );
     await audit(db, ctx.user, 'payment_create', 'payment', paymentId, { clientCode: order.client_code, amount: Number(order.amount), method, order: order.scan_code });
     const payment = (await db.query(`SELECT ${PAYMENT_COLUMNS} FROM payments p LEFT JOIN clients c ON c.code = p.client_code WHERE p.id = $1`, [paymentId])).rows[0];
     const full = (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = $1`, [order.id])).rows[0];
@@ -590,13 +600,31 @@ route('POST', '/orders/:id/pay', 'payments.create', async (ctx) => {
   return { ...result, telegram };
 });
 
+// Mark a parcel handed out (or, by mistake, back in the warehouse) without taking a payment.
+route('POST', '/orders/:id/issue', 'payments.create', async (ctx) => {
+  if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Buyurtma topilmadi');
+  const issued = ctx.body?.issued !== false;
+  const order = await transaction(async (db) => {
+    const updated = await db.query(
+      `UPDATE orders SET issued_at = CASE WHEN $2 THEN COALESCE(issued_at, NOW()) END,
+              issued_by_name = CASE WHEN $2 THEN COALESCE(issued_by_name, $3) END, updated_at = NOW()
+        WHERE id = $1 AND deleted_at IS NULL RETURNING scan_code`,
+      [ctx.params.id, issued, ctx.user!.full_name],
+    );
+    if (!updated.rows.length) throw new HttpError(404, 'Buyurtma topilmadi');
+    await audit(db, ctx.user, issued ? 'order_issue' : 'order_unissue', 'order', ctx.params.id, { scanCode: updated.rows[0].scan_code });
+    return (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = $1`, [ctx.params.id])).rows[0];
+  });
+  return { order };
+});
+
 route('DELETE', '/orders/:id', 'payments.void', async (ctx) => {
   if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Buyurtma topilmadi');
   await transaction(async (db) => {
     const rows = (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = $1 AND o.deleted_at IS NULL FOR UPDATE OF o`, [ctx.params.id])).rows;
     if (!rows.length) throw new HttpError(404, 'Buyurtma topilmadi');
     if (rows[0].payment_id) throw new HttpError(409, 'Toʻlangan buyurtmani oʻchirib boʻlmaydi. Avval toʻlovni bekor qiling');
-    await db.query(`UPDATE orders SET deleted_at = NOW() WHERE id = $1`, [ctx.params.id]);
+    await db.query(`UPDATE orders SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1`, [ctx.params.id]);
     await audit(db, ctx.user, 'order_delete', 'order', ctx.params.id, { scanCode: rows[0].scan_code, amount: Number(rows[0].amount) });
   });
   return { ok: true };
