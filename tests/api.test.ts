@@ -809,6 +809,8 @@ test('order import: a list from the admin panel becomes stickers, once', async (
   assert.equal(real.status, 200, JSON.stringify(real.body));
   assert.equal(real.body.orders.length, 2);
   assert.ok(real.body.orders.every((o: any) => /^77\d{8}$/.test(o.scan_code) && o.received_at === '2026-10-26'));
+  assert.deepEqual(real.body.orders.map((o: any) => [o.client_code, o.places, o.weight, o.amount]),
+    [['TTT-103280', 6, 2.1, 247800], ['TTT-103750', 1, 0.85, 106200]], 'sticker numbers follow the list');
   const again = await owner.call('POST', '/orders/import', { rows, dryRun: true });
   assert.deepEqual([again.body.adding, again.body.skipped], [0, 3]);
   const scan = await owner.call('GET', `/orders/scan/${real.body.orders[0].scan_code}`);
