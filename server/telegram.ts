@@ -12,6 +12,7 @@ export interface TelegramConfig {
   groupId?: number;
   groupName?: string;
   groupThreadId?: number; // a topic in a group with topics
+  groupPaused?: boolean; // the owner stopped the group for a while (e.g. while fixing old records); they still get everything
 }
 
 /** Telegram moved a group to a new id (it became a supergroup); `chatId` is the new one. */
@@ -90,7 +91,7 @@ export async function notify(text: string) {
 
 /** Runs `send` for the owner's chat and the group; resolves when at least one got it. */
 async function everyChat(config: TelegramConfig, send: (chatId: number, topic: Record<string, number>) => Promise<unknown>) {
-  const chats = [config.chatId, config.groupId].filter((id): id is number => Boolean(id));
+  const chats = [config.chatId, config.groupPaused ? undefined : config.groupId].filter((id): id is number => Boolean(id));
   const results = await Promise.allSettled(chats.map(async (chatId) => {
     const topic: Record<string, number> = chatId === config.groupId && config.groupThreadId ? { message_thread_id: config.groupThreadId } : {};
     try {
