@@ -1262,11 +1262,20 @@ route('GET', '/balance', 'balance.view', async (ctx) => {
 // start of each day, what came in, what went out (with every expense and its reason) and what was left.
 route('GET', '/balance/month', 'balance.view', async (ctx) => {
   const today = todayTashkent();
-  const month = /^\d{4}-\d{2}$/.test(ctx.query.month || '') ? ctx.query.month! : today.slice(0, 7);
-  const first = `${month}-01`;
-  const [y, m] = month.split('-').map(Number);
-  const next = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
-  const last = addDays(next, -1) < today ? addDays(next, -1) : today;
+  let first: string, last: string;
+  if (DATE_RE.test(ctx.query.from || '') && DATE_RE.test(ctx.query.to || '')) {
+    // Any span of days (e.g. from one cash hand-over to the next), at most a year, never past today.
+    last = ctx.query.to! < today ? ctx.query.to! : today;
+    first = ctx.query.from! <= last ? ctx.query.from! : last;
+    if (first < addDays(last, -365)) first = addDays(last, -365);
+  } else {
+    const month = /^\d{4}-\d{2}$/.test(ctx.query.month || '') ? ctx.query.month! : today.slice(0, 7);
+    const [y, m] = month.split('-').map(Number);
+    first = `${month}-01`;
+    last = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+    if (last > today) last = today < first ? first : today;
+  }
+  const next = addDays(last, 1);
   const start = `($1::date)::timestamp AT TIME ZONE '${TZ}'`;
   const end = `($2::date)::timestamp AT TIME ZONE '${TZ}'`;
   const [opening, days, expenses, adjustments] = await Promise.all([
@@ -1290,7 +1299,7 @@ route('GET', '/balance/month', 'balance.view', async (ctx) => {
     ),
   ]);
   const open = Object.fromEntries(SOURCES.map((src) => [src, Number(opening.find((r: any) => r.source === src)?.amount || 0)]));
-  return { month, first, last: last < first ? first : last, opening: open, days, expenses, adjustments };
+  return { first, last, opening: open, days, expenses, adjustments };
 });
 
 // Admin import of a cash book (kassa daftari): expenses, plus an optional opening balance per
