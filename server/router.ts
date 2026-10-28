@@ -1531,26 +1531,19 @@ const METHOD_LABEL: Record<string, string> = { cash: 'Naqd', card: 'Karta', yand
 const MONTHS = ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'];
 const som = (n: number | string) => `${String(Math.round(Number(n))).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} soʻm`;
 const dayLabel = (date: string) => `${Number(date.slice(8))}-${MONTHS[Number(date.slice(5, 7)) - 1]}, ${date.slice(0, 4)}`;
-const clock = (iso: string | Date) => new Date(new Date(iso).getTime() + 5 * 3600_000).toISOString().slice(11, 16);
-const hoursText = (min: number) => `${Math.floor(min / 60)} soat ${min % 60} daq`;
 const tashkentHour = () => new Date(Date.now() + 5 * 3600_000).getUTCHours();
 
 async function dailyReportText(date: string): Promise<string> {
   const start = `($1::date)::timestamp AT TIME ZONE '${TZ}'`;
   const end = `($1::date + 1)::timestamp AT TIME ZONE '${TZ}'`;
-  const [totals, cashiers, voided, expenses, balance, attendance, staff] = await Promise.all([
+  const [totals, voided, expenses, balance] = await Promise.all([
     totalsFor(date, date),
-    query(`SELECT created_by_name AS name, SUM(amount)::bigint AS total, COUNT(*)::int AS n FROM payments p
-            WHERE voided_at IS NULL AND ${RANGE_SQL(1, 2)} GROUP BY 1 ORDER BY 2 DESC`, [date, date]),
     query(`SELECT COUNT(*)::int AS n, COALESCE(SUM(amount), 0)::bigint AS total FROM payments
             WHERE voided_at >= ${start} AND voided_at < ${end}`, [date]),
     query(`SELECT COALESCE(SUM(amount), 0)::bigint AS total FROM expenses
             WHERE voided_at IS NULL AND spent_at >= ${start} AND spent_at < ${end}`, [date]),
     query(`SELECT source, COALESCE(SUM(income - expense + adjustment), 0)::bigint AS closing
              FROM (${LEDGER_SQL}) l WHERE at < ${end} GROUP BY source`, [date]),
-    query(`SELECT ${ATT_COLUMNS} FROM attendance a JOIN app_users u ON u.id = a.user_id
-            WHERE a.check_in_at >= ${start} AND a.check_in_at < ${end} ORDER BY a.check_in_at`, [date]),
-    query(`SELECT id, full_name FROM app_users WHERE is_active AND role <> 'owner' ORDER BY full_name`),
   ]);
   const lines = [`📊 <b>Laylak Cargo · ${dayLabel(date)}</b>`, ''];
   lines.push(`💰 Jami: <b>${som(totals.total)}</b> (${totals.count} ta toʻlov, ${totals.clients} mijoz)`);
@@ -1559,23 +1552,6 @@ async function dailyReportText(date: string): Promise<string> {
   if (voided[0].n) lines.push(`⚠️ Bekor qilingan: ${voided[0].n} ta, ${som(voided[0].total)}`);
   const bal = Object.fromEntries(balance.map((b: any) => [b.source, b.closing]));
   if (balance.length) lines.push(`🏦 Kun oxiridagi qoldiq: naqd ${som(bal.cash || 0)}, karta ${som(bal.card || 0)}`);
-  if (cashiers.length) {
-    lines.push('', '<b>Kim qancha kiritdi</b>');
-    for (const c of cashiers) lines.push(`• ${escapeHtml(c.name || '—')}: ${som(c.total)} (${c.n} ta)`);
-  }
-  lines.push('', '<b>Davomat</b>');
-  const byUser = new Map<string, any[]>();
-  for (const a of attendance) byUser.set(a.user_id, [...(byUser.get(a.user_id) || []), a]);
-  if (!attendance.length) lines.push('Bugun hech kim “Keldim” bosmagan');
-  for (const rows of byUser.values()) {
-    const first = rows[0];
-    const last = rows[rows.length - 1];
-    const minutes = rows.reduce((sum, r) => sum + (r.check_out_at ? Math.round((Date.parse(r.check_out_at) - Date.parse(r.check_in_at)) / 60_000) : 0), 0);
-    const out = last.check_out_at && !last.forgot_out ? clock(last.check_out_at) : 'ketmagan';
-    lines.push(`• ${escapeHtml(first.user_name)}: ${clock(first.check_in_at)} – ${out}${minutes ? ` (${hoursText(minutes)})` : ''}`);
-  }
-  const absent = staff.filter((u: any) => !byUser.has(u.id)).map((u: any) => escapeHtml(u.full_name));
-  if (absent.length) lines.push(`Kelmadi: ${absent.join(', ')}`);
   return lines.join('\n');
 }
 
