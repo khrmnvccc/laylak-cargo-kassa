@@ -158,7 +158,6 @@ export interface BalanceReport {
 }
 
 export interface BalanceMonth {
-  month: string;
   first: string;
   last: string;
   opening: Record<'cash' | 'card', number>;

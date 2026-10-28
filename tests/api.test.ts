@@ -355,6 +355,8 @@ test('cash book import: opening balance and expenses, safe to repeat', async () 
     .reduce((t: number, d: any) => t + d.income - d.expense + d.adjustment, 0);
   assert.equal(month.opening.cash + oct1Flow, cash.closing);
   assert.ok(month.expenses.some((e: any) => e.amount === 200000 && e.category === 'tovar' && e.note === 'tovarga'));
+  const span = (await admin.call('GET', '/balance/month', undefined, { from: '2026-10-01', to: '2026-10-01' })).body;
+  assert.deepEqual([span.first, span.last, span.opening.cash], ['2026-10-01', '2026-10-01', month.opening.cash], 'any span of days works');
   assert.equal((await new Client().call('GET', '/balance/month')).status, 401);
 
   const again = await admin.call('POST', '/expenses/import', { rows });

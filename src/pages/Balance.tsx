@@ -6,7 +6,7 @@ import { printBalance } from '../lib/reports';
 import { PrintButton } from '../components/PrintButton';
 import { ImportKassa } from '../components/ImportKassa';
 import { useApi, useLive } from '../lib/live';
-import { addDays, dateTime, formatDate, groupDigits, methodColor, methodLabel, monthLabel, money, nowMs, timeOf, todayTashkent, weekday } from '../lib/format';
+import { addDays, dateTime, formatDate, groupDigits, methodColor, methodLabel, money, nowMs, rangeLabel, startOfMonth, timeOf, todayTashkent, weekday } from '../lib/format';
 import { downloadMonthXlsx } from '../lib/excel';
 import type { BalanceMonth, BalanceReport, Expense, ExpenseCategory, SourceBalance } from '../lib/types';
 import {
@@ -65,7 +65,7 @@ export default function Balance() {
         subtitle="Naqd va kartada qancha pul borligi, kunlik rasxodlar · faqat admin koʻradi"
         actions={<>
           <Button icon={<Upload className="size-4" />} onClick={() => setModal('import')}>Daftarni yuklash</Button>
-          <Button icon={<FileSpreadsheet className="size-4" />} onClick={() => setModal('month')}>Oylik Excel</Button>
+          <Button icon={<FileSpreadsheet className="size-4" />} onClick={() => setModal('month')}>Kassa Excel</Button>
           <PrintButton disabled={!data} run={() => data && printBalance(data, user.full_name)} />
           <Button icon={<Scale className="size-4" />} onClick={() => setModal('adjust')}>Qoldiqni tuzatish</Button>
           <Button variant="primary" icon={<Minus className="size-4" />} onClick={() => setModal('expense')}>Rasxod qoʻshish</Button>
@@ -402,17 +402,21 @@ function ExpenseForm({ draft, onClose, onFailed }: { draft: ExpenseDraft | null;
 function MonthExport({ onClose }: { onClose: () => void }) {
   const toast = useToast();
   const today = todayTashkent();
-  const months = Array.from({ length: 12 }, (_, i) => {
-    const [y, m] = today.split('-').map(Number);
-    return new Date(Date.UTC(y, m - 1 - i, 1)).toISOString().slice(0, 7);
-  });
-  const [month, setMonth] = useState(months[0]);
+  const lastMonthEnd = addDays(startOfMonth(today), -1);
+  const quick = [
+    { label: 'Shu oy', from: startOfMonth(today), to: today },
+    { label: 'Oʻtgan oy', from: startOfMonth(lastMonthEnd), to: lastMonthEnd },
+    { label: 'Oxirgi 30 kun', from: addDays(today, -29), to: today },
+  ];
+  const [from, setFrom] = useState(quick[0].from);
+  const [to, setTo] = useState(today);
   const [busy, setBusy] = useState(false);
+  const valid = Boolean(from && to && from <= to && to <= today);
 
   async function download() {
     setBusy(true);
     try {
-      await downloadMonthXlsx(await api<BalanceMonth>('/balance/month', { query: { month } }), categoryLabel);
+      await downloadMonthXlsx(await api<BalanceMonth>('/balance/month', { query: { from, to } }), categoryLabel);
       onClose();
     } catch (e) {
       toast({ tone: 'error', title: 'Excel tayyorlanmadi', description: (e as Error).message });
@@ -422,14 +426,25 @@ function MonthExport({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Modal open onClose={() => !busy && onClose()} title="Oylik kassa (Excel)" size="sm"
+    <Modal open onClose={() => !busy && onClose()} title="Kassa (Excel)" size="sm"
       description="Har kuni: bor boʻlgan summa, tushum, rasxod va sababi, qolgan summa. Naqd va karta alohida varaqda."
-      footer={<><Button onClick={onClose} disabled={busy}>Bekor</Button><Button variant="primary" loading={busy} onClick={download} icon={<FileSpreadsheet className="size-4" />}>Yuklab olish</Button></>}>
-      <Field label="Oy" htmlFor="xl-month">
-        <Select id="xl-month" value={month} onChange={(e) => setMonth(e.target.value)} className="w-full">
-          {months.map((m) => <option key={m} value={m}>{monthLabel(`${m}-01`)}</option>)}
-        </Select>
-      </Field>
+      footer={<><Button onClick={onClose} disabled={busy}>Bekor</Button><Button variant="primary" loading={busy} disabled={!valid} onClick={download} icon={<FileSpreadsheet className="size-4" />}>Yuklab olish</Button></>}>
+      <div className="space-y-4">
+        <div className="flex flex-wrap gap-1.5">
+          {quick.map((q) => (
+            <Button key={q.label} size="sm" variant={q.from === from && q.to === to ? 'primary' : 'ghost'} onClick={() => { setFrom(q.from); setTo(q.to); }}>{q.label}</Button>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Qaysi kundan" htmlFor="xl-from">
+            <Input id="xl-from" type="date" value={from} max={today} onChange={(e) => setFrom(e.target.value)} />
+          </Field>
+          <Field label="Qaysi kungacha" htmlFor="xl-to" error={from && to && from > to ? 'Boshlanish sanasidan oldin boʻlmasin' : undefined}>
+            <Input id="xl-to" type="date" value={to} max={today} onChange={(e) => setTo(e.target.value)} />
+          </Field>
+        </div>
+        <p className="text-xs text-ink-3">{valid ? rangeLabel(from, to) : 'Sanalarni tanlang'}. Birinchi kunning “bor boʻlgan summa”si — oʻsha kun boshidagi qoldiq.</p>
+      </div>
     </Modal>
   );
 }

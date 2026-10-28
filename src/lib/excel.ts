@@ -93,7 +93,7 @@ const money0 = (n: number, extra: object = {}) => ({ value: n, type: Number, for
 const signedText = (n: number) => `${n > 0 ? '+' : '−'}${groupDigits(Math.abs(n))}`;
 
 /**
- * The month's kassa as the cashier used to keep it by hand: for each account a sheet with one row per
+ * The kassa for any span of days (usually a month) as the cashier used to keep it by hand: for each account a sheet with one row per
  * day (what was there, what came in, what was spent and on what, what was left), then the day's
  * income split cash/card. Each account's expenses get a sheet of their own.
  */
@@ -135,7 +135,7 @@ export async function downloadMonthXlsx(data: BalanceMonth, categoryLabel: (c: s
     }
     const top = { topBorderStyle: 'thin' as const, fontWeight: 'bold' as const };
     rows.push([
-      { value: 'Oy jami', type: String, ...top }, money0(data.opening[src], top), money0(income, { ...top, textColor: GREEN }), money0(expense, { ...top, textColor: RED }),
+      { value: 'Jami', type: String, ...top }, money0(data.opening[src], top), money0(income, { ...top, textColor: GREEN }), money0(expense, { ...top, textColor: RED }),
       ...(withAdjust ? [money0(adjustment, top)] : []), money0(balance, { ...top, textColor: PURPLE }), { value: '', type: String, ...top },
     ]);
     const columns = [{ width: 10 }, { width: 19 }, { width: 18 }, { width: 18 }, ...(withAdjust ? [{ width: 14 }] : []), { width: 18 }, { width: 46 }];
@@ -146,7 +146,7 @@ export async function downloadMonthXlsx(data: BalanceMonth, categoryLabel: (c: s
   const totals = days.reduce((t, d) => ({ cash: t.cash + flow(d, 'cash').income, card: t.card + flow(d, 'card').income }), { cash: 0, card: 0 });
   const income: unknown[][] = [
     [head('Sana'), head('Naqd tushum'), head('Karta tushum'), head('Umumiy tushum')],
-    [{ value: 'Oy jami', type: String, fontWeight: 'bold' as const }, ...[totals.cash, totals.card, totals.cash + totals.card].map((n) => money0(n, { textColor: GREEN, fontWeight: 'bold' as const }))],
+    [{ value: 'Jami', type: String, fontWeight: 'bold' as const }, ...[totals.cash, totals.card, totals.cash + totals.card].map((n) => money0(n, { textColor: GREEN, fontWeight: 'bold' as const }))],
     ...days.map((d) => {
       const cash = flow(d, 'cash').income, card = flow(d, 'card').income;
       return [short(d), money0(cash), money0(card), money0(cash + card, { textColor: RED })];
@@ -160,8 +160,8 @@ export async function downloadMonthXlsx(data: BalanceMonth, categoryLabel: (c: s
     for (const e of own) rows.push([short(dateOf(e.spent_at)), timeOf(e.spent_at), money0(e.amount), categoryLabel(e.category), e.note || null, e.created_by_name]);
     if (own.length) {
       const top = { topBorderStyle: 'thin' as const, fontWeight: 'bold' as const };
-      rows.push([{ value: 'Oy jami', type: String, ...top }, { value: '', type: String, ...top }, money0(own.reduce((t, e) => t + e.amount, 0), { ...top, textColor: RED })]);
-    } else rows.push(['Bu oyda rasxod yozilmagan']);
+      rows.push([{ value: 'Jami', type: String, ...top }, { value: '', type: String, ...top }, money0(own.reduce((t, e) => t + e.amount, 0), { ...top, textColor: RED })]);
+    } else rows.push(['Bu davrda rasxod yozilmagan']);
     return { data: rows as any, sheet: src === 'cash' ? 'Naqd rasxodlar' : 'Karta rasxodlar', stickyRowsCount: 1, orientation: 'landscape' as const, columns: [{ width: 10 }, { width: 7 }, { width: 15 }, { width: 24 }, { width: 40 }, { width: 16 }] };
   }
 
@@ -171,5 +171,5 @@ export async function downloadMonthXlsx(data: BalanceMonth, categoryLabel: (c: s
     accountSheet('card'),
     expenseSheet('card'),
     { data: income as any, sheet: 'Naqd va karta', stickyRowsCount: 1, columns: [{ width: 10 }, { width: 18 }, { width: 18 }, { width: 20 }] },
-  ], { fontFamily: 'Calibri', fontSize: 11 }).toFile(`kassa_${data.month}.xlsx`);
+  ], { fontFamily: 'Calibri', fontSize: 11 }).toFile(`kassa_${data.first}_${data.last}.xlsx`);
 }
