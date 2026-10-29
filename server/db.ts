@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { attachDatabasePool } from '@vercel/functions';
 
 // One pool per server instance. On Vercel each warm function reuses it.
 const globalForPool = globalThis as unknown as { __kassaPool?: pg.Pool; __kassaSchema?: Promise<void> };
@@ -16,9 +17,12 @@ export function getPool(): pg.Pool {
     globalForPool.__kassaPool = new pg.Pool({
       connectionString,
       max: Number(process.env.DB_POOL_MAX) || 3,
-      idleTimeoutMillis: 10_000,
+      // Keep connections a while: opening a new TLS connection to the database is the slow part of a request.
+      idleTimeoutMillis: 60_000,
       ssl: isLocal ? undefined : { rejectUnauthorized: false },
     });
+    // On Vercel, lets the platform close idle clients cleanly before an instance is suspended.
+    if (process.env.VERCEL) attachDatabasePool(globalForPool.__kassaPool);
   }
   return globalForPool.__kassaPool;
 }
@@ -355,6 +359,9 @@ export function ensureSchema(): Promise<void> {
 }
 
 async function migrate() {
+  // Usually the schema is already current: one quick read instead of a locked transaction on every cold start.
+  const known = await getPool().query(`SELECT value FROM app_meta WHERE key = 'schema_version'`).catch(() => null);
+  if (Number(known?.rows[0]?.value) >= SCHEMA_VERSION) return;
   const client = await getPool().connect();
   try {
     await client.query('BEGIN');
