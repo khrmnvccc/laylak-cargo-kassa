@@ -1,6 +1,7 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "regions": ["iad1"],
   "crons": [
     { "path": "/api/cron/daily", "schedule": "0 14 * * *" }
   ],
