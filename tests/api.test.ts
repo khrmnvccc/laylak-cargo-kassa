@@ -823,6 +823,12 @@ test('order stickers: scanning the code shows what is owed and takes the payment
   assert.equal((await owner.call('GET', '/orders', undefined, { status: 'issued', q: 'nigora' })).body.total, 2);
   assert.equal((await owner.call('POST', `/orders/${second.body.order.id}/issue`, { issued: false })).body.order.issued_at, null);
   assert.equal((await stock()).total, 1);
+  // The dashboard's orders card: counts only.
+  const stats = await owner.call('GET', '/orders/stats');
+  assert.equal(stats.status, 200, JSON.stringify(stats.body));
+  assert.deepEqual([stats.body.stock, stats.body.unpaid, stats.body.unpaidAmount], [1, 1, 40000]);
+  assert.ok(stats.body.today >= 1);
+  assert.equal((await visitor.call('GET', '/orders/stats')).status, 401);
   assert.equal((await owner.call('DELETE', `/orders/${second.body.order.id}`)).status, 200);
   assert.equal((await owner.call('GET', `/orders/scan/${second.body.order.scan_code}`)).status, 404);
 });
