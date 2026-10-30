@@ -112,7 +112,13 @@ export function StickerPay() {
             </Alert>
           )}
 
-          {view.state === 'ready' && !order.payment_id && (
+          {view.state === 'ready' && !order.payment_id && order.prepaid_at && (
+            <Alert tone="success">
+              Bu buyurtma kassaga kelmasdan oldin toʻlangan{order.prepaid_by_name ? ` (${order.prepaid_by_name} belgilagan)` : ''}. Pul olinmaydi, faqat tovarni bering.
+            </Alert>
+          )}
+
+          {view.state === 'ready' && !order.payment_id && !order.prepaid_at && (
             <div className="space-y-2">
               {view.error && <Alert>{view.error}</Alert>}
               <div className="text-[13px] font-medium text-ink-2">{view.step === 'method' ? 'Qanday toʻlaydi?' : 'Qaysi kartaga?'}</div>
@@ -148,7 +154,7 @@ export function StickerPay() {
                 <Undo2 className="size-3.5" />Omborga qaytarish
               </button>
             </div>
-          ) : order.payment_id ? (
+          ) : order.payment_id || order.prepaid_at ? (
             <Button className="w-full" variant="primary" loading={view.saving === 'issue'} icon={<PackageCheck className="size-4" />} onClick={() => void issue(true)}>Berildi</Button>
           ) : (
             <Button className="w-full" loading={view.saving === 'issue'} icon={<PackageCheck className="size-4" />} onClick={() => void issue(true)}>Toʻlovsiz berildi (toʻlovi boshqa joyda)</Button>

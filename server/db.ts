@@ -346,7 +346,14 @@ UPDATE orders o SET issued_at = p.paid_at, issued_by_name = p.created_by_name
   FROM payments p WHERE p.id = o.payment_id AND p.voided_at IS NULL AND o.issued_at IS NULL;
 `;
 
-const SCHEMA_VERSION = 9;
+// v10: an order paid before it reached the kassa (in the admin panel) is marked so, without a payment,
+// so it never shows as owed and the kassa's money is not counted twice.
+const SCHEMA_V10_SQL = `
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS prepaid_at TIMESTAMPTZ;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS prepaid_by_name TEXT;
+`;
+
+const SCHEMA_VERSION = 10;
 
 export function ensureSchema(): Promise<void> {
   if (!globalForPool.__kassaSchema) {
@@ -383,6 +390,7 @@ async function migrate() {
       if (current < 7) await client.query(SCHEMA_V7_SQL);
       if (current < 8) await client.query(SCHEMA_V8_SQL);
       if (current < 9) await client.query(SCHEMA_V9_SQL);
+      if (current < 10) await client.query(SCHEMA_V10_SQL);
       await client.query(
         `INSERT INTO app_meta (key, value) VALUES ('schema_version', $1::jsonb)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,

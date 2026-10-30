@@ -212,4 +212,7 @@ export interface Order {
   paid_by: string | null;
   issued_at: string | null;
   issued_by_name: string | null;
+  /** Paid before it reached the kassa (in the admin panel): no payment, the kassa's money is unchanged. */
+  prepaid_at: string | null;
+  prepaid_by_name: string | null;
 }
