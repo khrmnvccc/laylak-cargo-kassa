@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Banknote, ChevronRight, Package, ReceiptText, TrendingUp, UserCheck, Wallet, type LucideIcon } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight, Banknote, ChevronRight, Package, ReceiptText, TrendingUp, UserCheck, Wallet, type LucideIcon } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useApi } from '../lib/live';
 import { can } from '../lib/perms';
-import { groupDigits, money, todayTashkent } from '../lib/format';
+import { groupDigits, money, percentChange, todayTashkent } from '../lib/format';
 import { href, type Page } from '../lib/router';
 import type { AttendanceRow, BalanceReport, Summary } from '../lib/types';
 import { cx } from './ui';
@@ -29,15 +29,29 @@ const ROTATE_MS = 4500;
  * Each card is built only from data the user may see, so a right that is switched off removes its card
  * (and its request) entirely.
  */
-export function StatsCarousel() {
+/** Change against the previous period as a chip, e.g. "↓ 12% oldingi kunga". */
+function change(current: number, previous: number, single: boolean): ReactNode {
+  const pct = percentChange(current, previous);
+  if (pct === null) return 'Yangi';
+  const r = Math.round(pct);
+  const Arrow = r < 0 ? ArrowDownRight : ArrowUpRight;
+  return <span className="inline-flex items-center gap-0.5"><Arrow className="size-3.5" />{`${Math.abs(r)}% ${single ? 'oldingi kunga' : 'oldingi davrga'}`}</span>;
+}
+
+/** range/summary: the dashboard's chosen period, so the money cards follow its date picker; without them, today. */
+export function StatsCarousel({ range, summary: given }: { range?: { from: string; to: string }; summary?: Summary | null } = {}) {
   const { user } = useAuth();
   const today = todayTashkent();
+  const period = range || { from: today, to: today };
+  const single = period.from === period.to;
+  const isToday = single && period.from === today;
   const seesReports = can(user, 'reports.view');
   const seesBalance = can(user, 'balance.view');
   const seesOrders = can(user, 'payments.create');
   const seesStaff = can(user, 'staff.view');
 
-  const summary = useApi<Summary>(seesReports ? '/summary' : null, { from: today, to: today });
+  const fetched = useApi<Summary>(seesReports && given === undefined ? '/summary' : null, { from: today, to: today });
+  const summary = given === undefined ? fetched : { data: given, loading: given === null };
   const balance = useApi<BalanceReport>(seesBalance ? '/balance' : null, { date: today });
   const orders = useApi<OrderStats>(seesOrders ? '/orders/stats' : null);
   const team = useApi<{ items: AttendanceRow[]; staff: Array<{ id: string; is_active: boolean }> }>(seesStaff ? '/attendance' : null, { from: today, to: today });
@@ -47,12 +61,14 @@ export function StatsCarousel() {
   const p = summary.data?.previous;
   if (seesReports && t) {
     slides.push({
-      key: 'income', page: 'operations', title: 'Bugungi tushum', value: money(t.total), icon: TrendingUp,
-      lines: [`Naqd: ${money(t.cash)}`, `Karta: ${money(t.card + t.yandex + t.pochta)}`], from: '#f08a24', to: '#c2410c',
+      key: 'income', page: 'operations', title: isToday ? 'Bugungi tushum' : single ? 'Kun tushumi' : 'Davr tushumi', value: money(t.total), icon: TrendingUp,
+      lines: [`Naqd: ${money(t.cash)}`, `Karta: ${money(t.card + t.yandex + t.pochta)}`, ...(p ? [change(t.total, p.total, single)] : [])],
+      from: '#f08a24', to: '#c2410c',
     });
     slides.push({
-      key: 'ops', page: 'operations', title: 'Bugungi operatsiyalar', value: `${groupDigits(t.count)} ta`, icon: ReceiptText,
-      lines: [`${groupDigits(t.clients || 0)} ta mijoz`, ...(p ? [`Kecha: ${groupDigits(p.count)} ta`] : [])], from: '#2f80ed', to: '#1e40af',
+      key: 'ops', page: 'operations', title: isToday ? 'Bugungi operatsiyalar' : 'Operatsiyalar soni', value: `${groupDigits(t.count)} ta`, icon: ReceiptText,
+      lines: [`${groupDigits(t.clients || 0)} ta mijoz`, ...(p ? [`${single ? 'Oldingi kun' : 'Oldingi davr'}: ${groupDigits(p.count)} ta`] : [])],
+      from: '#2f80ed', to: '#1e40af',
     });
   }
   const sources = balance.data?.sources;
