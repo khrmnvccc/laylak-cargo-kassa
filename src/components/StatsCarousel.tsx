@@ -17,6 +17,8 @@ interface Slide {
   value: ReactNode;
   lines: ReactNode[];
   icon: LucideIcon;
+  /** Which way the light runs along the big icon. */
+  glow: 'up-right' | 'up' | 'down' | 'right';
   /** Two colours of the card's gradient. */
   from: string;
   to: string;
@@ -61,12 +63,12 @@ export function StatsCarousel({ range, summary: given }: { range?: { from: strin
   const p = summary.data?.previous;
   if (seesReports && t) {
     slides.push({
-      key: 'income', page: 'operations', title: isToday ? 'Bugungi tushum' : single ? 'Kun tushumi' : 'Davr tushumi', value: money(t.total), icon: TrendingUp,
+      key: 'income', page: 'operations', title: isToday ? 'Bugungi tushum' : single ? 'Kun tushumi' : 'Davr tushumi', value: money(t.total), icon: TrendingUp, glow: 'up-right',
       lines: [`Naqd: ${money(t.cash)}`, `Karta: ${money(t.card + t.yandex + t.pochta)}`, ...(p ? [change(t.total, p.total, single)] : [])],
       from: '#f08a24', to: '#c2410c',
     });
     slides.push({
-      key: 'ops', page: 'operations', title: isToday ? 'Bugungi operatsiyalar' : 'Operatsiyalar soni', value: `${groupDigits(t.count)} ta`, icon: ReceiptText,
+      key: 'ops', page: 'operations', title: isToday ? 'Bugungi operatsiyalar' : 'Operatsiyalar soni', value: `${groupDigits(t.count)} ta`, icon: ReceiptText, glow: 'down',
       lines: [`${groupDigits(t.clients || 0)} ta mijoz`, ...(p ? [`${single ? 'Oldingi kun' : 'Oldingi davr'}: ${groupDigits(p.count)} ta`] : [])],
       from: '#2f80ed', to: '#1e40af',
     });
@@ -77,19 +79,19 @@ export function StatsCarousel({ range, summary: given }: { range?: { from: strin
     const cash = Number(of('cash')?.current || 0);
     const card = Number(of('card')?.current || 0);
     slides.push({
-      key: 'balance', page: 'balance', title: 'Kassa balansi', value: money(cash + card), icon: Wallet,
+      key: 'balance', page: 'balance', title: 'Kassa balansi', value: money(cash + card), icon: Wallet, glow: 'right',
       lines: [`Naqd: ${money(cash)}`, `Kartada: ${money(card)}`], from: '#1f9d55', to: '#11643a',
     });
     const spent = (balance.data?.expenses || []).filter((e) => !e.voided_at);
     slides.push({
-      key: 'expense', page: 'balance', title: 'Bugungi rasxod', value: money(spent.reduce((s, e) => s + e.amount, 0)), icon: Banknote,
+      key: 'expense', page: 'balance', title: 'Bugungi rasxod', value: money(spent.reduce((s, e) => s + e.amount, 0)), icon: Banknote, glow: 'right',
       lines: [`${spent.length} ta rasxod`], from: '#e0465a', to: '#9f1239',
     });
   }
   if (seesOrders && orders.data) {
     const o = orders.data;
     slides.push({
-      key: 'orders', page: 'orders', title: 'Buyurtmalar', value: `${groupDigits(o.stock)} ta omborda`, icon: Package,
+      key: 'orders', page: 'orders', title: 'Buyurtmalar', value: `${groupDigits(o.stock)} ta omborda`, icon: Package, glow: 'up',
       lines: [`Toʻlanmagan: ${groupDigits(o.unpaid)} ta · ${money(o.unpaidAmount)}`, `Bugun keldi: ${groupDigits(o.today)} ta`],
       from: '#14866d', to: '#0b4f4a',
     });
@@ -99,7 +101,7 @@ export function StatsCarousel({ range, summary: given }: { range?: { from: strin
     const atWork = new Set(team.data.items.filter((a) => !a.check_out_at).map((a) => a.user_id));
     const active = team.data.staff.filter((s) => s.is_active).length;
     slides.push({
-      key: 'team', page: 'attendance', title: 'Hozir ishda', value: `${atWork.size} / ${active}`, icon: UserCheck,
+      key: 'team', page: 'attendance', title: 'Hozir ishda', value: `${atWork.size} / ${active}`, icon: UserCheck, glow: 'up-right',
       lines: [`Bugun kelganlar: ${came.size} ta`], from: '#7c4ddb', to: '#4c1d95',
     });
   }
@@ -163,6 +165,7 @@ export function StatsCarousel({ range, summary: given }: { range?: { from: strin
             >
               <div className="pointer-events-none absolute -right-6 -top-8 size-40 rounded-full bg-white/10" aria-hidden />
               <Icon className="pointer-events-none absolute -bottom-5 right-3 size-28 text-white/15" strokeWidth={1.5} aria-hidden />
+              {pos === 0 && <Icon className={`icon-glow glow-${s.glow} pointer-events-none absolute -bottom-5 right-3 size-28 text-white/90`} strokeWidth={1.5} aria-hidden />}
               <div className="relative flex h-full flex-col">
                 <div className="flex items-center gap-1.5 text-[15px] font-semibold tracking-tight">
                   <Icon className="size-4 opacity-90" /> {s.title}
