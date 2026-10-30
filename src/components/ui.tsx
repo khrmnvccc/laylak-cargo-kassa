@@ -326,7 +326,7 @@ export function SkeletonRows({ rows = 5, cols = 5 }: { rows?: number; cols?: num
 // ---------- Modal ----------
 
 export function Modal({ open, onClose, title, description, children, footer, size = 'md' }: {
-  open: boolean; onClose: () => void; title: string; description?: ReactNode; children: ReactNode; footer?: ReactNode; size?: 'sm' | 'md' | 'lg';
+  open: boolean; onClose: () => void; title: string; description?: ReactNode; children: ReactNode; footer?: ReactNode; size?: 'sm' | 'md' | 'lg' | 'xl';
 }) {
   const ref = useRef<HTMLDivElement>(null);
   // Callers pass a new onClose on every render; reading it through a ref keeps the effect below
@@ -359,7 +359,7 @@ export function Modal({ open, onClose, title, description, children, footer, siz
         aria-label={title}
         className={cx(
           'relative flex max-h-[92vh] max-h-[92dvh] w-full flex-col rounded-t-2xl border border-line bg-surface shadow-pop anim-pop sm:rounded-2xl',
-          size === 'sm' && 'sm:max-w-sm', size === 'md' && 'sm:max-w-md', size === 'lg' && 'sm:max-w-2xl',
+          size === 'sm' && 'sm:max-w-sm', size === 'md' && 'sm:max-w-md', size === 'lg' && 'sm:max-w-2xl', size === 'xl' && 'sm:max-w-4xl',
         )}
       >
         <div className="flex items-start justify-between gap-4 border-b border-line px-5 py-4">

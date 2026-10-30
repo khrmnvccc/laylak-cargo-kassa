@@ -543,7 +543,8 @@ route('POST', '/orders/import', 'payments.create', async (ctx) => {
       adding: fresh.length, total: fresh.reduce((s, o) => s + o.amount, 0), skipped: good.length - fresh.length, invalid,
       prepaid: fresh.filter((o) => o.prepaid).length, marking: toMark.length,
     };
-    if (b.dryRun) return { dryRun: true, ...summary };
+    // The window works out its totals itself as rows are ticked, from which orders the kassa already has.
+    if (b.dryRun) return { dryRun: true, ...summary, existing: found.map((r: any) => ({ key: r.k, unpaid: Boolean(r.unpaid) })) };
     const ids = await insertOrders(db, ctx.user!, fresh);
     if (toMark.length) {
       await db.query(`UPDATE orders SET prepaid_at = NOW(), prepaid_by_name = $2, updated_at = NOW() WHERE id = ANY($1) AND prepaid_at IS NULL`, [toMark, ctx.user!.full_name]);
