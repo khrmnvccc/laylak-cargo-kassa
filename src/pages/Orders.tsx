@@ -6,7 +6,8 @@ import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useApi, useLive } from '../lib/live';
 import { formatDate, groupDigits, methodLabel, money, todayTashkent } from '../lib/format';
-import { printOrderSticker } from '../lib/print';
+import { printOrderSticker, printStickers } from '../lib/print';
+import { StickerFormatPicker, useStickerFormat } from '../components/StickerFormatPicker';
 import { openSticker } from '../lib/scanner';
 import { can } from '../lib/perms';
 import type { Order } from '../lib/types';
@@ -28,6 +29,8 @@ export default function Orders() {
   const [status, setStatus] = useState<'all' | 'stock' | 'issued' | 'unpaid'>('all');
   const [manual, setManual] = useState('');
   const [removing, setRemoving] = useState<Order | null>(null);
+  const [printingList, setPrintingList] = useState(false);
+  const [format, setFormat] = useStickerFormat();
   const [creating, setCreating] = useState(false);
   // Opened by the admin panel bookmark: the list comes with the tab.
   const [importText] = useState(bookmarkText);
@@ -179,6 +182,11 @@ export default function Orders() {
             <div className="border-b border-line px-4 py-2 text-[13px] text-ink-2">
               {{ all: 'Jami', stock: 'Omborda', issued: 'Berilgan', unpaid: 'Toʻlanmagan' }[status]}: <b className="text-ink num">{list.data.total} ta</b> · <b className="text-ink num">{money(list.data.totalAmount)}</b>
               {list.data.total > items.length && <span className="text-ink-3"> · oxirgi {items.length} tasi koʻrsatilgan, qidiruvdan foydalaning</span>}
+              {items.length > 0 && (
+                <button type="button" className="float-right inline-flex items-center gap-1.5 font-medium text-ink-2 hover:text-ink" onClick={() => setPrintingList(true)}>
+                  <Printer className="size-3.5" />Roʻyxatni chop etish
+                </button>
+              )}
             </div>
           )}
           {list.loading && !list.data ? <SkeletonRows rows={6} cols={5} /> : list.error ? <div className="p-4"><Alert>{list.error}</Alert></div> : !items.length ? (
@@ -238,6 +246,13 @@ export default function Orders() {
           {list.loading && list.data && <div className="flex justify-center p-2 text-ink-3"><Loader2 className="size-4 animate-spin" /></div>}
         </Card>
       </div>
+
+      <Modal open={printingList} onClose={() => setPrintingList(false)} title="Stikerlarni chop etish" size="sm"
+        description={`Roʻyxatda koʻrinib turgan ${items.length} ta buyurtma`}
+        footer={<><Button onClick={() => setPrintingList(false)}>Bekor qilish</Button><Button variant="primary" icon={<Printer className="size-4" />}
+          onClick={() => { setPrintingList(false); void printStickers(items, format); }}>Chop etish</Button></>}>
+        <StickerFormatPicker value={format} onChange={setFormat} count={items.length} />
+      </Modal>
 
       <Modal open={Boolean(removing)} onClose={() => setRemoving(null)} title="Stikerni oʻchirish" size="sm"
         description={removing ? `${removing.scan_code} · ${removing.client_code} · ${money(removing.amount)}` : undefined}

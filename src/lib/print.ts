@@ -153,6 +153,28 @@ export async function printOrderStickers(orders: Order[]) {
   printHtml(labels.join(''), 'label', orders.length === 1 ? `Stiker ${orders[0].scan_code}` : `Stikerlar (${orders.length})`);
 }
 
+/** How a batch of stickers is laid out: one full sticker per label, or 3/4 compact ones cut from each label. */
+export type StickerFormat = 'full' | '3' | '4';
+
+export function savedStickerFormat(): StickerFormat {
+  try {
+    const v = localStorage.getItem('lk_sticker_format');
+    return v === '3' || v === '4' ? v : 'full';
+  } catch {
+    return 'full';
+  }
+}
+
+export function saveStickerFormat(f: StickerFormat) {
+  try { localStorage.setItem('lk_sticker_format', f); } catch { /* private mode */ }
+}
+
+export const labelsNeeded = (count: number, f: StickerFormat) => (f === 'full' ? count : Math.ceil(count / Number(f)));
+
+export function printStickers(orders: Order[], f: StickerFormat) {
+  return f === 'full' ? printOrderStickers(orders) : printCompactStickers(orders, Number(f) as 3 | 4);
+}
+
 /** Paper saver: only the QR, client ID and scan code, `perLabel` parcels cut apart from one 76×130 label. */
 export async function printCompactStickers(orders: Order[], perLabel: 3 | 4 = 4) {
   const { toString } = await import('qrcode');
