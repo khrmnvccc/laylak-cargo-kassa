@@ -44,6 +44,14 @@ html, body { width: 76mm; height: 130mm; }
 .qr svg { width: 30mm; height: 30mm; display: block; }
 .qr b { font-family: 'Courier New', monospace; font-size: 10pt; letter-spacing: 0.5pt; margin-top: 1mm; }
 .sticker .amount { font-size: 26pt; }
+.sheet { padding: 0; }
+.cell { flex: 1 1 0; min-height: 0; display: flex; align-items: center; gap: 3mm; padding: 2mm 4mm; border-bottom: 0.3mm dashed #000; }
+.cell:last-child { border-bottom: 0; }
+.cell svg { height: var(--qr); width: var(--qr); flex-shrink: 0; display: block; }
+.cell .who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.8mm; }
+.cell .who small { font-size: 6.5pt; letter-spacing: 0.4pt; color: #333; }
+.cell .who b { font-family: 'Courier New', monospace; font-weight: 700; line-height: 1; white-space: nowrap; overflow: hidden; }
+.cell .who span { font-family: 'Courier New', monospace; font-size: 9pt; letter-spacing: 0.4pt; }
 .void { font-size: 14pt; font-weight: 700; text-align: center; border: 0.6mm solid #000; margin-top: 2mm; padding: 1mm; }
 `;
 
@@ -143,6 +151,32 @@ export async function printOrderStickers(orders: Order[]) {
   const { toString } = await import('qrcode');
   const labels = await Promise.all(orders.map(async (order) => stickerHtml(order, await toString(orderPageUrl(order), { type: 'svg', margin: 0, errorCorrectionLevel: 'M' }))));
   printHtml(labels.join(''), 'label', orders.length === 1 ? `Stiker ${orders[0].scan_code}` : `Stikerlar (${orders.length})`);
+}
+
+/** Paper saver: only the QR, client ID and scan code, `perLabel` parcels cut apart from one 76×130 label. */
+export async function printCompactStickers(orders: Order[], perLabel: 3 | 4 = 4) {
+  const { toString } = await import('qrcode');
+  const qrs = await Promise.all(orders.map((o) => toString(orderPageUrl(o), { type: 'svg', margin: 0, errorCorrectionLevel: 'M' })));
+  printHtml(compactSheetsHtml(orders, qrs, perLabel), 'label', `Stikerlar (${orders.length})`);
+}
+
+export function compactSheetsHtml(orders: Order[], qrs: string[], perLabel: 3 | 4) {
+  const qr = perLabel === 4 ? '27mm' : '34mm';
+  const sheets: string[] = [];
+  for (let i = 0; i < orders.length; i += perLabel) {
+    const cells = orders.slice(i, i + perLabel).map((o, j) => {
+      const fit = Math.max(12, Math.min(perLabel === 4 ? 24 : 28, Math.floor(130 / Math.max(o.client_code.length, 1))));
+      const extra = [o.places ? `${o.places} joy` : '', o.weight ? `${o.weight} kg` : ''].filter(Boolean).join(' · ');
+      return `<div class="cell">${qrs[i + j]}<div class="who">
+        <small>LAYLAK CARGO</small><b class="num" style="font-size:${fit}pt">${esc(o.client_code)}</b>
+        <span class="num">${esc(o.scan_code)}</span>${extra ? `<small class="num">${esc(extra)}</small>` : ''}
+      </div></div>`;
+    });
+    // Empty slots keep every cell the same height, so the cut lines stay in place.
+    while (cells.length < perLabel) cells.push('<div class="cell"></div>');
+    sheets.push(`<div class="label sheet" style="--qr:${qr}">${cells.join('')}</div>`);
+  }
+  return sheets.join('');
 }
 
 /** What the sticker QR holds: the client's status page. The kassa scanner reads the code out of it. */

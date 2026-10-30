@@ -5,7 +5,7 @@ import { api } from '../lib/api';
 import { useLive } from '../lib/live';
 import { money, todayTashkent } from '../lib/format';
 import { parseOrderSheet, parseOrderText, type ImportOrderRow } from '../lib/orderImport';
-import { printOrderStickers } from '../lib/print';
+import { printCompactStickers, printOrderStickers } from '../lib/print';
 import type { Order } from '../lib/types';
 import { Alert, Button, Field, Input, Modal, Textarea, td, th, useToast } from './ui';
 
@@ -119,6 +119,7 @@ export function ImportOrders({ open, onClose, text }: { open: boolean; onClose: 
       footer={done ? (
         <>
           <Button onClick={close}>Yopish</Button>
+          {done.length > 1 && <Button icon={<Printer className="size-4" />} onClick={() => void printCompactStickers(done, 4)}>Ixcham: 4 tasi 1 yorliqda ({Math.ceil(done.length / 4)} yorliq)</Button>}
           {done.length > 0 && <Button variant="primary" icon={<Printer className="size-4" />} onClick={() => void printOrderStickers(done)}>{done.length} ta stikerni chop etish</Button>}
         </>
       ) : (
