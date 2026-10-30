@@ -401,6 +401,20 @@ route('GET', '/orders', 'payments.create', async (ctx) => {
   return { items, total: count[0].n, totalAmount: count[0].amount };
 });
 
+// Counts only, for the dashboard's rotating cards: what is still in stock, what is unpaid, what came in today.
+route('GET', '/orders/stats', 'payments.create', async () => {
+  const rows = await query(
+    `SELECT COUNT(*) FILTER (WHERE o.issued_at IS NULL)::int AS stock,
+            COUNT(*) FILTER (WHERE p.id IS NULL OR p.voided_at IS NOT NULL)::int AS unpaid,
+            COALESCE(SUM(o.amount) FILTER (WHERE p.id IS NULL OR p.voided_at IS NOT NULL), 0)::bigint AS unpaid_amount,
+            COUNT(*) FILTER (WHERE o.received_at = $1::date)::int AS today
+       FROM ${ORDER_FROM} WHERE o.deleted_at IS NULL`,
+    [todayTashkent()],
+  );
+  const r = rows[0];
+  return { stock: r.stock, unpaid: r.unpaid, unpaidAmount: Number(r.unpaid_amount), today: r.today };
+});
+
 type NewOrder = {
   clientCode: string; clientName: string; phone: string; orderNo: string; transport: string; note: string;
   places: number | null; weight: number | null; amount: number; receivedAt: string;

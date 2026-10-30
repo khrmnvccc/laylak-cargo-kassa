@@ -7,6 +7,7 @@ import type { Summary } from '../lib/types';
 import { DateRangePicker, presetRange, type Range } from '../components/DateRange';
 import { PaymentsTable } from '../components/PaymentsTable';
 import { Legend, RevenueChart } from '../components/RevenueChart';
+import { StatsCarousel } from '../components/StatsCarousel';
 import { Avatar, Card, CardHeader, Delta, EmptyState, ErrorState, MethodStatCards, PageHeader, SkeletonRows, StatCard } from '../components/ui';
 
 export default function Dashboard() {
@@ -28,6 +29,8 @@ export default function Dashboard() {
         subtitle={<>Umumiy moliyaviy holat · <span className="text-ink-2">{rangeLabel(range.from, range.to)}</span></>}
         actions={<DateRangePicker value={range} onChange={setRange} />}
       />
+
+      <StatsCarousel />
 
       {error && !data ? (
         <Card><ErrorState message={error} onRetry={reload} /></Card>
