@@ -5,7 +5,8 @@ import { api } from '../lib/api';
 import { useLive } from '../lib/live';
 import { money, todayTashkent } from '../lib/format';
 import { parseOrderSheet, parseOrderText, type ImportOrderRow } from '../lib/orderImport';
-import { printOrderStickers } from '../lib/print';
+import { printStickers } from '../lib/print';
+import { StickerFormatPicker, useStickerFormat } from './StickerFormatPicker';
 import type { Order } from '../lib/types';
 import { Alert, Button, Field, Input, Modal, Textarea, td, th, useToast } from './ui';
 
@@ -47,6 +48,7 @@ export function ImportOrders({ open, onClose, text }: { open: boolean; onClose: 
   const [done, setDone] = useState<Order[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [format, setFormat] = useStickerFormat();
   const bookmark = useRef<HTMLAnchorElement>(null);
 
   // A list brought by the browser bookmark from the admin panel.
@@ -118,8 +120,9 @@ export function ImportOrders({ open, onClose, text }: { open: boolean; onClose: 
       description="Admin paneldagi buyurtmalar jadvalini belgilab nusxa oling (Ctrl+A, Ctrl+C) va shu yerga qoʻying, yoki Excel faylni tanlang."
       footer={done ? (
         <>
+          {done.length > 0 && <StickerFormatPicker value={format} onChange={setFormat} count={done.length} className="sm:mr-auto sm:w-64" />}
           <Button onClick={close}>Yopish</Button>
-          {done.length > 0 && <Button variant="primary" icon={<Printer className="size-4" />} onClick={() => void printOrderStickers(done)}>{done.length} ta stikerni chop etish</Button>}
+          {done.length > 0 && <Button variant="primary" icon={<Printer className="size-4" />} onClick={() => void printStickers(done, format)}>{done.length} ta stikerni chop etish</Button>}
         </>
       ) : (
         <>
