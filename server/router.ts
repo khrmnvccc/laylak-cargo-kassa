@@ -377,8 +377,10 @@ const ORDER_COLUMNS = `o.id, o.scan_code, o.public_token, o.client_code, COALESC
   CASE WHEN p.voided_at IS NULL THEN p.id END AS payment_id,
   CASE WHEN p.voided_at IS NULL THEN p.method END AS paid_method,
   CASE WHEN p.voided_at IS NULL THEN p.paid_at END AS paid_at,
-  CASE WHEN p.voided_at IS NULL THEN p.created_by_name END AS paid_by`;
+  CASE WHEN p.voided_at IS NULL THEN p.created_by_name END AS paid_by, o.prepaid_at, o.prepaid_by_name`;
 const ORDER_FROM = `orders o LEFT JOIN clients c ON c.code = o.client_code LEFT JOIN payments p ON p.id = o.payment_id`;
+// Still owed: no live payment, and not paid before it reached the kassa.
+const UNPAID_SQL = `((p.id IS NULL OR p.voided_at IS NOT NULL) AND o.prepaid_at IS NULL)`;
 // The printed code: "77" and eight digits, so it never looks like a client ID.
 const SCAN_RE = /^77\d{8}$/;
 
@@ -390,8 +392,8 @@ route('GET', '/orders', 'payments.create', async (ctx) => {
     args.push(`%${q}%`);
     where.push(`(o.scan_code LIKE $1 OR upper(o.client_code) LIKE $1 OR upper(COALESCE(o.client_name, c.full_name, '')) LIKE $1 OR upper(COALESCE(o.order_no, '')) LIKE $1)`);
   }
-  if (ctx.query.status === 'unpaid') where.push('(p.id IS NULL OR p.voided_at IS NOT NULL)');
-  if (ctx.query.status === 'paid') where.push('(p.id IS NOT NULL AND p.voided_at IS NULL)');
+  if (ctx.query.status === 'unpaid') where.push(UNPAID_SQL);
+  if (ctx.query.status === 'paid') where.push(`NOT ${UNPAID_SQL}`);
   if (ctx.query.status === 'stock') where.push('o.issued_at IS NULL');
   if (ctx.query.status === 'issued') where.push('o.issued_at IS NOT NULL');
   const [items, count] = await Promise.all([
@@ -405,8 +407,8 @@ route('GET', '/orders', 'payments.create', async (ctx) => {
 route('GET', '/orders/stats', 'payments.create', async () => {
   const rows = await query(
     `SELECT COUNT(*) FILTER (WHERE o.issued_at IS NULL)::int AS stock,
-            COUNT(*) FILTER (WHERE p.id IS NULL OR p.voided_at IS NOT NULL)::int AS unpaid,
-            COALESCE(SUM(o.amount) FILTER (WHERE p.id IS NULL OR p.voided_at IS NOT NULL), 0)::bigint AS unpaid_amount,
+            COUNT(*) FILTER (WHERE ${UNPAID_SQL})::int AS unpaid,
+            COALESCE(SUM(o.amount) FILTER (WHERE ${UNPAID_SQL}), 0)::bigint AS unpaid_amount,
             COUNT(*) FILTER (WHERE o.received_at = $1::date)::int AS today
        FROM ${ORDER_FROM} WHERE o.deleted_at IS NULL`,
     [todayTashkent()],
@@ -418,6 +420,7 @@ route('GET', '/orders/stats', 'payments.create', async () => {
 type NewOrder = {
   clientCode: string; clientName: string; phone: string; orderNo: string; transport: string; note: string;
   places: number | null; weight: number | null; amount: number; receivedAt: string;
+  prepaid?: boolean; // paid before it reached the kassa (import only)
 };
 
 /** Reads one order from the form or an import row; errors are keyed by field. */
@@ -474,14 +477,15 @@ async function insertOrders(db: pg.PoolClient, user: AuthUser, list: NewOrder[])
   const col = <K extends keyof NewOrder>(k: K) => list.map((o) => o[k]);
   // Sticker numbers follow the list's order.
   const inserted = await db.query(
-    `INSERT INTO orders (scan_code, client_code, client_name, phone, order_no, transport, places, weight, amount, received_at, note, created_by, created_by_name)
+    `INSERT INTO orders (scan_code, client_code, client_name, phone, order_no, transport, places, weight, amount, received_at, note, created_by, created_by_name,
+                         prepaid_at, prepaid_by_name)
      SELECT '77' || lpad(nextval('orders_scan_seq')::text, 8, '0'), code, NULLIF(name, ''), NULLIF(phone, ''), NULLIF(no, ''), NULLIF(tr, ''),
-            places, weight, amount, received, NULLIF(note, ''), $11, $12
-       FROM (SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::int[], $7::numeric[], $8::bigint[], $9::date[], $10::text[])
-               WITH ORDINALITY AS t(code, name, phone, no, tr, places, weight, amount, received, note, i) ORDER BY i) AS rows
+            places, weight, amount, received, NULLIF(note, ''), $11, $12, CASE WHEN pre THEN NOW() END, CASE WHEN pre THEN $12 END
+       FROM (SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::int[], $7::numeric[], $8::bigint[], $9::date[], $10::text[], $13::boolean[])
+               WITH ORDINALITY AS t(code, name, phone, no, tr, places, weight, amount, received, note, pre, i) ORDER BY i) AS rows
      RETURNING id`,
     [col('clientCode'), col('clientName'), col('phone'), col('orderNo'), col('transport'), col('places'), col('weight'), col('amount'),
-      col('receivedAt'), col('note'), user.id, user.full_name],
+      col('receivedAt'), col('note'), user.id, user.full_name, list.map((o) => Boolean(o.prepaid))],
   );
   return inserted.rows.map((r: any) => r.id as string);
 }
@@ -505,16 +509,28 @@ route('POST', '/orders/import', 'payments.create', async (ctx) => {
   if (!list.length) throw new HttpError(400, 'Roʻyxat boʻsh');
   if (list.length > 1000) throw new HttpError(400, 'Bir martada 1000 tadan koʻp buyurtma yuklab boʻlmaydi');
   const date = str(b.receivedAt, 10) || todayTashkent();
-  const parsed = list.map((r: any, i: number) => ({ row: i + 1, ...readOrder({ ...r, receivedAt: date }, date) }));
+  const parsed = list.map((r: any, i: number) => {
+    const read = readOrder({ ...r, receivedAt: date }, date);
+    return { row: i + 1, ...read, order: { ...read.order, prepaid: r?.paid === true } };
+  });
+  // Marking orders paid without money coming in is an admin's call, like cancelling a payment.
+  if (parsed.some((p: any) => p.order.prepaid) && !ctx.user!.permissions.includes('payments.void')) {
+    throw new HttpError(403, 'Buyurtmani “toʻlangan” deb belgilashga ruxsatingiz yoʻq');
+  }
   const invalid = parsed.filter((p: any) => Object.keys(p.errors).length)
     .map((p: any) => ({ row: p.row, code: p.order.clientCode, error: Object.values(p.errors)[0] as string }));
   const good: NewOrder[] = parsed.filter((p: any) => !Object.keys(p.errors).length).map((p: any) => p.order);
 
   return transaction(async (db) => {
     const keys = good.filter((o) => o.orderNo).map((o) => `${o.clientCode}|${o.orderNo}`);
-    const existing = new Set((await db.query(
-      `SELECT client_code || '|' || order_no AS k FROM orders WHERE deleted_at IS NULL AND client_code || '|' || order_no = ANY($1)`, [keys],
-    )).rows.map((r: any) => r.k));
+    const found = (await db.query(
+      `SELECT o.id, o.client_code || '|' || o.order_no AS k, ${UNPAID_SQL} AS unpaid FROM ${ORDER_FROM}
+        WHERE o.deleted_at IS NULL AND o.client_code || '|' || o.order_no = ANY($1)`, [keys],
+    )).rows;
+    const existing = new Set(found.map((r: any) => r.k));
+    // Loaded again with "toʻlangan" ticked: an order already in the kassa and still owed is marked paid.
+    const prepaidKeys = new Set(good.filter((o) => o.prepaid && o.orderNo).map((o) => `${o.clientCode}|${o.orderNo}`));
+    const toMark: string[] = found.filter((r: any) => r.unpaid && prepaidKeys.has(r.k)).map((r: any) => r.id);
     const seen = new Set<string>();
     const fresh = good.filter((o) => {
       if (!o.orderNo) return true;
@@ -523,10 +539,18 @@ route('POST', '/orders/import', 'payments.create', async (ctx) => {
       seen.add(k);
       return true;
     });
-    const summary = { adding: fresh.length, total: fresh.reduce((s, o) => s + o.amount, 0), skipped: good.length - fresh.length, invalid };
+    const summary = {
+      adding: fresh.length, total: fresh.reduce((s, o) => s + o.amount, 0), skipped: good.length - fresh.length, invalid,
+      prepaid: fresh.filter((o) => o.prepaid).length, marking: toMark.length,
+    };
     if (b.dryRun) return { dryRun: true, ...summary };
     const ids = await insertOrders(db, ctx.user!, fresh);
-    await audit(db, ctx.user, 'order_import', 'order', null, { count: ids.length, total: summary.total, skipped: summary.skipped });
+    if (toMark.length) {
+      await db.query(`UPDATE orders SET prepaid_at = NOW(), prepaid_by_name = $2, updated_at = NOW() WHERE id = ANY($1) AND prepaid_at IS NULL`, [toMark, ctx.user!.full_name]);
+    }
+    await audit(db, ctx.user, 'order_import', 'order', null, {
+      count: ids.length, total: summary.total, skipped: summary.skipped, prepaid: summary.prepaid, marked: toMark.length,
+    });
     const orders = ids.length ? (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = ANY($1) ORDER BY o.scan_code`, [ids])).rows : [];
     return { dryRun: false, ...summary, orders };
   });
@@ -540,7 +564,7 @@ route('GET', '/public/orders/:ref', 'public', async (ctx) => {
   const rows = await query<Record<string, any>>(
     `SELECT o.scan_code, o.client_code, COALESCE(o.client_name, c.full_name) AS client_name, o.order_no, o.transport,
             o.places, o.weight::float8 AS weight, o.amount, to_char(o.received_at, 'YYYY-MM-DD') AS received_at,
-            CASE WHEN p.voided_at IS NULL THEN p.paid_at END AS paid_at
+            CASE WHEN p.voided_at IS NULL THEN p.paid_at ELSE o.prepaid_at END AS paid_at
        FROM ${ORDER_FROM} WHERE o.scan_code = $1 AND o.public_token = $2 AND o.deleted_at IS NULL`,
     [ref[1], ref[2]],
   );
@@ -564,7 +588,7 @@ route('GET', '/orders/scan/:code', 'payments.create', async (ctx) => {
   const order = rows[0];
   const others = await query(
     `SELECT o.scan_code, o.order_no, o.amount FROM ${ORDER_FROM}
-      WHERE o.client_code = $1 AND o.id <> $2 AND o.deleted_at IS NULL AND (p.id IS NULL OR p.voided_at IS NOT NULL)
+      WHERE o.client_code = $1 AND o.id <> $2 AND o.deleted_at IS NULL AND ${UNPAID_SQL}
       ORDER BY o.created_at LIMIT 20`,
     [order.client_code, order.id],
   );
@@ -579,6 +603,7 @@ route('POST', '/orders/:id/pay', 'payments.create', async (ctx) => {
     const found = await db.query(`SELECT * FROM orders WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [ctx.params.id]);
     const order = found.rows[0];
     if (!order) throw new HttpError(404, 'Buyurtma topilmadi');
+    if (order.prepaid_at) throw new HttpError(409, `Bu buyurtma kassaga kelmasdan oldin toʻlangan${order.prepaid_by_name ? ` (${order.prepaid_by_name} belgilagan)` : ''}`);
     if (order.payment_id) {
       const prev = await db.query(`SELECT paid_at, created_by_name, voided_at FROM payments WHERE id = $1`, [order.payment_id]);
       if (prev.rows[0] && !prev.rows[0].voided_at) {
@@ -614,6 +639,27 @@ route('POST', '/orders/:id/pay', 'payments.create', async (ctx) => {
     lines: [`${o.client_code}${o.client_name ? ` · ${o.client_name}` : ''}`, ...details],
   })));
   return { ...result, telegram };
+});
+
+// Mark an order paid before it reached the kassa (paid in the admin panel), or undo that mark.
+// No payment is made, so the kassa's money does not change.
+route('POST', '/orders/:id/prepaid', 'payments.void', async (ctx) => {
+  if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Buyurtma topilmadi');
+  const prepaid = ctx.body?.prepaid !== false;
+  const order = await transaction(async (db) => {
+    const rows = (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = $1 AND o.deleted_at IS NULL FOR UPDATE OF o`, [ctx.params.id])).rows;
+    if (!rows.length) throw new HttpError(404, 'Buyurtma topilmadi');
+    if (rows[0].payment_id) throw new HttpError(409, 'Bu buyurtma kassada toʻlangan: avval toʻlovni bekor qiling');
+    await db.query(
+      `UPDATE orders SET prepaid_at = CASE WHEN $2 THEN COALESCE(prepaid_at, NOW()) END,
+              prepaid_by_name = CASE WHEN $2 THEN COALESCE(prepaid_by_name, $3) END, updated_at = NOW() WHERE id = $1`,
+      [ctx.params.id, prepaid, ctx.user!.full_name],
+    );
+    await audit(db, ctx.user, prepaid ? 'order_prepaid' : 'order_unprepaid', 'order', ctx.params.id,
+      { scanCode: rows[0].scan_code, clientCode: rows[0].client_code, amount: Number(rows[0].amount) });
+    return (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = $1`, [ctx.params.id])).rows[0];
+  });
+  return { order };
 });
 
 // Mark a parcel handed out (or, by mistake, back in the warehouse) without taking a payment.

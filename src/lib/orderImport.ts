@@ -13,6 +13,8 @@ export interface ImportOrderRow {
   places: number | null;
   weight: number | null;
   amount: number;
+  /** Paid already in the admin panel: added to the kassa as paid, with no payment. */
+  paid?: boolean;
 }
 
 const CODE_RE = /^[A-Z]{1,6}-?\d{3,}$/i;

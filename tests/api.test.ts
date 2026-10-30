@@ -858,3 +858,43 @@ test('order import: a list from the admin panel becomes stickers, once', async (
   const scan = await owner.call('GET', `/orders/scan/${real.body.orders[0].scan_code}`);
   assert.equal(scan.body.order.client_name, 'Abdumalikova Muslima');
 });
+
+test('order import: orders paid in the admin panel come in paid, with no money in the kassa', async () => {
+  const owner = new Client();
+  await owner.call('POST', '/auth/login', { username: 'admin', password: 'password123' });
+  const before = (await owner.call('GET', '/orders/stats')).body;
+  const rows = [
+    { clientCode: 'TTT-301771', orderNo: '360990', transport: 'Avia', amount: 59000, paid: true },
+    { clientCode: 'SSS-301480', orderNo: '937212', transport: 'Avto', amount: 770000 },
+  ];
+  const dry = await owner.call('POST', '/orders/import', { rows, receivedAt: '2026-10-29', dryRun: true });
+  assert.deepEqual([dry.body.adding, dry.body.prepaid, dry.body.marking], [2, 1, 0]);
+  const real = await owner.call('POST', '/orders/import', { rows, receivedAt: '2026-10-29' });
+  assert.equal(real.status, 200, JSON.stringify(real.body));
+  const [paid, owed] = real.body.orders;
+  assert.ok(paid.prepaid_at && !paid.payment_id, 'paid in the panel: marked, no payment');
+  assert.equal(owed.prepaid_at, null);
+  const after = (await owner.call('GET', '/orders/stats')).body;
+  assert.equal(after.unpaid - before.unpaid, 1, 'only the unpaid one is owed');
+  assert.equal(after.unpaidAmount - before.unpaidAmount, 770000);
+  assert.equal((await owner.call('POST', `/orders/${paid.id}/pay`, { method: 'cash' })).status, 409, 'cannot be paid twice');
+
+  // Loaded again with the second ticked as paid: the order already in the kassa is marked, nothing new is added.
+  const again = await owner.call('POST', '/orders/import', { rows: rows.map((r) => ({ ...r, paid: true })), dryRun: true });
+  assert.deepEqual([again.body.adding, again.body.marking], [0, 1]);
+  await owner.call('POST', '/orders/import', { rows: rows.map((r) => ({ ...r, paid: true })) });
+  assert.equal((await owner.call('GET', '/orders/stats')).body.unpaid, before.unpaid);
+
+  // One by one, and undone.
+  const undo = await owner.call('POST', `/orders/${owed.id}/prepaid`, { prepaid: false });
+  assert.equal(undo.body.order.prepaid_at, null);
+  const mark = await owner.call('POST', `/orders/${owed.id}/prepaid`, { prepaid: true });
+  assert.ok(mark.body.order.prepaid_at);
+
+  // A worker without the right to cancel payments cannot mark orders paid.
+  const worker = new Client();
+  assert.equal((await owner.call('POST', '/staff', { username: 'omborchi', fullName: 'Omborchi', password: 'worker123', role: 'worker' })).status, 201);
+  assert.equal((await worker.call('POST', '/auth/login', { username: 'omborchi', password: 'worker123' })).status, 200);
+  assert.equal((await worker.call('POST', '/orders/import', { rows: [{ ...rows[0], orderNo: '1', paid: true }], dryRun: true })).status, 403);
+  assert.equal((await worker.call('POST', `/orders/${owed.id}/prepaid`, { prepaid: false })).status, 403);
+});

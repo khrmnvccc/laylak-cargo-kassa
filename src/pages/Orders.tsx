@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { FileSpreadsheet, Loader2, Plus, Printer, ScanLine, Search, Trash2, UserCheck } from 'lucide-react';
+import { BadgeCheck, FileSpreadsheet, Loader2, Plus, Printer, ScanLine, Search, Trash2, UserCheck } from 'lucide-react';
 import { ImportOrders } from '../components/ImportOrders';
 import { bookmarkText, clearBookmarkText } from '../lib/bookmarklet';
 import { api, ApiError } from '../lib/api';
@@ -29,6 +29,8 @@ export default function Orders() {
   const [status, setStatus] = useState<'all' | 'stock' | 'issued' | 'unpaid'>('all');
   const [manual, setManual] = useState('');
   const [removing, setRemoving] = useState<Order | null>(null);
+  const [prepaying, setPrepaying] = useState<Order | null>(null);
+  const [prepaySaving, setPrepaySaving] = useState(false);
   const [printingList, setPrintingList] = useState(false);
   const [format, setFormat] = useStickerFormat();
   const [creating, setCreating] = useState(false);
@@ -101,6 +103,20 @@ export default function Orders() {
       toast({ tone: 'error', title: 'Oʻchirilmadi', description: (e as Error).message });
     } finally {
       setRemoving(null);
+    }
+  }
+
+  async function setPrepaid(o: Order, prepaid: boolean) {
+    setPrepaySaving(true);
+    try {
+      await api(`/orders/${o.id}/prepaid`, { method: 'POST', body: { prepaid } });
+      toast({ tone: 'success', title: prepaid ? 'Toʻlangan deb belgilandi' : 'Belgi olib tashlandi', description: `${o.client_code} · ${money(o.amount)}` });
+      bump();
+      setPrepaying(null);
+    } catch (e) {
+      toast({ tone: 'error', title: 'Saqlanmadi', description: (e as Error).message });
+    } finally {
+      setPrepaySaving(false);
     }
   }
 
@@ -207,8 +223,11 @@ export default function Orders() {
                   </button>
                   <div className="shrink-0 text-right">
                     <div className="text-sm font-semibold text-ink num">{money(o.amount)}</div>
-                    <div className="mt-0.5 flex justify-end gap-1"><IssuedBadge o={o} />{o.payment_id ? <Badge tone="success">{methodLabel(o.paid_method!)}</Badge> : <Badge tone="warn">Toʻlanmagan</Badge>}</div>
+                    <div className="mt-0.5 flex justify-end gap-1"><IssuedBadge o={o} /><PaidBadge o={o} /></div>
                   </div>
+                  {!o.payment_id && can(user, 'payments.void') && (
+                    <Button size="sm" variant="ghost" icon={<BadgeCheck className="size-4" />} onClick={() => setPrepaying(o)} aria-label="Toʻlangan deb belgilash" />
+                  )}
                   <Button size="sm" variant="ghost" icon={<Printer className="size-4" />} onClick={() => void printOrderSticker(o)} aria-label="Chop etish" />
                 </li>
               ))}
@@ -227,9 +246,13 @@ export default function Orders() {
                       <td className={td}><div className="num">{o.order_no ? `№${o.order_no}` : '—'}</div>
                         <div className="text-xs text-ink-3">{[o.transport, o.weight ? `${o.weight} kg` : ''].filter(Boolean).join(' · ')}</div></td>
                       <td className={`${td} text-right font-medium num`}>{money(o.amount)}</td>
-                      <td className={td}><div className="flex flex-wrap gap-1"><IssuedBadge o={o} />{o.payment_id ? <Badge tone="success">{methodLabel(o.paid_method!)}</Badge> : <Badge tone="warn">Toʻlanmagan</Badge>}</div></td>
+                      <td className={td}><div className="flex flex-wrap gap-1"><IssuedBadge o={o} /><PaidBadge o={o} /></div></td>
                       <td className={`${td} text-right`}>
                         <div className="flex justify-end gap-1">
+                          {!o.payment_id && can(user, 'payments.void') && (
+                            <Button size="sm" variant="ghost" icon={<BadgeCheck className="size-4" />} onClick={() => setPrepaying(o)}
+                              aria-label={o.prepaid_at ? 'Toʻlangan belgisi' : 'Toʻlangan deb belgilash'} />
+                          )}
                           <Button size="sm" variant="ghost" icon={<Printer className="size-4" />} onClick={() => void printOrderSticker(o)} aria-label="Chop etish" />
                           {!o.payment_id && can(user, 'payments.void') && (
                             <Button size="sm" variant="ghost" icon={<Trash2 className="size-4" />} onClick={() => setRemoving(o)} aria-label="Oʻchirish" />
@@ -254,6 +277,21 @@ export default function Orders() {
         <StickerFormatPicker value={format} onChange={setFormat} count={items.length} />
       </Modal>
 
+      <Modal open={Boolean(prepaying)} onClose={() => setPrepaying(null)} size="sm"
+        title={prepaying?.prepaid_at ? 'Oldin toʻlangan' : 'Toʻlangan deb belgilash'}
+        description={prepaying ? `${prepaying.client_code} · ${prepaying.order_no ? `№${prepaying.order_no} · ` : ''}${money(prepaying.amount)}` : undefined}
+        footer={prepaying && (prepaying.prepaid_at ? (
+          <><Button onClick={() => setPrepaying(null)}>Yopish</Button><Button variant="danger" loading={prepaySaving} onClick={() => void setPrepaid(prepaying, false)}>Belgini olib tashlash</Button></>
+        ) : (
+          <><Button onClick={() => setPrepaying(null)}>Bekor qilish</Button><Button variant="primary" loading={prepaySaving} icon={<BadgeCheck className="size-4" />} onClick={() => void setPrepaid(prepaying, true)}>Toʻlangan</Button></>
+        ))}>
+        <p className="text-sm text-ink-2">
+          {prepaying?.prepaid_at
+            ? `${prepaying.prepaid_by_name || ''} toʻlangan deb belgilagan. Belgi olib tashlansa, buyurtma yana “Toʻlanmagan” boʻladi.`
+            : 'Admin panelda toʻlangan buyurtma uchun. Kassaga pul qoʻshilmaydi, buyurtma “Toʻlanmagan” roʻyxatidan chiqadi.'}
+        </p>
+      </Modal>
+
       <Modal open={Boolean(removing)} onClose={() => setRemoving(null)} title="Stikerni oʻchirish" size="sm"
         description={removing ? `${removing.scan_code} · ${removing.client_code} · ${money(removing.amount)}` : undefined}
         footer={<><Button onClick={() => setRemoving(null)}>Bekor qilish</Button><Button variant="danger" onClick={() => void remove()}>Oʻchirish</Button></>}>
@@ -261,6 +299,11 @@ export default function Orders() {
       </Modal>
     </>
   );
+}
+
+function PaidBadge({ o }: { o: Order }) {
+  if (o.payment_id) return <Badge tone="success">{methodLabel(o.paid_method!)}</Badge>;
+  return o.prepaid_at ? <Badge tone="success">Oldin toʻlangan</Badge> : <Badge tone="warn">Toʻlanmagan</Badge>;
 }
 
 function IssuedBadge({ o }: { o: Order }) {
