@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { useApi } from '../lib/live';
-import { PAY_GROUPS, addDays, compactMoney, groupDigits, money, rangeLabel } from '../lib/format';
+import { PAY_GROUPS, addDays, compactMoney, money, rangeLabel } from '../lib/format';
 import { href } from '../lib/router';
 import type { Summary } from '../lib/types';
 import { DateRangePicker, presetRange, type Range } from '../components/DateRange';
 import { PaymentsTable } from '../components/PaymentsTable';
 import { Legend, RevenueChart } from '../components/RevenueChart';
 import { StatsCarousel } from '../components/StatsCarousel';
-import { Avatar, Card, CardHeader, Delta, EmptyState, ErrorState, MethodStatCards, PageHeader, SkeletonRows, StatCard } from '../components/ui';
+import { Avatar, Card, CardHeader, Delta, EmptyState, ErrorState, PageHeader, SkeletonRows } from '../components/ui';
 
 export default function Dashboard() {
   const [range, setRange] = useState<Range>(() => presetRange('today'));
@@ -19,8 +19,6 @@ export default function Dashboard() {
 
   const t = data?.totals;
   const p = data?.previous;
-  const single = range.from === range.to;
-  const compareLabel = single ? 'oldingi kunga nisbatan' : 'oldingi davrga nisbatan';
 
   return (
     <>
@@ -30,30 +28,13 @@ export default function Dashboard() {
         actions={<DateRangePicker value={range} onChange={setRange} />}
       />
 
-      <StatsCarousel />
-
       {error && !data ? (
         <Card><ErrorState message={error} onRetry={reload} /></Card>
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
-            <StatCard label={single ? 'Jami tushum' : 'Davr tushumi'} value={t?.total || 0} previous={p?.total} hint={`Naqd + karta · ${compareLabel}`} loading={loading} />
-            <StatCard label="Operatsiyalar soni" value={t?.count || 0} previous={p?.count} loading={loading} format={(n) => groupDigits(n)}
-              hint={t ? `${t.clients || 0} ta mijoz` : undefined} />
-          </div>
-          <div className="mt-3 grid grid-cols-2 gap-3 sm:gap-4">
-            <MethodStatCards t={t} p={p} loading={loading} total={t?.total} />
-          </div>
+          <StatsCarousel range={range} summary={loading && !data ? null : data} />
 
-          {t && t.total > 0 && (
-            <div className="mt-3 overflow-hidden rounded-full bg-surface-3" aria-hidden>
-              <div className="flex h-1.5">
-                {PAY_GROUPS.map((m) => <div key={m.value} className="transition-all duration-500" style={{ background: m.color, width: `${(m.sum(t) / t.total) * 100}%` }} />)}
-              </div>
-            </div>
-          )}
-
-          <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_360px]">
+          <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
             <Card>
               <CardHeader
                 title="Kunlar boʻyicha tushum"
