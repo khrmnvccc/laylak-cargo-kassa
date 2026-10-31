@@ -710,6 +710,24 @@ route('POST', '/orders/issue', 'payments.create', async (ctx) => {
   return { issued };
 });
 
+// Several ticked orders taken off the list at once. Ones with a live payment stay: cancel the payment first.
+route('POST', '/orders/delete', 'payments.void', async (ctx) => {
+  const ids = Array.isArray(ctx.body?.ids) ? [...new Set(ctx.body.ids.filter((id: unknown) => typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id)))] : [];
+  if (!ids.length) throw new HttpError(400, 'Buyurtmalarni tanlang');
+  if (ids.length > 500) throw new HttpError(400, 'Bir martada 500 tadan koʻp buyurtma oʻchirib boʻlmaydi');
+  return transaction(async (db) => {
+    const rows = (await db.query(
+      `UPDATE orders o SET deleted_at = NOW(), updated_at = NOW()
+        WHERE o.id = ANY($1) AND o.deleted_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.id = o.payment_id AND p.voided_at IS NULL)
+        RETURNING o.id, o.scan_code, o.amount`,
+      [ids],
+    )).rows;
+    for (const r of rows) await audit(db, ctx.user, 'order_delete', 'order', r.id, { scanCode: r.scan_code, amount: Number(r.amount) });
+    return { deleted: rows.length, kept: ids.length - rows.length };
+  });
+});
+
 // Orders entered twice: the same client and order number, or with no number the same client, sum and day.
 // Each group lists its copies oldest first; the oldest is the one to keep.
 route('GET', '/orders/duplicates', 'payments.void', async () => {

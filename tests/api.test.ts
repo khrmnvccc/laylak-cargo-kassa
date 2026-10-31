@@ -945,3 +945,15 @@ test('orders ticked in the list are handed over together', async () => {
   assert.equal((await owner.call('POST', '/orders/issue', { ids: ids.slice(0, 2) })).body.issued, 0, 'already handed over');
   assert.equal((await owner.call('POST', '/orders/issue', { ids: [] })).status, 400);
 });
+
+test('ticked orders are taken off the list together, paid ones stay', async () => {
+  const owner = new Client();
+  await owner.call('POST', '/auth/login', { username: 'admin', password: 'password123' });
+  const rows = [1, 2, 3].map((i) => ({ clientCode: 'DEL-10000' + i, orderNo: `8800${i}`, transport: 'Avto', amount: 1000 * i }));
+  const orders = (await owner.call('POST', '/orders/import', { rows })).body.orders;
+  assert.equal((await owner.call('POST', `/orders/${orders[2].id}/pay`, { method: 'cash' })).status, 200);
+  const res = await owner.call('POST', '/orders/delete', { ids: orders.map((o: any) => o.id) });
+  assert.deepEqual([res.body.deleted, res.body.kept], [2, 1], JSON.stringify(res.body));
+  const left = (await owner.call('GET', '/orders', undefined, { q: 'DEL-', status: 'paid' })).body.items;
+  assert.deepEqual(left.map((o: any) => o.id), [orders[2].id]);
+});
