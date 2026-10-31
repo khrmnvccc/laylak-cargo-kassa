@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { BadgeCheck, Copy, FileSpreadsheet, Loader2, Plus, Printer, ScanLine, Search, Trash2, UserCheck } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { BadgeCheck, Copy, FileSpreadsheet, Loader2, PackageCheck, X, Plus, Printer, ScanLine, Search, Trash2, UserCheck } from 'lucide-react';
 import { ImportOrders } from '../components/ImportOrders';
 import { bookmarkText, clearBookmarkText } from '../lib/bookmarklet';
 import { api, ApiError } from '../lib/api';
@@ -49,6 +50,11 @@ export default function Orders() {
   const dupGroups = dups.data?.groups || [];
   const extraCopies = dupGroups.reduce((n, g) => n + g.length - 1, 0);
   const [showDups, setShowDups] = useState(false);
+  // Ticked orders still in stock, handed over together.
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [issuing, setIssuing] = useState(false);
+  const [issueSaving, setIssueSaving] = useState(false);
+  useEffect(() => setPicked(new Set()), [debounced, status]);
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
   const code = form.clientCode.trim().toUpperCase();
   const amount = Number(form.amountText.replace(/\D/g, '')) || 0;
@@ -126,6 +132,27 @@ export default function Orders() {
   }
 
   const items = list.data?.items || [];
+  const inStock = items.filter((o) => !o.issued_at);
+  const pickedOrders = inStock.filter((o) => picked.has(o.id));
+  const pickedUnpaid = pickedOrders.filter((o) => !o.payment_id && !o.prepaid_at).length;
+  const allPicked = inStock.length > 0 && pickedOrders.length === inStock.length;
+  const toggle = (id: string) => setPicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const toggleAll = () => setPicked(allPicked ? new Set() : new Set(inStock.map((o) => o.id)));
+
+  async function issueMany() {
+    setIssueSaving(true);
+    try {
+      const { issued } = await api<{ issued: number }>('/orders/issue', { method: 'POST', body: { ids: pickedOrders.map((o) => o.id) } });
+      toast({ tone: 'success', title: `${issued} ta buyurtma berildi` });
+      setPicked(new Set());
+      setIssuing(false);
+      bump();
+    } catch (e) {
+      toast({ tone: 'error', title: 'Saqlanmadi', description: (e as Error).message });
+    } finally {
+      setIssueSaving(false);
+    }
+  }
   return (
     <>
       <PageHeader title="Buyurtmalar" subtitle="Har bir buyurtmaga stiker chop eting. Kassada skaner qilinsa toʻlov oynasi ochiladi."
@@ -208,11 +235,13 @@ export default function Orders() {
               options={[{ value: 'all', label: 'Hammasi' }, { value: 'stock', label: 'Omborda' }, { value: 'issued', label: 'Berilgan' }, { value: 'unpaid', label: 'Toʻlanmagan' }]} />
           </div>
           {list.data && (
-            <div className="border-b border-line px-4 py-2 text-[13px] text-ink-2">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-4 py-2 text-[13px] text-ink-2">
+              <span className="min-w-0 flex-1">
               {{ all: 'Jami', stock: 'Omborda', issued: 'Berilgan', unpaid: 'Toʻlanmagan' }[status]}: <b className="text-ink num">{list.data.total} ta</b> · <b className="text-ink num">{money(list.data.totalAmount)}</b>
               {list.data.total > items.length && <span className="text-ink-3"> · oxirgi {items.length} tasi koʻrsatilgan, qidiruvdan foydalaning</span>}
+              </span>
               {items.length > 0 && (
-                <button type="button" className="float-right inline-flex items-center gap-1.5 font-medium text-ink-2 hover:text-ink" onClick={() => setPrintingList(true)}>
+                <button type="button" className="inline-flex items-center gap-1.5 font-medium text-ink-2 hover:text-ink" onClick={() => setPrintingList(true)}>
                   <Printer className="size-3.5" />Roʻyxatni chop etish
                 </button>
               )}
@@ -224,7 +253,8 @@ export default function Orders() {
             <>
             <ul className="divide-y divide-line md:hidden">
               {items.map((o) => (
-                <li key={o.id} className="flex items-center gap-3 px-4 py-3">
+                <li key={o.id} className={`flex items-center gap-3 px-4 py-3 ${picked.has(o.id) ? 'bg-surface-2' : ''}`}>
+                  <PickBox o={o} picked={picked.has(o.id)} onToggle={toggle} />
                   <button type="button" className="min-w-0 flex-1 text-left" onClick={() => openSticker(o.scan_code)}>
                     <div className="flex items-center gap-2">
                       <span className="shrink-0 text-sm font-medium text-ink num">{o.client_code}</span>
@@ -248,11 +278,14 @@ export default function Orders() {
             <div className="hidden overflow-x-auto md:block">
               <table className="w-full">
                 <thead className="border-b border-line">
-                  <tr><th className={th}>Stiker</th><th className={th}>Mijoz</th><th className={th}>Buyurtma</th><th className={`${th} text-right`}>Summa</th><th className={th}>Holat</th><th className={th} /></tr>
+                  <tr><th className={`${th} w-10 pr-0`}>{inStock.length > 0 && (
+                    <input type="checkbox" className="size-4 accent-[var(--primary)]" checked={allPicked} onChange={toggleAll} aria-label="Ombordagilarning hammasini tanlash" />
+                  )}</th><th className={th}>Stiker</th><th className={th}>Mijoz</th><th className={th}>Buyurtma</th><th className={`${th} text-right`}>Summa</th><th className={th}>Holat</th><th className={th} /></tr>
                 </thead>
                 <tbody className="divide-y divide-line">
                   {items.map((o) => (
-                    <tr key={o.id} className="hover:bg-surface-2">
+                    <tr key={o.id} className={picked.has(o.id) ? 'bg-surface-2' : 'hover:bg-surface-2'}>
+                      <td className={`${td} pr-0`}><PickBox o={o} picked={picked.has(o.id)} onToggle={toggle} /></td>
                       <td className={td}><button type="button" className="font-medium num hover:underline" onClick={() => openSticker(o.scan_code)}>{o.scan_code}</button>
                         <div className="text-xs text-ink-3">{formatDate(o.received_at)}</div></td>
                       <td className={td}><div className="font-medium num">{o.client_code}</div><div className="text-xs text-ink-3">{o.client_name || ''}</div></td>
@@ -305,6 +338,23 @@ export default function Orders() {
         </p>
       </Modal>
 
+      {/* On the body: the page's own animation would otherwise pin it to the page, not the screen. */}
+      {pickedOrders.length > 0 && createPortal(
+        <div className="fixed inset-x-3 bottom-[calc(5.5rem+env(safe-area-inset-bottom,0px))] z-30 mx-auto flex max-w-md items-center gap-2 rounded-xl border border-line [background:linear-gradient(var(--surface-solid),var(--surface-solid)),var(--bg)] px-3 py-2 text-[13px] shadow-lg md:bottom-6">
+          <span className="min-w-0 flex-1 text-ink-2"><b className="text-ink num">{pickedOrders.length} ta</b> tanlandi · <b className="text-ink num">{money(pickedOrders.reduce((n, o) => n + Number(o.amount), 0))}</b></span>
+          <Button size="sm" variant="ghost" icon={<X className="size-4" />} onClick={() => setPicked(new Set())}>Bekor</Button>
+          <Button size="sm" variant="primary" icon={<PackageCheck className="size-4" />} onClick={() => setIssuing(true)}>Berildi</Button>
+        </div>,
+        document.body,
+      )}
+
+      <Modal open={issuing} onClose={() => setIssuing(false)} size="sm" title={`${pickedOrders.length} ta buyurtmani berish`}
+        description={money(pickedOrders.reduce((n, o) => n + Number(o.amount), 0))}
+        footer={<><Button onClick={() => setIssuing(false)}>Bekor qilish</Button><Button variant="primary" loading={issueSaving} icon={<PackageCheck className="size-4" />} onClick={() => void issueMany()}>Berildi</Button></>}>
+        <p className="text-sm text-ink-2">Tanlangan buyurtmalar “Berilgan” boʻladi va ombordan chiqadi.</p>
+        {pickedUnpaid > 0 && <div className="mt-3"><Alert tone="warn">{pickedUnpaid} tasi hali toʻlanmagan. Ular toʻlovsiz beriladi, kassaga pul qoʻshilmaydi.</Alert></div>}
+      </Modal>
+
       <Modal open={showDups} onClose={() => setShowDups(false)} title="Ikki marta kiritilgan buyurtmalar"
         description="Har guruhda birinchisi (eng oldin kiritilgani) qoldiriladi. Ortiqchasini oʻchiring."
         footer={<Button onClick={() => setShowDups(false)}>Yopish</Button>}>
@@ -345,6 +395,11 @@ export default function Orders() {
       </Modal>
     </>
   );
+}
+
+function PickBox({ o, picked, onToggle }: { o: Order; picked: boolean; onToggle: (id: string) => void }) {
+  if (o.issued_at) return <span className="inline-block size-4 shrink-0" />;
+  return <input type="checkbox" className="size-4 shrink-0 accent-[var(--primary)]" checked={picked} onChange={() => onToggle(o.id)} aria-label={`${o.scan_code} ni tanlash`} />;
 }
 
 function PaidBadge({ o }: { o: Order }) {

@@ -693,6 +693,23 @@ route('POST', '/orders/:id/issue', 'payments.create', async (ctx) => {
   return { order };
 });
 
+// Several orders handed over at once, ticked in the list.
+route('POST', '/orders/issue', 'payments.create', async (ctx) => {
+  const ids = Array.isArray(ctx.body?.ids) ? [...new Set(ctx.body.ids.filter((id: unknown) => typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id)))] : [];
+  if (!ids.length) throw new HttpError(400, 'Buyurtmalarni tanlang');
+  if (ids.length > 500) throw new HttpError(400, 'Bir martada 500 tadan koʻp buyurtma berib boʻlmaydi');
+  const issued = await transaction(async (db) => {
+    const rows = (await db.query(
+      `UPDATE orders SET issued_at = NOW(), issued_by_name = $2, updated_at = NOW()
+        WHERE id = ANY($1) AND deleted_at IS NULL AND issued_at IS NULL RETURNING id, scan_code`,
+      [ids, ctx.user!.full_name],
+    )).rows;
+    for (const r of rows) await audit(db, ctx.user, 'order_issue', 'order', r.id, { scanCode: r.scan_code });
+    return rows.length;
+  });
+  return { issued };
+});
+
 // Orders entered twice: the same client and order number, or with no number the same client, sum and day.
 // Each group lists its copies oldest first; the oldest is the one to keep.
 route('GET', '/orders/duplicates', 'payments.void', async () => {
