@@ -27,7 +27,7 @@ export default function Orders() {
   const [saving, setSaving] = useState(false);
   const [known, setKnown] = useState<string | null>(null);
   const [q, setQ] = useState('');
-  const [status, setStatus] = useState<'all' | 'stock' | 'issued' | 'unpaid'>('all');
+  const [status, setStatus] = useState<'all' | 'stock' | 'issued' | 'unpaid' | 'paid'>('all');
   const [manual, setManual] = useState('');
   const [removing, setRemoving] = useState<Order | null>(null);
   const [prepaying, setPrepaying] = useState<Order | null>(null);
@@ -54,6 +54,7 @@ export default function Orders() {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [issuing, setIssuing] = useState(false);
   const [issueSaving, setIssueSaving] = useState(false);
+  const [deletingMany, setDeletingMany] = useState(false);
   useEffect(() => setPicked(new Set()), [debounced, status]);
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
   const code = form.clientCode.trim().toUpperCase();
@@ -138,6 +139,21 @@ export default function Orders() {
   const allPicked = inStock.length > 0 && pickedOrders.length === inStock.length;
   const toggle = (id: string) => setPicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const toggleAll = () => setPicked(allPicked ? new Set() : new Set(inStock.map((o) => o.id)));
+
+  async function deleteMany() {
+    setIssueSaving(true);
+    try {
+      const { deleted, kept } = await api<{ deleted: number; kept: number }>('/orders/delete', { method: 'POST', body: { ids: pickedOrders.map((o) => o.id) } });
+      toast({ tone: 'success', title: `${deleted} ta buyurtma oʻchirildi`, description: kept ? `${kept} tasi kassada toʻlangani uchun qoldi` : undefined });
+      setPicked(new Set());
+      setDeletingMany(false);
+      bump();
+    } catch (e) {
+      toast({ tone: 'error', title: 'Oʻchirilmadi', description: (e as Error).message });
+    } finally {
+      setIssueSaving(false);
+    }
+  }
 
   async function issueMany() {
     setIssueSaving(true);
@@ -231,13 +247,15 @@ export default function Orders() {
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-3" />
               <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ID, ism, buyurtma yoki stiker kodi" className="h-9 pl-9" />
             </div>
-            <Segmented value={status} onChange={setStatus}
-              options={[{ value: 'all', label: 'Hammasi' }, { value: 'stock', label: 'Omborda' }, { value: 'issued', label: 'Berilgan' }, { value: 'unpaid', label: 'Toʻlanmagan' }]} />
+            <div className="max-w-full overflow-x-auto [scrollbar-width:none]">
+              <Segmented value={status} onChange={setStatus}
+              options={[{ value: 'all', label: 'Hammasi' }, { value: 'stock', label: 'Omborda' }, { value: 'issued', label: 'Berilgan' }, { value: 'unpaid', label: 'Toʻlanmagan' }, { value: 'paid', label: 'Toʻlangan' }]} />
+            </div>
           </div>
           {list.data && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-4 py-2 text-[13px] text-ink-2">
               <span className="min-w-0 flex-1">
-              {{ all: 'Jami', stock: 'Omborda', issued: 'Berilgan', unpaid: 'Toʻlanmagan' }[status]}: <b className="text-ink num">{list.data.total} ta</b> · <b className="text-ink num">{money(list.data.totalAmount)}</b>
+              {{ all: 'Jami', stock: 'Omborda', issued: 'Berilgan', unpaid: 'Toʻlanmagan', paid: 'Toʻlangan' }[status]}: <b className="text-ink num">{list.data.total} ta</b> · <b className="text-ink num">{money(list.data.totalAmount)}</b>
               {list.data.total > items.length && <span className="text-ink-3"> · oxirgi {items.length} tasi koʻrsatilgan, qidiruvdan foydalaning</span>}
               </span>
               {items.length > 0 && (
@@ -342,11 +360,19 @@ export default function Orders() {
       {pickedOrders.length > 0 && createPortal(
         <div className="fixed inset-x-3 bottom-[calc(5.5rem+env(safe-area-inset-bottom,0px))] z-30 mx-auto flex max-w-md items-center gap-2 rounded-xl border border-line [background:linear-gradient(var(--surface-solid),var(--surface-solid)),var(--bg)] px-3 py-2 text-[13px] shadow-lg md:bottom-6">
           <span className="min-w-0 flex-1 text-ink-2"><b className="text-ink num">{pickedOrders.length} ta</b> tanlandi · <b className="text-ink num">{money(pickedOrders.reduce((n, o) => n + Number(o.amount), 0))}</b></span>
-          <Button size="sm" variant="ghost" icon={<X className="size-4" />} onClick={() => setPicked(new Set())}>Bekor</Button>
+          <Button size="sm" variant="ghost" icon={<X className="size-4" />} onClick={() => setPicked(new Set())} aria-label="Bekor" />
+          {can(user, 'payments.void') && <Button size="sm" variant="danger" icon={<Trash2 className="size-4" />} onClick={() => setDeletingMany(true)}>Oʻchirish</Button>}
           <Button size="sm" variant="primary" icon={<PackageCheck className="size-4" />} onClick={() => setIssuing(true)}>Berildi</Button>
         </div>,
         document.body,
       )}
+
+      <Modal open={deletingMany} onClose={() => setDeletingMany(false)} size="sm" title={`${pickedOrders.length} ta buyurtmani oʻchirish`}
+        description={money(pickedOrders.reduce((n, o) => n + Number(o.amount), 0))}
+        footer={<><Button onClick={() => setDeletingMany(false)}>Bekor qilish</Button><Button variant="danger" loading={issueSaving} icon={<Trash2 className="size-4" />} onClick={() => void deleteMany()}>Oʻchirish</Button></>}>
+        <p className="text-sm text-ink-2">Tanlangan buyurtmalar roʻyxatdan va ombordan chiqadi, stikeri endi ochilmaydi. Kassadagi pulga taʼsir qilmaydi.</p>
+        {pickedOrders.some((o) => o.payment_id) && <div className="mt-3"><Alert tone="warn">{pickedOrders.filter((o) => o.payment_id).length} tasi kassada toʻlangan, ular oʻchirilmaydi.</Alert></div>}
+      </Modal>
 
       <Modal open={issuing} onClose={() => setIssuing(false)} size="sm" title={`${pickedOrders.length} ta buyurtmani berish`}
         description={money(pickedOrders.reduce((n, o) => n + Number(o.amount), 0))}
