@@ -128,6 +128,12 @@ function fromCells(cells: string[]): ImportOrderRow[] {
   return out;
 }
 
+/** One order's identity: its client and order number, ignoring case, spaces, "#" and "№" (the same in the kassa and the server). */
+export function orderKey(clientCode: string, orderNo: string | null | undefined): string {
+  const no = (orderNo || '').toUpperCase().replace(/[\s#№]/g, '');
+  return no ? `${clientCode.toUpperCase().replace(/\s+/g, '')}|${no}` : '';
+}
+
 export function parseOrderText(text: string): ImportOrderRow[] {
   const rows = text.replace(/^﻿/, '').split(/\r?\n/).map((line) => {
     const delimiter = line.includes('\t') ? '\t' : line.includes(';') ? ';' : null;

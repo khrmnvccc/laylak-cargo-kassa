@@ -27,6 +27,7 @@ import { gzipSync } from 'node:zlib';
 import { createHash, randomInt } from 'node:crypto';
 import { EXPENSE_LABELS, XLSX_OPTIONS, kassaSheets, monthSheets } from '../src/lib/excelSheets.js';
 import type { BalanceMonth, Payment } from '../src/lib/types.js';
+import { orderKey } from '../src/lib/orderImport.js';
 
 export interface ApiRequest {
   method: string;
@@ -381,6 +382,9 @@ const ORDER_COLUMNS = `o.id, o.scan_code, o.public_token, o.client_code, COALESC
 const ORDER_FROM = `orders o LEFT JOIN clients c ON c.code = o.client_code LEFT JOIN payments p ON p.id = o.payment_id`;
 // Still owed: no live payment, and not paid before it reached the kassa.
 const UNPAID_SQL = `((p.id IS NULL OR p.voided_at IS NOT NULL) AND o.prepaid_at IS NULL)`;
+// Same as orderKey(): the order number without case, spaces, "#" or "№"; NULL when there is none.
+const ORDER_NO_SQL = `NULLIF(upper(regexp_replace(COALESCE(o.order_no, ''), '[\\s#№]', '', 'g')), '')`;
+const ORDER_KEY_SQL = `(o.client_code || '|' || ${ORDER_NO_SQL})`;
 // The printed code: "77" and eight digits, so it never looks like a client ID.
 const SCAN_RE = /^77\d{8}$/;
 
@@ -494,6 +498,12 @@ route('POST', '/orders', 'payments.create', async (ctx) => {
   const { order: o, errors } = readOrder(ctx.body || {}, todayTashkent());
   if (Object.keys(errors).length) return { status: 400, body: { error: 'Ma’lumotlarni tekshiring', fields: errors } };
   const order = await transaction(async (db) => {
+    const key = orderKey(o.clientCode, o.orderNo);
+    if (key) {
+      await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`order:${key}`]);
+      const dup = (await db.query(`SELECT o.scan_code FROM orders o WHERE o.deleted_at IS NULL AND ${ORDER_KEY_SQL} = $1 LIMIT 1`, [key])).rows[0];
+      if (dup) throw new HttpError(409, `Bu buyurtma kassada bor (stiker ${dup.scan_code})`);
+    }
     const id = await insertOrder(db, ctx.user!, o);
     await audit(db, ctx.user, 'order_create', 'order', id, { clientCode: o.clientCode, amount: o.amount, orderNo: o.orderNo });
     return (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = $1`, [id])).rows[0];
@@ -522,19 +532,21 @@ route('POST', '/orders/import', 'payments.create', async (ctx) => {
   const good: NewOrder[] = parsed.filter((p: any) => !Object.keys(p.errors).length).map((p: any) => p.order);
 
   return transaction(async (db) => {
-    const keys = good.filter((o) => o.orderNo).map((o) => `${o.clientCode}|${o.orderNo}`);
+    const keys = [...new Set(good.map((o) => orderKey(o.clientCode, o.orderNo)).filter(Boolean))];
+    // Two people loading the same list at once must not both add it.
+    if (!b.dryRun) await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['orders:import']);
     const found = (await db.query(
-      `SELECT o.id, o.client_code || '|' || o.order_no AS k, ${UNPAID_SQL} AS unpaid FROM ${ORDER_FROM}
-        WHERE o.deleted_at IS NULL AND o.client_code || '|' || o.order_no = ANY($1)`, [keys],
+      `SELECT o.id, ${ORDER_KEY_SQL} AS k, ${UNPAID_SQL} AS unpaid FROM ${ORDER_FROM}
+        WHERE o.deleted_at IS NULL AND ${ORDER_KEY_SQL} = ANY($1)`, [keys],
     )).rows;
     const existing = new Set(found.map((r: any) => r.k));
     // Loaded again with "toʻlangan" ticked: an order already in the kassa and still owed is marked paid.
-    const prepaidKeys = new Set(good.filter((o) => o.prepaid && o.orderNo).map((o) => `${o.clientCode}|${o.orderNo}`));
+    const prepaidKeys = new Set(good.filter((o) => o.prepaid).map((o) => orderKey(o.clientCode, o.orderNo)).filter(Boolean));
     const toMark: string[] = found.filter((r: any) => r.unpaid && prepaidKeys.has(r.k)).map((r: any) => r.id);
     const seen = new Set<string>();
     const fresh = good.filter((o) => {
-      if (!o.orderNo) return true;
-      const k = `${o.clientCode}|${o.orderNo}`;
+      const k = orderKey(o.clientCode, o.orderNo);
+      if (!k) return true;
       if (existing.has(k) || seen.has(k)) return false;
       seen.add(k);
       return true;
@@ -679,6 +691,22 @@ route('POST', '/orders/:id/issue', 'payments.create', async (ctx) => {
     return (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = $1`, [ctx.params.id])).rows[0];
   });
   return { order };
+});
+
+// Orders entered twice: the same client and order number, or with no number the same client, sum and day.
+// Each group lists its copies oldest first; the oldest is the one to keep.
+route('GET', '/orders/duplicates', 'payments.void', async () => {
+  const rows = await query(
+    `SELECT * FROM (
+       SELECT ${ORDER_COLUMNS},
+              COALESCE(${ORDER_KEY_SQL}, o.client_code || '|' || o.amount || '|' || o.received_at) AS dup_key,
+              COUNT(*) OVER (PARTITION BY COALESCE(${ORDER_KEY_SQL}, o.client_code || '|' || o.amount || '|' || o.received_at)) AS copies
+         FROM ${ORDER_FROM} WHERE o.deleted_at IS NULL) d
+      WHERE copies > 1 ORDER BY dup_key, created_at`,
+  );
+  const groups = new Map<string, any[]>();
+  for (const { dup_key, copies, ...o } of rows as any[]) groups.set(dup_key, [...(groups.get(dup_key) || []), o]);
+  return { groups: [...groups.values()] };
 });
 
 route('DELETE', '/orders/:id', 'payments.void', async (ctx) => {
