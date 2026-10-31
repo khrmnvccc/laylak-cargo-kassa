@@ -932,3 +932,16 @@ test('orders entered twice: the kassa finds them and does not let them in again'
   const left = (await owner.call('GET', '/orders/duplicates')).body.groups.filter((g: any[]) => g[0].client_code.startsWith('DUP-'));
   assert.equal(left.length, 0);
 });
+
+test('orders ticked in the list are handed over together', async () => {
+  const owner = new Client();
+  await owner.call('POST', '/auth/login', { username: 'admin', password: 'password123' });
+  const rows = [1, 2, 3].map((i) => ({ clientCode: 'GIV-10000' + i, orderNo: `9900${i}`, transport: 'Avto', amount: 1000 * i }));
+  const ids = (await owner.call('POST', '/orders/import', { rows })).body.orders.map((o: any) => o.id);
+  const res = await owner.call('POST', '/orders/issue', { ids: ids.slice(0, 2) });
+  assert.equal(res.body.issued, 2, JSON.stringify(res.body));
+  const left = (await owner.call('GET', '/orders', undefined, { q: 'GIV-', status: 'stock' })).body.items;
+  assert.deepEqual(left.map((o: any) => o.id), [ids[2]]);
+  assert.equal((await owner.call('POST', '/orders/issue', { ids: ids.slice(0, 2) })).body.issued, 0, 'already handed over');
+  assert.equal((await owner.call('POST', '/orders/issue', { ids: [] })).status, 400);
+});
