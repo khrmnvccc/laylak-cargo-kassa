@@ -898,3 +898,37 @@ test('order import: orders paid in the admin panel come in paid, with no money i
   assert.equal((await worker.call('POST', '/orders/import', { rows: [{ ...rows[0], orderNo: '1', paid: true }], dryRun: true })).status, 403);
   assert.equal((await worker.call('POST', `/orders/${owed.id}/prepaid`, { prepaid: false })).status, 403);
 });
+
+test('orders entered twice: the kassa finds them and does not let them in again', async () => {
+  const owner = new Client();
+  await owner.call('POST', '/auth/login', { username: 'admin', password: 'password123' });
+  const order = { clientCode: 'DUP-100200', orderNo: '#555 01', transport: 'Avia', amount: 41000 };
+  assert.equal((await owner.call('POST', '/orders', order)).status, 201);
+  // The same number written differently is the same order.
+  const again = await owner.call('POST', '/orders', { ...order, orderNo: '55501' });
+  assert.equal(again.status, 409, JSON.stringify(again.body));
+  const dry = await owner.call('POST', '/orders/import', { rows: [{ ...order, orderNo: '№55501' }], dryRun: true });
+  assert.equal(dry.body.adding, 0);
+
+  // Copies already in the kassa (from before this check) are listed, oldest first.
+  const { rows } = await import('pg').then(async ({ default: pg }) => {
+    const c = new pg.Client({ connectionString: process.env.DATABASE_URL });
+    await c.connect();
+    try {
+      await c.query(`INSERT INTO clients (code) VALUES ('DUP-100300') ON CONFLICT DO NOTHING`);
+      return await c.query(`INSERT INTO orders (scan_code, client_code, order_no, amount, received_at, created_by_name)
+        VALUES ('7799999901', 'DUP-100200', '555 01', 41000, CURRENT_DATE, 'Admin'), ('7799999902', 'DUP-100300', NULL, 9000, '2026-10-20', 'Admin'),
+               ('7799999903', 'DUP-100300', NULL, 9000, '2026-10-20', 'Admin') RETURNING id`);
+    } finally {
+      await c.end();
+    }
+  });
+  const dups = await owner.call('GET', '/orders/duplicates');
+  const mine = dups.body.groups.filter((g: any[]) => g[0].client_code.startsWith('DUP-'));
+  assert.deepEqual(mine.map((g: any[]) => g.length).sort(), [2, 2]);
+  assert.equal(mine.find((g: any[]) => g[0].client_code === 'DUP-100200')[1].id, rows[0].id, 'the later copy comes second');
+  assert.equal((await owner.call('DELETE', `/orders/${rows[0].id}`)).status, 200);
+  assert.equal((await owner.call('DELETE', `/orders/${rows[2].id}`)).status, 200);
+  const left = (await owner.call('GET', '/orders/duplicates')).body.groups.filter((g: any[]) => g[0].client_code.startsWith('DUP-'));
+  assert.equal(left.length, 0);
+});

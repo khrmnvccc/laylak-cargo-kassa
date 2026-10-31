@@ -6,7 +6,7 @@ import { useAuth } from '../lib/auth';
 import { can } from '../lib/perms';
 import { useLive } from '../lib/live';
 import { money, todayTashkent } from '../lib/format';
-import { parseOrderSheet, parseOrderText, type ImportOrderRow } from '../lib/orderImport';
+import { orderKey, parseOrderSheet, parseOrderText, type ImportOrderRow } from '../lib/orderImport';
 import { printStickers } from '../lib/print';
 import { StickerFormatPicker, useStickerFormat } from './StickerFormatPicker';
 import type { Order } from '../lib/types';
@@ -34,15 +34,15 @@ async function inBatches<T extends Check>(rows: ImportOrderRow[], body: Record<s
 function unique(list: ImportOrderRow[]) {
   const seen = new Set<string>();
   return list.filter((r) => {
-    if (!r.orderNo) return true;
-    const k = `${r.clientCode}|${r.orderNo}`;
+    const k = orderKey(r.clientCode, r.orderNo);
+    if (!k) return true;
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
   });
 }
 
-const keyOf = (r: ImportOrderRow) => (r.orderNo ? `${r.clientCode}|${r.orderNo}` : '');
+const keyOf = (r: ImportOrderRow) => orderKey(r.clientCode, r.orderNo);
 const PAGE = 200;
 
 /** One order in the list; drawn again only when its own row changes, so ticking stays quick in a long list. */

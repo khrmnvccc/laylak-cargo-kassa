@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { BadgeCheck, FileSpreadsheet, Loader2, Plus, Printer, ScanLine, Search, Trash2, UserCheck } from 'lucide-react';
+import { BadgeCheck, Copy, FileSpreadsheet, Loader2, Plus, Printer, ScanLine, Search, Trash2, UserCheck } from 'lucide-react';
 import { ImportOrders } from '../components/ImportOrders';
 import { bookmarkText, clearBookmarkText } from '../lib/bookmarklet';
 import { api, ApiError } from '../lib/api';
@@ -44,6 +44,11 @@ export default function Orders() {
     return () => clearTimeout(id);
   }, [q]);
   const list = useApi<{ items: Order[]; total: number; totalAmount: number }>('/orders', { q: debounced, status: status === 'all' ? '' : status }, { keep: true });
+  // Orders entered twice; only someone who may delete stickers is shown them.
+  const dups = useApi<{ groups: Order[][] }>(can(user, 'payments.void') ? '/orders/duplicates' : null);
+  const dupGroups = dups.data?.groups || [];
+  const extraCopies = dupGroups.reduce((n, g) => n + g.length - 1, 0);
+  const [showDups, setShowDups] = useState(false);
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
   const code = form.clientCode.trim().toUpperCase();
   const amount = Number(form.amountText.replace(/\D/g, '')) || 0;
@@ -183,7 +188,15 @@ export default function Orders() {
           </form>
       </Modal>
 
-      <div>
+      <div className="space-y-3">
+        {extraCopies > 0 && (
+          <Alert tone="warn">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <span className="min-w-0 flex-1"><b>{extraCopies} ta buyurtma ikki marta kiritilgan.</b> Ortiqchasini oʻchirsangiz, sanoq admin panel bilan bir xil boʻladi.</span>
+              <Button size="sm" icon={<Copy className="size-4" />} onClick={() => setShowDups(true)}>Koʻrish</Button>
+            </div>
+          </Alert>
+        )}
 
         <Card padded={false} className="min-w-0">
           <div className="flex flex-wrap items-center gap-2 border-b border-line p-3">
@@ -290,6 +303,39 @@ export default function Orders() {
             ? `${prepaying.prepaid_by_name || ''} toʻlangan deb belgilagan. Belgi olib tashlansa, buyurtma yana “Toʻlanmagan” boʻladi.`
             : 'Admin panelda toʻlangan buyurtma uchun. Kassaga pul qoʻshilmaydi, buyurtma “Toʻlanmagan” roʻyxatidan chiqadi.'}
         </p>
+      </Modal>
+
+      <Modal open={showDups} onClose={() => setShowDups(false)} title="Ikki marta kiritilgan buyurtmalar"
+        description="Har guruhda birinchisi (eng oldin kiritilgani) qoldiriladi. Ortiqchasini oʻchiring."
+        footer={<Button onClick={() => setShowDups(false)}>Yopish</Button>}>
+        {!dupGroups.length ? <p className="text-sm text-ink-2">Takror buyurtma qolmadi.</p> : (
+          <div className="space-y-3">
+            {dupGroups.map((g) => (
+              <div key={g[0].id} className="rounded-lg border border-line">
+                <div className="border-b border-line px-3 py-2 text-sm">
+                  <b className="num">{g[0].client_code}</b> {g[0].client_name && <span className="text-ink-3">{g[0].client_name}</span>}
+                  <span className="text-ink-3 num"> · {g[0].order_no ? `№${g[0].order_no}` : 'raqamsiz'} · {g.length} ta</span>
+                </div>
+                <ul className="divide-y divide-line">
+                  {g.map((o, i) => (
+                    <li key={o.id} className="flex items-center gap-3 px-3 py-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium num">{o.scan_code} · {money(o.amount)}</div>
+                        <div className="truncate text-xs text-ink-3">
+                          {[formatDate(o.received_at), o.created_by_name, i === 0 ? 'qoldiriladi' : ''].filter(Boolean).join(' · ')}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 gap-1"><IssuedBadge o={o} /><PaidBadge o={o} /></div>
+                      {i > 0 && (o.payment_id
+                        ? <span className="w-9 text-center text-xs text-ink-3" title="Toʻlangan, avval toʻlovni bekor qiling">—</span>
+                        : <Button size="sm" variant="ghost" icon={<Trash2 className="size-4" />} onClick={() => setRemoving(o)} aria-label="Oʻchirish" />)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        )}
       </Modal>
 
       <Modal open={Boolean(removing)} onClose={() => setRemoving(null)} title="Stikerni oʻchirish" size="sm"
