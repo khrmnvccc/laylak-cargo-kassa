@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
+import { periodDefaultRange } from '../lib/prefetch';
 import { Download } from 'lucide-react';
 import { useApi } from '../lib/live';
 import { addDays, cardTotal, downloadCsv, formatDate, groupDigits, money, monthLabel, rangeLabel, startOfMonth, startOfWeek, todayTashkent } from '../lib/format';
 import type { PeriodRow, Totals } from '../lib/types';
 import { DateRangePicker, type Range } from '../components/DateRange';
-import { Legend, RevenueChart } from '../components/RevenueChart';
+import { Legend, RevenueChart } from '../components/Chart';
 import { PrintButton } from '../components/PrintButton';
 import { useAuth } from '../lib/auth';
 import { printPeriodReport } from '../lib/reports';
@@ -12,13 +13,7 @@ import { Button, Card, CardHeader, Delta, EmptyState, ErrorState, MethodCells, M
 
 interface PeriodsResponse { group: 'week' | 'month'; from: string; to: string; rows: PeriodRow[]; totals: Totals }
 
-function defaultRange(group: 'week' | 'month'): Range {
-  const t = todayTashkent();
-  if (group === 'week') return { from: startOfWeek(addDays(t, -7 * 11)), to: t };
-  const d = new Date(`${startOfMonth(t)}T00:00:00Z`);
-  d.setUTCMonth(d.getUTCMonth() - 11);
-  return { from: d.toISOString().slice(0, 10), to: t };
-}
+const defaultRange = periodDefaultRange;
 
 export default function PeriodReport() {
   const { user } = useAuth();

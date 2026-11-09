@@ -2,7 +2,8 @@ import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { api, ApiError, onUnauthorized } from './lib/api';
 import { AuthContext } from './lib/auth';
-import { clearApiCache, LiveProvider } from './lib/live';
+import { clearApiCache, LiveProvider, loadApiCache } from './lib/live';
+import { prefetchFirstScreens } from './lib/prefetch';
 import { useRoute } from './lib/router';
 import { useTheme } from './lib/theme';
 import { canSee, homePage, isPaused } from './lib/perms';
@@ -33,10 +34,24 @@ const pages = Object.fromEntries(Object.entries(loaders).map(([k, load]) => [k, 
 // so moving between pages never waits for a download.
 const firstPage = location.hash.replace(/^#\/?/, '').split(/[/?]/)[0] as keyof typeof loaders;
 loaders[firstPage]?.().catch(() => undefined);
-function preloadPages() {
-  const run = () => Object.values(loaders).forEach((load) => load().catch(() => undefined));
+function preloadPages(user: User) {
+  const run = () => {
+    Object.values(loaders).forEach((load) => load().catch(() => undefined));
+    import('./components/RevenueChart').catch(() => undefined);
+    prefetchFirstScreens(user);
+  };
   if ('requestIdleCallback' in window) (window as any).requestIdleCallback(run, { timeout: 4000 });
   else setTimeout(run, 2000);
+}
+
+// The signed-in person from last time, so the app opens straight onto its pages while the session is
+// checked in the background (the server still checks every request; this only decides what to draw first).
+const ME_KEY = 'lk_me';
+function savedUser(): User | null {
+  try { return JSON.parse(localStorage.getItem(ME_KEY) || 'null'); } catch { return null; }
+}
+function saveUser(user: User | null) {
+  try { if (user) localStorage.setItem(ME_KEY, JSON.stringify(user)); else localStorage.removeItem(ME_KEY); } catch { /* blocked */ }
 }
 
 type Boot = { state: 'loading' } | { state: 'error'; message: string } | { state: 'anon'; needsSetup: boolean; setupKeyConfigured: boolean } | { state: 'ready'; user: User };
@@ -65,16 +80,24 @@ function PageFallback() {
 
 export default function App() {
   useTheme();
-  const [boot, setBoot] = useState<Boot>({ state: 'loading' });
+  const [boot, setBoot] = useState<Boot>(() => {
+    const user = savedUser();
+    return user?.id ? { state: 'ready', user } : { state: 'loading' };
+  });
   const route = useRoute();
 
   const load = useCallback(async () => {
     try {
       const { user } = await api<{ user: User }>('/auth/me');
+      saveUser(user);
       setBoot({ state: 'ready', user });
-      preloadPages();
+      preloadPages(user);
     } catch (error) {
+      // Opened from last time and only the network failed: stay in the app; it catches up when back online.
+      if (!(error instanceof ApiError && error.status === 401) && savedUser()) return;
       if (error instanceof ApiError && error.status === 401) {
+        saveUser(null);
+        clearApiCache();
         try {
           const status = await api<{ needsSetup: boolean; setupKeyConfigured: boolean }>('/setup/status');
           setBoot({ state: 'anon', ...status });
@@ -89,13 +112,14 @@ export default function App() {
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    const off = onUnauthorized(() => { clearApiCache(); setBoot({ state: 'anon', needsSetup: false, setupKeyConfigured: true }); });
+    const off = onUnauthorized(() => { saveUser(null); clearApiCache(); setBoot({ state: 'anon', needsSetup: false, setupKeyConfigured: true }); });
     return () => { off(); };
   }, []);
 
   const logout = useCallback(async () => {
-    await api('/auth/logout', { method: 'POST' }).catch(() => undefined);
+    saveUser(null);
     clearApiCache();
+    await api('/auth/logout', { method: 'POST' }).catch(() => undefined);
     setBoot({ state: 'anon', needsSetup: false, setupKeyConfigured: true });
   }, []);
 
@@ -114,18 +138,19 @@ export default function App() {
   if (boot.state === 'anon') {
     return (
       <ToastProvider>
-        <LoginPage needsSetup={boot.needsSetup} setupKeyConfigured={boot.setupKeyConfigured} onAuthenticated={(user) => { clearApiCache(); setBoot({ state: 'ready', user }); preloadPages(); }} />
+        <LoginPage needsSetup={boot.needsSetup} setupKeyConfigured={boot.setupKeyConfigured} onAuthenticated={(user) => { clearApiCache(); saveUser(user); setBoot({ state: 'ready', user }); preloadPages(user); }} />
         <InstallPrompt top />
       </ToastProvider>
     );
   }
 
   const user = boot.user;
+  loadApiCache(user.id);
   const page = canSee(user, route.page) ? route.page : homePage(user);
   const PageComponent = pages[page];
 
   return (
-    <AuthContext.Provider value={{ user, setUser: (u) => setBoot({ state: 'ready', user: u }), logout }}>
+    <AuthContext.Provider value={{ user, setUser: (u) => { saveUser(u); setBoot({ state: 'ready', user: u }); }, logout }}>
       <ToastProvider>
         <LiveProvider key={user.id}>
           <Layout page={page} user={user} onLogout={logout}>

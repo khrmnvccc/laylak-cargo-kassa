@@ -34,16 +34,6 @@ function Row({ color, label, value }: { color: string; label: string; value: num
   );
 }
 
-export function Legend() {
-  return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-2">
-      {PAY_GROUPS.map((m) => (
-        <span key={m.value} className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm" style={{ background: m.color }} />{m.label}</span>
-      ))}
-    </div>
-  );
-}
-
 export function RevenueChart({ data, labelMode = 'day', height = 260 }: { data: ChartRow[]; labelMode?: 'day' | 'week' | 'month'; height?: number }) {
   const tick = (key: string) => (labelMode === 'month' ? monthLabel(key).slice(0, 3) : formatDateShort(key));
   return (

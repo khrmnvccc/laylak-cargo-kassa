@@ -63,21 +63,35 @@ export async function createSession(userId: string, userAgent?: string): Promise
   return { token, maxAge };
 }
 
+// Who a session belongs to, remembered for a few seconds per server instance: most screens ask several
+// things at once, and each would otherwise look the session up in the database again first.
+const SESSION_TTL_MS = 15_000;
+const sessionCache = new Map<string, { user: AuthUser; until: number }>();
+/** Forget remembered sessions (after anything that may change a person's role, rights or access). */
+export function forgetSessions() { sessionCache.clear(); }
+
 export async function destroySession(token: string | undefined) {
+  if (token) sessionCache.delete(hashToken(token));
   if (token) await query(`DELETE FROM app_sessions WHERE token_hash = $1`, [hashToken(token)]);
 }
 
 export async function getSessionUser(token: string | undefined): Promise<AuthUser | null> {
   if (!token) return null;
+  const hash = hashToken(token);
+  const hit = sessionCache.get(hash);
+  if (hit && hit.until > Date.now()) return hit.user;
   const rows = await query<Omit<AuthUser, 'permissions'> & { stored: string[] | null }>(
     `SELECT u.id, u.username, u.full_name, u.role, u.permissions AS stored
        FROM app_sessions s JOIN app_users u ON u.id = s.user_id
       WHERE s.token_hash = $1 AND s.expires_at > NOW() AND u.is_active`,
-    [hashToken(token)],
+    [hash],
   );
-  if (!rows[0]) return null;
-  const { stored, ...user } = rows[0];
-  return { ...user, permissions: permsOf(user.role, stored) };
+  if (!rows[0]) { sessionCache.delete(hash); return null; }
+  const { stored, ...row } = rows[0];
+  const user = { ...row, permissions: permsOf(row.role, stored) };
+  if (sessionCache.size > 500) sessionCache.clear();
+  sessionCache.set(hash, { user, until: Date.now() + SESSION_TTL_MS });
+  return user;
 }
 
 export function sessionCookie(token: string, maxAge: number, secure: boolean): string {

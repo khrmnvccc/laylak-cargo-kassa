@@ -22,12 +22,19 @@ export class ChatMoved extends Error {
 
 const API = 'https://api.telegram.org';
 
+// Read on every saved payment; remembered briefly per server instance so saving does not wait on it.
+let telegramCache: { value: TelegramConfig | null; until: number } | null = null;
+
 export async function getTelegram(): Promise<TelegramConfig | null> {
+  if (telegramCache && telegramCache.until > Date.now()) return telegramCache.value;
   const rows = await query(`SELECT value FROM app_meta WHERE key = 'telegram'`);
-  return (rows[0]?.value as TelegramConfig) || null;
+  const value = (rows[0]?.value as TelegramConfig) || null;
+  telegramCache = { value, until: Date.now() + 30_000 };
+  return value;
 }
 
 export async function saveTelegram(config: TelegramConfig | null) {
+  telegramCache = null;
   if (!config) {
     await query(`DELETE FROM app_meta WHERE key = 'telegram'`);
     return;
