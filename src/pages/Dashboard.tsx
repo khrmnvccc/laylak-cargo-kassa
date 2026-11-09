@@ -7,7 +7,7 @@ import type { Summary } from '../lib/types';
 import { DateRangePicker, presetRange, type Range } from '../components/DateRange';
 import { PaymentsTable } from '../components/PaymentsTable';
 import { Legend, RevenueChart } from '../components/RevenueChart';
-import { StatsCarousel } from '../components/StatsCarousel';
+import { StatsStrip } from '../components/StatsStrip';
 import { Avatar, Card, CardHeader, Delta, EmptyState, ErrorState, PageHeader, SkeletonRows } from '../components/ui';
 
 export default function Dashboard() {
@@ -32,7 +32,7 @@ export default function Dashboard() {
         <Card><ErrorState message={error} onRetry={reload} /></Card>
       ) : (
         <>
-          <StatsCarousel range={range} summary={loading && !data ? null : data} />
+          <StatsStrip range={range} summary={loading && !data ? null : data} />
 
           <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
             <Card>

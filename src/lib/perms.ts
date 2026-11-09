@@ -29,7 +29,14 @@ const PAGE_PERM: Partial<Record<Page, Perm>> = {
   kassa: 'payments.create', orders: 'payments.create', balance: 'balance.view', workers: 'staff.view',
 };
 
+/**
+ * Pages switched off for everyone for now: gone from the menu and the dashboard, and opening their link
+ * leads to the home page. The page and its data stay as they are; delete the name here to bring it back.
+ */
+export const HIDDEN_PAGES: readonly Page[] = ['orders'];
+
 export const canSee = (user: User, page: Page) => {
+  if (HIDDEN_PAGES.includes(page)) return false;
   const perm = PAGE_PERM[page];
   return !perm || can(user, perm);
 };
