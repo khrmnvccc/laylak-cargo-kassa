@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { OPERATIONS_PAGE_SIZE } from '../lib/prefetch';
 import { ChevronDown, ChevronLeft, ChevronRight, Download, Search, Upload, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { useApi } from '../lib/live';
@@ -14,7 +15,7 @@ import { printOperations } from '../lib/reports';
 import { Button, Card, CardBreakdown, EmptyState, ErrorState, IconButton, Input, PageHeader, Segmented, Select, SkeletonRows, cx, useToast } from '../components/ui';
 import { can } from '../lib/perms';
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = OPERATIONS_PAGE_SIZE;
 
 export default function Operations({ params }: { params: URLSearchParams }) {
   const toast = useToast();

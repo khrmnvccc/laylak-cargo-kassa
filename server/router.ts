@@ -18,6 +18,7 @@ import {
   sessionCookie,
   validatePassword,
   verifyPassword,
+  forgetSessions,
 } from './auth.js';
 import { PERMISSIONS, WORKER_DEFAULT, isPerm, permsOf, type Perm } from './perms.js';
 import { ChatMoved, escapeHtml, getTelegram, notify, photoFromDataUrl, reportPhotos, reportText, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
@@ -85,7 +86,10 @@ export async function handleApi(req: ApiRequest): Promise<ApiResponse> {
     if (r.access === 'owner' && user?.role !== 'owner') return { status: 403, body: { error: 'Bu amal faqat Ega uchun' } };
     if (r.access === 'admin' && user?.role !== 'owner' && user?.role !== 'admin') return { status: 403, body: { error: 'Bu amal faqat admin uchun' } };
     if (isPerm(r.access) && !user?.permissions.includes(r.access)) return { status: 403, body: { error: 'Sizda bu amal uchun ruxsat yoʻq' } };
+    // A change may touch someone's role, rights or sessions: look sessions up afresh after it.
+    if (req.method !== 'GET') forgetSessions();
     const result = await r.handler({ ...req, params, token, secure, user });
+    if (req.method !== 'GET') forgetSessions();
     if (result && typeof result === 'object' && 'status' in result && 'body' in result) return result as ApiResponse;
     return { status: 200, body: result };
   } catch (error: any) {

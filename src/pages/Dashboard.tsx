@@ -6,7 +6,7 @@ import { href } from '../lib/router';
 import type { Summary } from '../lib/types';
 import { DateRangePicker, presetRange, type Range } from '../components/DateRange';
 import { PaymentsTable } from '../components/PaymentsTable';
-import { Legend, RevenueChart } from '../components/RevenueChart';
+import { Legend, RevenueChart } from '../components/Chart';
 import { StatsStrip } from '../components/StatsStrip';
 import { Avatar, Card, CardHeader, Delta, EmptyState, ErrorState, PageHeader, SkeletonRows } from '../components/ui';
 

@@ -17,11 +17,11 @@ if (tg) {
   }
 }
 
-// The opening screen in index.html plays to the end (about 1.8 s from the start), then fades into the app.
+// The opening screen in index.html plays to the end (about 1.2 s from the start), then fades into the app.
 function hideSplash() {
   const el = document.getElementById('splash');
   if (!el) return;
-  const wait = Math.max(0, 1800 - performance.now());
+  const wait = Math.max(0, 1200 - performance.now());
   setTimeout(() => {
     el.classList.add('sp-out');
     setTimeout(() => el.remove(), 400);

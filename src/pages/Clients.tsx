@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { CLIENTS_PAGE_SIZE } from '../lib/prefetch';
 import { ArrowLeft, ChevronLeft, ChevronRight, Pencil, Search, Tag, Upload, X } from 'lucide-react';
 import { PrintButton } from '../components/PrintButton';
 import { printClientLabel } from '../lib/print';
@@ -25,7 +26,7 @@ export default function Clients({ params }: { params: URLSearchParams }) {
 }
 
 type ClientSort = ClientList['sort'];
-const PAGE_SIZE = 50;
+const PAGE_SIZE = CLIENTS_PAGE_SIZE;
 
 function ClientSearch() {
   const { user } = useAuth();
