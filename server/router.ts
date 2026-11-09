@@ -20,13 +20,14 @@ import {
   verifyPassword,
   forgetSessions,
 } from './auth.js';
-import { PERMISSIONS, WORKER_DEFAULT, isPerm, permsOf, type Perm } from './perms.js';
+import { PERMISSIONS, WORKER_DEFAULT, isPerm, kassaSources, permsOf, upgrade, type Perm } from './perms.js';
 import { ChatMoved, escapeHtml, getTelegram, notify, photoFromDataUrl, reportPhotos, reportText, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
 import { receiptKey } from './receipts.js';
 import { background } from './background.js';
 import { gzipSync } from 'node:zlib';
 import { createHash, randomInt } from 'node:crypto';
-import { EXPENSE_LABELS, XLSX_OPTIONS, kassaSheets, monthSheets } from '../src/lib/excelSheets.js';
+import { EXPENSE_LABELS } from '../src/lib/excelSheets.js';
+import { kassaXlsx, otchyotXlsx } from '../src/lib/kassaBooks.js';
 import type { BalanceMonth, Payment } from '../src/lib/types.js';
 import { orderKey } from '../src/lib/orderImport.js';
 
@@ -52,7 +53,7 @@ interface Ctx extends ApiRequest {
 }
 
 type Handler = (ctx: Ctx) => Promise<ApiResponse | unknown>;
-type Access = 'public' | 'user' | 'owner' | 'admin' | Perm;
+type Access = 'public' | 'user' | 'owner' | 'admin' | 'kassa' | Perm;
 
 const routes: Array<{ method: string; pattern: RegExp; keys: string[]; access: Access; handler: Handler }> = [];
 
@@ -86,6 +87,7 @@ export async function handleApi(req: ApiRequest): Promise<ApiResponse> {
     if (r.access === 'owner' && user?.role !== 'owner') return { status: 403, body: { error: 'Bu amal faqat Ega uchun' } };
     if (r.access === 'admin' && user?.role !== 'owner' && user?.role !== 'admin') return { status: 403, body: { error: 'Bu amal faqat admin uchun' } };
     if (isPerm(r.access) && !user?.permissions.includes(r.access)) return { status: 403, body: { error: 'Sizda bu amal uchun ruxsat yoʻq' } };
+    if (r.access === 'kassa' && !kassaSources(user!.permissions).length) return { status: 403, body: { error: 'Sizga kassa ochilmagan' } };
     // A change may touch someone's role, rights or sessions: look sessions up afresh after it.
     if (req.method !== 'GET') forgetSessions();
     const result = await r.handler({ ...req, params, token, secure, user });
@@ -158,7 +160,7 @@ async function audit(db: { query: pg.PoolClient['query'] } | null, user: AuthUse
 
 const PAYMENT_COLUMNS = `p.id, p.client_code, COALESCE(p.client_name, c.full_name) AS client_name, p.amount, p.method, p.note,
   p.paid_at, p.created_by, p.created_by_name, p.created_at, p.voided_at, p.voided_by_name, p.void_reason,
-  (p.legacy_id IS NOT NULL) AS is_legacy, c.phone AS client_phone`;
+  (p.legacy_id IS NOT NULL) AS is_legacy, c.phone AS client_phone, p.trips`;
 
 async function totalsFor(from: string, to: string) {
   const rows = await query(
@@ -299,6 +301,8 @@ route('POST', '/payments', 'payments.create', async (ctx) => {
   const amount = Number(b.amount);
   const method = b.method;
   const errors: Record<string, string> = {};
+  const trips = b.trips === undefined || b.trips === null || b.trips === '' ? null : Number(b.trips);
+  if (trips !== null && (!Number.isInteger(trips) || trips < 0 || trips > 1000)) errors.trips = 'Reyslar soni notoʻgʻri';
   if (!clientCode) errors.clientCode = 'Mijoz ID raqamini kiriting';
   else if (!/^[A-Z0-9-]{1,40}$/.test(clientCode)) errors.clientCode = 'ID faqat harf, raqam va "-" dan iborat bo‘lsin';
   if (!Number.isInteger(amount) || amount <= 0) errors.amount = 'Summa musbat butun son bo‘lishi kerak';
@@ -331,10 +335,10 @@ route('POST', '/payments', 'payments.create', async (ctx) => {
       [clientCode, clientName],
     );
     const inserted = await db.query(
-      `INSERT INTO payments (client_code, client_name, amount, method, note, paid_at, created_by, created_by_name)
-       VALUES ($1, NULLIF($2, ''), $3, $4, NULLIF($5, ''), COALESCE($6::timestamptz, NOW()), $7, $8)
+      `INSERT INTO payments (client_code, client_name, amount, method, note, paid_at, created_by, created_by_name, trips)
+       VALUES ($1, NULLIF($2, ''), $3, $4, NULLIF($5, ''), COALESCE($6::timestamptz, NOW()), $7, $8, $9)
        RETURNING id`,
-      [clientCode, clientName, amount, method, note, paidAt, ctx.user!.id, ctx.user!.full_name],
+      [clientCode, clientName, amount, method, note, paidAt, ctx.user!.id, ctx.user!.full_name, trips],
     );
     await audit(db, ctx.user, 'payment_create', 'payment', inserted.rows[0].id, { clientCode, amount, method });
     const full = await db.query(
@@ -884,7 +888,7 @@ route('POST', '/payments/import', 'payments.import', async (ctx) => {
   if (rows.length > 5000) throw new HttpError(400, 'Bir martada 5000 tadan koʻp toʻlov yuklab boʻlmaydi');
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(new Date());
   const errors: Array<{ row: number; error: string }> = [];
-  const clean: Array<{ date: string; code: string; method: string; amount: number; note: string; key: string }> = [];
+  const clean: Array<{ date: string; code: string; method: string; amount: number; note: string; key: string; trips: number | null }> = [];
   rows.forEach((r: any, index: number) => {
     const row = index + 1;
     const date = str(r?.date, 10);
@@ -896,7 +900,9 @@ route('POST', '/payments/import', 'payments.import', async (ctx) => {
     if (!/^[A-Z0-9-]{1,40}$/.test(code)) return errors.push({ row, error: code ? `ID notoʻgʻri: ${code}` : 'ID yoʻq' });
     if (!METHODS.includes(method)) return errors.push({ row, error: 'Toʻlov turi notoʻgʻri' });
     if (!Number.isInteger(amount) || amount <= 0 || amount > 10_000_000_000) return errors.push({ row, error: 'Summa notoʻgʻri' });
-    clean.push({ date, code, method, amount, note: str(r?.note, 500), key: `${date}|${code}|${method}|${amount}` });
+    const trips = r?.trips === undefined || r?.trips === null || r?.trips === '' ? null : Number(r.trips);
+    if (trips !== null && (!Number.isInteger(trips) || trips < 0 || trips > 1000)) return errors.push({ row, error: 'Reyslar soni notoʻgʻri' });
+    clean.push({ date, code, method, amount, note: str(r?.note, 500), key: `${date}|${code}|${method}|${amount}`, trips });
   });
   if (!clean.length) return { status: 400, body: { error: 'Yaroqli toʻlov topilmadi', errors: errors.slice(0, 50) } };
 
@@ -936,15 +942,16 @@ route('POST', '/payments/import', 'payments.import', async (ctx) => {
 
     await db.query(`INSERT INTO clients (code) SELECT unnest($1::text[]) ON CONFLICT (code) DO NOTHING`, [codes]);
     const occurrence = new Map<string, number>();
-    const payload = toAdd.map((r) => {
+    // Each row a second after the one before it, so the day keeps the order of the file.
+    const payload = toAdd.map((r, seq) => {
       const n = (occurrence.get(r.key) || 0) + 1;
       occurrence.set(r.key, n);
-      return { ...r, legacy_id: `xls:${r.key}|${(have.get(r.key) || 0) + n}` };
+      return { ...r, seq, legacy_id: `xls:${r.key}|${(have.get(r.key) || 0) + n}` };
     });
     await db.query(
-      `INSERT INTO payments (client_code, amount, method, note, paid_at, created_by, created_by_name, legacy_id)
-       SELECT x.code, x.amount, x.method, NULLIF(x.note, ''), (x.date::date + time '12:00') AT TIME ZONE '${TZ}', $2, $3, x.legacy_id
-         FROM jsonb_to_recordset($1::jsonb) AS x(code text, amount bigint, method text, note text, date text, legacy_id text)
+      `INSERT INTO payments (client_code, amount, method, note, paid_at, created_by, created_by_name, legacy_id, trips)
+       SELECT x.code, x.amount, x.method, NULLIF(x.note, ''), (x.date::date + time '12:00' + make_interval(secs => x.seq)) AT TIME ZONE '${TZ}', $2, $3, x.legacy_id, x.trips
+         FROM jsonb_to_recordset($1::jsonb) AS x(code text, amount bigint, method text, note text, date text, legacy_id text, seq int, trips int)
        ON CONFLICT (legacy_id) DO NOTHING`,
       [JSON.stringify(payload), null, IMPORT_SOURCE],
     );
@@ -1236,7 +1243,8 @@ route('GET', '/staff', 'staff.view', async (ctx) => {
 
 function parsePermissions(value: unknown): Perm[] {
   if (!Array.isArray(value)) throw new HttpError(400, 'Ruxsatlar roʻyxati notoʻgʻri');
-  return PERMISSIONS.filter((p) => value.includes(p));
+  const given = upgrade(value.filter((p): p is string => typeof p === 'string'));
+  return PERMISSIONS.filter((p) => given.includes(p));
 }
 
 const parseRole = (value: unknown): Role => (value === 'owner' || value === 'admin' ? value : 'worker');
@@ -1365,8 +1373,17 @@ route('POST', '/system/reset', 'owner', async (ctx) => {
 // ---------- kassa balance, expenses (admin) ----------
 
 const EXPENSE_CATEGORIES = ['tovar', 'paket', 'yetkazish', 'yoqilgi', 'ijara', 'oylik', 'kommunal', 'inkassa', 'boshqa'];
-// Yandex and Pochta money lands on the card, so the balance has two accounts.
+// Yandex and Pochta money lands on the card, so the balance has two accounts: 1-kassa (naqd) and
+// 2-kassa (karta). Each person sees only the kassas the owner opened for them.
 const SOURCES = ['cash', 'card'];
+const ACCOUNT_SQL = (col: string) => `(CASE WHEN ${col} = 'cash' THEN 'cash' ELSE 'card' END)`;
+
+function allowedSource(user: AuthUser, source: unknown, errors?: Record<string, string>) {
+  if (!SOURCES.includes(source as string) || kassaSources(user.permissions).includes(source as 'cash' | 'card')) return;
+  const msg = `${source === 'cash' ? '1-kassa (naqd)' : '2-kassa (karta)'} sizga ochilmagan`;
+  if (errors) errors.source = msg;
+  else throw new HttpError(403, msg);
+}
 
 function parseAt(value: unknown, errors: Record<string, string>): string | null {
   if (!value) return null;
@@ -1383,8 +1400,9 @@ const LEDGER_SQL = `
   UNION ALL SELECT source, NULL, 0, amount, 0, spent_at FROM expenses WHERE voided_at IS NULL
   UNION ALL SELECT CASE WHEN source = 'cash' THEN 'cash' ELSE 'card' END, NULL, 0, 0, amount, at FROM balance_adjustments`;
 
-route('GET', '/balance', 'balance.view', async (ctx) => {
+route('GET', '/balance', 'kassa', async (ctx) => {
   const date = ctx.query.date && DATE_RE.test(ctx.query.date) ? ctx.query.date : todayTashkent();
+  const allowed = kassaSources(ctx.user!.permissions);
   const start = `($1::date)::timestamp AT TIME ZONE '${TZ}'`;
   const end = `($1::date + 1)::timestamp AT TIME ZONE '${TZ}'`;
   const [rows, expenses, adjustments, recent] = await Promise.all([
@@ -1398,18 +1416,18 @@ route('GET', '/balance', 'balance.view', async (ctx) => {
               COALESCE(SUM(adjustment) FILTER (WHERE at >= ${start} AND at < ${end}), 0)::bigint AS adjustment,
               COALESCE(SUM(income - expense + adjustment) FILTER (WHERE at < ${end}), 0)::bigint AS closing,
               COALESCE(SUM(income - expense + adjustment), 0)::bigint AS current
-         FROM (${LEDGER_SQL}) l GROUP BY source`,
-      [date],
+         FROM (${LEDGER_SQL}) l WHERE source = ANY($2::text[]) GROUP BY source`,
+      [date, allowed],
     ),
     query(
       `SELECT id, amount, source, category, note, spent_at, created_by_name, voided_at, voided_by_name, void_reason
-         FROM expenses WHERE spent_at >= ${start} AND spent_at < ${end} ORDER BY spent_at DESC`,
-      [date],
+         FROM expenses WHERE spent_at >= ${start} AND spent_at < ${end} AND source = ANY($2::text[]) ORDER BY spent_at DESC`,
+      [date, allowed],
     ),
     query(
       `SELECT id, amount, source, note, at, created_by_name FROM balance_adjustments
-        WHERE at >= ${start} AND at < ${end} ORDER BY at DESC`,
-      [date],
+        WHERE at >= ${start} AND at < ${end} AND ${ACCOUNT_SQL('source')} = ANY($2::text[]) ORDER BY at DESC`,
+      [date, allowed],
     ),
     query(
       `SELECT (at AT TIME ZONE '${TZ}')::date AS day,
@@ -1422,25 +1440,25 @@ route('GET', '/balance', 'balance.view', async (ctx) => {
               COALESCE(SUM(expense) FILTER (WHERE source = 'cash'), 0)::bigint AS cash_expense,
               COALESCE(SUM(expense) FILTER (WHERE source = 'card'), 0)::bigint AS card_expense
          FROM (${LEDGER_SQL}) l
-        WHERE at >= ($1::date - 13)::timestamp AT TIME ZONE '${TZ}' AND at < ${end}
+        WHERE at >= ($1::date - 13)::timestamp AT TIME ZONE '${TZ}' AND at < ${end} AND source = ANY($2::text[])
         GROUP BY 1 ORDER BY 1 DESC`,
-      [date],
+      [date, allowed],
     ),
   ]);
   const zero = { opening: 0, income: 0, income_yandex: 0, income_pochta: 0, expense: 0, adjustment: 0, closing: 0, current: 0 };
-  const bySource = Object.fromEntries(SOURCES.map((src) => [src, { ...zero, ...(rows.find((r: any) => r.source === src) || {}), source: src }]));
+  const bySource = Object.fromEntries(allowed.map((src) => [src, { ...zero, ...(rows.find((r: any) => r.source === src) || {}), source: src }]));
   const recentMap = new Map(recent.map((r: any) => [r.day, r]));
   const days = [];
   for (let i = 0; i < 14; i++) {
     const day = addDays(date, -i);
     days.push(recentMap.get(day) || { day, income: 0, cash_income: 0, card_income: 0, yandex_income: 0, pochta_income: 0, expense: 0, cash_expense: 0, card_expense: 0 });
   }
-  return { date, sources: SOURCES.map((src) => bySource[src]), expenses, adjustments, recent: days };
+  return { date, sources: allowed.map((src) => bySource[src]), expenses, adjustments, recent: days };
 });
 
 // One month of the kassa, day by day per account, for the monthly Excel book: what was there at the
 // start of each day, what came in, what went out (with every expense and its reason) and what was left.
-route('GET', '/balance/month', 'balance.view', async (ctx) => {
+route('GET', '/balance/month', 'kassa', async (ctx) => {
   const today = todayTashkent();
   let first: string, last: string;
   if (DATE_RE.test(ctx.query.from || '') && DATE_RE.test(ctx.query.to || '')) {
@@ -1455,42 +1473,42 @@ route('GET', '/balance/month', 'balance.view', async (ctx) => {
     last = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
     if (last > today) last = today < first ? first : today;
   }
-  return balanceMonth(first, last);
+  return balanceMonth(first, last, kassaSources(ctx.user!.permissions));
 });
 
-async function balanceMonth(first: string, last: string) {
+async function balanceMonth(first: string, last: string, sources: Array<'cash' | 'card'> = ['cash', 'card']) {
   const next = addDays(last, 1);
   const start = `($1::date)::timestamp AT TIME ZONE '${TZ}'`;
   const end = `($2::date)::timestamp AT TIME ZONE '${TZ}'`;
   const [opening, days, expenses, adjustments] = await Promise.all([
-    query(`SELECT source, COALESCE(SUM(income - expense + adjustment), 0)::bigint AS amount FROM (${LEDGER_SQL}) l WHERE at < ${start} GROUP BY source`, [first]),
+    query(`SELECT source, COALESCE(SUM(income - expense + adjustment), 0)::bigint AS amount FROM (${LEDGER_SQL}) l WHERE at < ${start} AND source = ANY($2::text[]) GROUP BY source`, [first, sources]),
     query(
       `SELECT (at AT TIME ZONE '${TZ}')::date::text AS day, source,
               COALESCE(SUM(income), 0)::bigint AS income, COALESCE(SUM(expense), 0)::bigint AS expense,
               COALESCE(SUM(adjustment), 0)::bigint AS adjustment
-         FROM (${LEDGER_SQL}) l WHERE at >= ${start} AND at < ${end} GROUP BY 1, 2`,
-      [first, next],
+         FROM (${LEDGER_SQL}) l WHERE at >= ${start} AND at < ${end} AND source = ANY($3::text[]) GROUP BY 1, 2`,
+      [first, next, sources],
     ),
     query(
       `SELECT id, amount, source, category, note, spent_at, created_by_name FROM expenses
-        WHERE voided_at IS NULL AND spent_at >= ${start} AND spent_at < ${end} ORDER BY spent_at`,
-      [first, next],
+        WHERE voided_at IS NULL AND spent_at >= ${start} AND spent_at < ${end} AND source = ANY($3::text[]) ORDER BY spent_at`,
+      [first, next, sources],
     ),
     query(
       `SELECT id, amount, source, note, at, created_by_name FROM balance_adjustments
-        WHERE at >= ${start} AND at < ${end} ORDER BY at`,
-      [first, next],
+        WHERE at >= ${start} AND at < ${end} AND ${ACCOUNT_SQL('source')} = ANY($3::text[]) ORDER BY at`,
+      [first, next, sources],
     ),
   ]);
-  const open = Object.fromEntries(SOURCES.map((src) => [src, Number(opening.find((r: any) => r.source === src)?.amount || 0)]));
-  return { first, last, opening: open, days, expenses, adjustments };
+  const open = Object.fromEntries(sources.map((src) => [src, Number(opening.find((r: any) => r.source === src)?.amount || 0)]));
+  return { first, last, opening: open, sources, days, expenses, adjustments };
 }
 
 // Admin import of a cash book (kassa daftari): expenses, plus an optional opening balance per
 // account. An expense matching one already recorded (same day, account, category and amount) is
 // skipped; the opening balance becomes the one adjustment that makes the balance at the start of
 // that day equal the given amount, so re-uploading the same file changes nothing.
-route('POST', '/expenses/import', 'balance.view', async (ctx) => {
+route('POST', '/expenses/import', 'kassa', async (ctx) => {
   const rows = Array.isArray(ctx.body?.rows) ? ctx.body.rows : null;
   const dryRun = ctx.body?.dryRun === true;
   if (!rows || !rows.length) throw new HttpError(400, 'Fayldan maʼlumot topilmadi');
@@ -1507,6 +1525,7 @@ route('POST', '/expenses/import', 'balance.view', async (ctx) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) return errors.push({ row, error: 'Sana notoʻgʻri' });
     if (date > today) return errors.push({ row, error: 'Kelajakdagi sana' });
     if (!SOURCES.includes(source)) return errors.push({ row, error: 'Hisob notoʻgʻri' });
+    if (!kassaSources(ctx.user!.permissions).includes(source as 'cash' | 'card')) return errors.push({ row, error: `${source === 'cash' ? '1-kassa' : '2-kassa'} sizga ochilmagan` });
     if (!Number.isInteger(amount) || Math.abs(amount) > 100_000_000_000) return errors.push({ row, error: 'Summa notoʻgʻri' });
     if (r?.kind === 'opening') {
       if (openings.has(source)) return errors.push({ row, error: 'Bu hisob uchun boshlangʻich qoldiq ikki marta yozilgan' });
@@ -1559,11 +1578,12 @@ route('POST', '/expenses/import', 'balance.view', async (ctx) => {
     };
     if (dryRun) return summary;
 
-    for (const r of toAdd) {
+    // A second apart, so a day's expenses keep the order they had in the file.
+    for (const [i, r] of toAdd.entries()) {
       await db.query(
         `INSERT INTO expenses (amount, source, category, note, spent_at, created_by, created_by_name)
-         VALUES ($1, $2, $3, NULLIF($4, ''), ($5::date + time '12:00') AT TIME ZONE '${TZ}', $6, $7)`,
-        [r.amount, r.source, r.category, r.note, r.date, ctx.user!.id, ctx.user!.full_name],
+         VALUES ($1, $2, $3, NULLIF($4, ''), ($5::date + time '12:00' + make_interval(secs => $8)) AT TIME ZONE '${TZ}', $6, $7)`,
+        [r.amount, r.source, r.category, r.note, r.date, ctx.user!.id, ctx.user!.full_name, i],
       );
     }
     for (const o of opening) {
@@ -1579,13 +1599,14 @@ route('POST', '/expenses/import', 'balance.view', async (ctx) => {
   });
 });
 
-route('POST', '/expenses', 'balance.view', async (ctx) => {
+route('POST', '/expenses', 'kassa', async (ctx) => {
   const b = ctx.body || {};
   const errors: Record<string, string> = {};
   const amount = Number(b.amount);
   if (!Number.isInteger(amount) || amount <= 0) errors.amount = 'Summa musbat butun son bo‘lishi kerak';
   else if (amount > 10_000_000_000) errors.amount = 'Summa juda katta';
   if (b.source !== 'cash' && b.source !== 'card') errors.source = 'Qaysi hisobdan to‘langanini tanlang';
+  else allowedSource(ctx.user!, b.source, errors);
   if (!EXPENSE_CATEGORIES.includes(b.category)) errors.category = 'Toifani tanlang';
   const note = str(b.note, 300);
   if (b.category === 'boshqa' && note.length < 3) errors.note = '“Boshqa” uchun izoh yozing';
@@ -1604,15 +1625,15 @@ route('POST', '/expenses', 'balance.view', async (ctx) => {
   return { status: 201, body: { expense } };
 });
 
-route('POST', '/expenses/:id/void', 'balance.view', async (ctx) => {
+route('POST', '/expenses/:id/void', 'kassa', async (ctx) => {
   const reason = str(ctx.body?.reason, 300);
   if (reason.length < 3) throw new HttpError(400, 'Bekor qilish sababini yozing');
   if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Rasxod topilmadi');
   return transaction(async (db) => {
     const updated = await db.query(
       `UPDATE expenses SET voided_at = NOW(), voided_by_name = $2, void_reason = $3
-        WHERE id = $1 AND voided_at IS NULL RETURNING id, amount, source, category`,
-      [ctx.params.id, ctx.user!.full_name, reason],
+        WHERE id = $1 AND voided_at IS NULL AND source = ANY($4::text[]) RETURNING id, amount, source, category`,
+      [ctx.params.id, ctx.user!.full_name, reason, kassaSources(ctx.user!.permissions)],
     );
     if (!updated.rowCount) throw new HttpError(404, 'Rasxod topilmadi yoki allaqachon bekor qilingan');
     await audit(db, ctx.user, 'expense_void', 'expense', ctx.params.id, { ...updated.rows[0], reason });
@@ -1620,13 +1641,14 @@ route('POST', '/expenses/:id/void', 'balance.view', async (ctx) => {
   });
 });
 
-route('POST', '/adjustments', 'balance.view', async (ctx) => {
+route('POST', '/adjustments', 'kassa', async (ctx) => {
   const b = ctx.body || {};
   const errors: Record<string, string> = {};
   const amount = Number(b.amount);
   if (!Number.isInteger(amount) || amount === 0) errors.amount = 'Summa noldan farqli butun son bo‘lsin';
   else if (Math.abs(amount) > 100_000_000_000) errors.amount = 'Summa juda katta';
   if (!SOURCES.includes(b.source)) errors.source = 'Hisobni tanlang';
+  else allowedSource(ctx.user!, b.source, errors);
   const note = str(b.note, 300);
   if (note.length < 3) errors.note = 'Sababini yozing';
   const at = parseAt(b.at, errors);
@@ -1858,9 +1880,8 @@ async function kassaPeriodStart(date: string) {
   return start > date ? date : start < addDays(date, -365) ? addDays(date, -365) : start;
 }
 
-/** The two Excel books from the Balans and Operatsiyalar pages, for `from`..`to`, as the day's report attachments. */
+/** The Excel books from the Kassa and Operatsiyalar pages, for `from`..`to`, as the day's report attachments. */
 async function reportWorkbooks(from: string, to: string) {
-  const { default: writeXlsxFile } = await import('write-excel-file/node');
   // Rows go through JSON so dates are ISO strings, exactly as the browser gets them.
   const plain = <T,>(value: unknown) => JSON.parse(JSON.stringify(value)) as T;
   const [month, payments] = await Promise.all([
@@ -1869,9 +1890,11 @@ async function reportWorkbooks(from: string, to: string) {
             WHERE ${RANGE_SQL(1, 2)} ORDER BY p.paid_at`, [from, to]),
   ]);
   const label = (c: string) => EXPENSE_LABELS[c] ?? c;
+  const buf = (bytes: Uint8Array) => Buffer.from(bytes);
   return {
-    kassa: await writeXlsxFile(monthSheets(plain<BalanceMonth>(month), label), XLSX_OPTIONS).toBuffer(),
-    operations: await writeXlsxFile(kassaSheets(plain<Payment[]>(payments)), XLSX_OPTIONS).toBuffer(),
+    kassaCash: buf(kassaXlsx(plain<BalanceMonth>(month), 'cash', label, to)),
+    kassaCard: buf(kassaXlsx(plain<BalanceMonth>(month), 'card', label, to)),
+    operations: buf(otchyotXlsx(plain<Payment[]>(payments))),
     payments: payments.length,
   };
 }
@@ -1883,8 +1906,9 @@ async function sendDailyReport(date: string) {
   const span = from === date ? dayLabel(date) : `${dayLabel(from)} – ${dayLabel(date)}`;
   try {
     const books = await reportWorkbooks(from, date);
-    await sendDocument(books.kassa, `kassa_${from}_${date}.xlsx`, `📗 Kassa va rasxodlar · ${span}`);
-    await sendDocument(books.operations, `operatsiyalar_${from}_${date}.xlsx`, `📘 Operatsiyalar · ${span}\n${books.payments} ta toʻlov`);
+    await sendDocument(books.kassaCash, `kassa_naxt_${from}_${date}.xlsx`, `📗 1-kassa (naqd) · ${span}`);
+    await sendDocument(books.kassaCard, `kassa_karta_${from}_${date}.xlsx`, `📗 2-kassa (karta) · ${span}`);
+    await sendDocument(books.operations, `otchyot_${from}_${date}.xlsx`, `📘 Otchyot · ${span}\n${books.payments} ta toʻlov`);
   } catch (error) {
     // The report itself already went out; a failed file must not stop the backup or resend the report.
     console.error('Daily Excel failed', error);

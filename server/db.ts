@@ -353,7 +353,12 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS prepaid_at TIMESTAMPTZ;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS prepaid_by_name TEXT;
 `;
 
-const SCHEMA_VERSION = 10;
+// v11: "reyslar soni" of a payment, as the daily report (otchyot) has it; NULL when not given.
+const SCHEMA_V11_SQL = `
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS trips INTEGER CHECK (trips IS NULL OR trips BETWEEN 0 AND 1000);
+`;
+
+const SCHEMA_VERSION = 11;
 
 export function ensureSchema(): Promise<void> {
   if (!globalForPool.__kassaSchema) {
@@ -391,6 +396,7 @@ async function migrate() {
       if (current < 8) await client.query(SCHEMA_V8_SQL);
       if (current < 9) await client.query(SCHEMA_V9_SQL);
       if (current < 10) await client.query(SCHEMA_V10_SQL);
+      if (current < 11) await client.query(SCHEMA_V11_SQL);
       await client.query(
         `INSERT INTO app_meta (key, value) VALUES ('schema_version', $1::jsonb)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,

@@ -1,12 +1,25 @@
 import type { BalanceMonth, Payment } from './types';
-import { XLSX_OPTIONS, kassaSheets, monthSheets } from './excelSheets';
+import { kassaFileName, kassaXlsx, otchyotFileName, otchyotXlsx } from './kassaBooks';
+import { todayTashkent } from './format';
 
-export async function downloadKassaXlsx(fileName: string, payments: Payment[]) {
-  const { default: writeXlsxFile } = await import('write-excel-file/browser');
-  await writeXlsxFile(kassaSheets(payments), XLSX_OPTIONS).toFile(fileName);
+function save(bytes: Uint8Array, fileName: string) {
+  const blob = new Blob([bytes as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
-export async function downloadMonthXlsx(data: BalanceMonth, categoryLabel: (c: string) => string) {
-  const { default: writeXlsxFile } = await import('write-excel-file/browser');
-  await writeXlsxFile(monthSheets(data, categoryLabel), XLSX_OPTIONS).toFile(`kassa_${data.first}_${data.last}.xlsx`);
+/** The daily report book ("otchyot"), laid out like the kassa's own file. */
+export async function downloadOtchyotXlsx(from: string, to: string, payments: Payment[]) {
+  save(otchyotXlsx(payments), otchyotFileName(from, to));
+}
+
+/** One kassa book: "kassa naxt" (1-kassa) or "kassa karta" (2-kassa). */
+export async function downloadKassaBook(data: BalanceMonth, source: 'cash' | 'card', categoryLabel: (c: string) => string) {
+  save(kassaXlsx(data, source, categoryLabel, todayTashkent()), kassaFileName(source, data.first, data.last));
 }
