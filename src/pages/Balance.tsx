@@ -7,7 +7,8 @@ import { PrintButton } from '../components/PrintButton';
 import { ImportKassa } from '../components/ImportKassa';
 import { useApi, useLive } from '../lib/live';
 import { addDays, dateTime, formatDate, groupDigits, methodColor, methodLabel, money, nowMs, rangeLabel, startOfMonth, timeOf, todayTashkent, weekday } from '../lib/format';
-import { downloadMonthXlsx } from '../lib/excel';
+import { downloadKassaBook } from '../lib/excel';
+import { kassaSources } from '../lib/perms';
 import type { BalanceMonth, BalanceReport, Expense, ExpenseCategory, SourceBalance } from '../lib/types';
 import {
   Alert, Badge, Button, Card, CardHeader, EmptyState, ErrorState, Field, IconButton, Input, MethodBadge, Modal, PageHeader, Segmented, Select,
@@ -26,10 +27,10 @@ export const EXPENSE_CATEGORIES: Array<{ value: ExpenseCategory; label: string }
   { value: 'boshqa', label: 'Boshqa' },
 ];
 const ACCOUNTS = [
-  { value: 'cash', label: 'Naqd (kassada)', color: 'var(--cash)', hint: 'Hozirgi qoldiq' },
-  { value: 'card', label: 'Kartada', color: 'var(--card)', hint: 'Karta + Yandex + Pochta' },
+  { value: 'cash', label: '1-kassa · Naqd', color: 'var(--cash)', hint: 'Hozirgi qoldiq' },
+  { value: 'card', label: '2-kassa · Karta', color: 'var(--card)', hint: 'Karta + Yandex + Pochta' },
 ] as const;
-const accountLabel = (s: string) => (s === 'cash' ? 'Naqd' : 'Karta');
+const accountLabel = (s: string) => (s === 'cash' ? '1-kassa · Naqd' : '2-kassa · Karta');
 
 const categoryLabel = (c: string) => EXPENSE_CATEGORIES.find((x) => x.value === c)?.label ?? c;
 
@@ -39,6 +40,10 @@ const digitsInput = (value: string) => { const d = value.replace(/\D/g, '').slic
 
 export default function Balance() {
   const { user } = useAuth();
+  // The owner decides on the Ishchilar page who sees 1-kassa (naqd), 2-kassa (karta) or both.
+  const allowed = kassaSources(user);
+  const accounts = ACCOUNTS.filter((a) => allowed.includes(a.value));
+  const both = accounts.length === 2;
   const today = todayTashkent();
   const [date, setDate] = useState(today);
   const { data, error, loading, reload } = useApi<BalanceReport>('/balance', { date }, { keep: true });
@@ -62,7 +67,7 @@ export default function Balance() {
     <>
       <PageHeader
         title="Kassa balansi"
-        subtitle="Naqd va kartada qancha pul borligi, kunlik rasxodlar · faqat admin koʻradi"
+        subtitle={both ? '1-kassa (naqd) va 2-kassa (karta): qancha pul borligi, kunlik rasxodlar' : `${accounts[0]?.label ?? 'Kassa'}: qancha pul borligi, kunlik rasxodlar`}
         actions={<>
           <Button icon={<Upload className="size-4" />} onClick={() => setModal('import')}>Daftarni yuklash</Button>
           <Button icon={<FileSpreadsheet className="size-4" />} onClick={() => setModal('month')}>Kassa Excel</Button>
@@ -77,14 +82,14 @@ export default function Balance() {
           <section aria-label="Hozirgi qoldiq">
             <div className="grid gap-3 sm:gap-4 lg:grid-cols-[1.2fr_2fr]">
               <Card className="anim-rise flex flex-col justify-between">
-                <div className="flex items-center gap-2 text-[13px] font-medium text-ink-2"><Wallet className="size-4" />Hozir jami pul</div>
+                <div className="flex items-center gap-2 text-[13px] font-medium text-ink-2"><Wallet className="size-4" />{both ? 'Hozir jami pul' : 'Hozir kassada'}</div>
                 {loading && !data ? <div className="skeleton mt-3 h-9 w-2/3" /> : (
                   <div className={cx('mt-2 text-[32px] font-semibold leading-tight tracking-tight num', sum('current') < 0 ? 'text-danger' : 'text-ink')}>{money(sum('current'))}</div>
                 )}
                 <p className="mt-2 text-xs leading-relaxed text-ink-3">Barcha tushumlar − rasxodlar ± tuzatishlar. Bekor qilingan yozuvlar hisobga olinmaydi.</p>
               </Card>
-              <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                {ACCOUNTS.map((m) => {
+              <div className={cx('grid gap-3 sm:gap-4', both ? 'grid-cols-2' : 'grid-cols-1')}>
+                {accounts.map((m) => {
                   const row = sources.find((s) => s.source === m.value);
                   return (
                     <Card key={m.value} className="anim-rise">
@@ -234,7 +239,7 @@ export default function Balance() {
             </Card>
 
             <Card padded={false}>
-              <div className="px-4 pt-4 sm:px-5"><CardHeader title="Oxirgi 14 kun" subtitle="Barcha hisoblar boʻyicha tushum va rasxod" /></div>
+              <div className="px-4 pt-4 sm:px-5"><CardHeader title="Oxirgi 14 kun" subtitle={both ? 'Ikkala kassa boʻyicha tushum va rasxod' : `${accounts[0]?.label ?? ''} boʻyicha tushum va rasxod`} /></div>
               <div className="overflow-x-auto scrollbar-thin border-t border-line">
                 {loading && !data ? <SkeletonRows rows={6} cols={4} /> : (
                   <table className="w-full">
@@ -265,7 +270,7 @@ export default function Balance() {
                         {openDay === d.day && (
                           <tr className="bg-surface-2/60">
                             <td colSpan={4} className="px-4 pb-3 pt-1 sm:px-5">
-                              <DaySplit day={d} />
+                              <DaySplit day={d} allowed={allowed} />
                             </td>
                           </tr>
                         )}
@@ -280,27 +285,27 @@ export default function Balance() {
         </>
       )}
 
-      {modal === 'expense' && <ExpenseForm draft={draft} onClose={() => { setModal(null); setDraft(null); }} onFailed={(d) => { setDraft(d); setModal('expense'); }} />}
-      {modal === 'month' && <MonthExport onClose={() => setModal(null)} />}
-      {modal === 'import' && <ImportKassa categoryLabel={categoryLabel} onClose={() => setModal(null)} />}
-      {modal === 'adjust' && <AdjustForm sources={sources} onClose={() => setModal(null)} />}
+      {modal === 'expense' && <ExpenseForm allowed={allowed} draft={draft} onClose={() => { setModal(null); setDraft(null); }} onFailed={(d) => { setDraft(d); setModal('expense'); }} />}
+      {modal === 'month' && <MonthExport allowed={allowed} onClose={() => setModal(null)} />}
+      {modal === 'import' && <ImportKassa allowed={allowed} categoryLabel={categoryLabel} onClose={() => setModal(null)} />}
+      {modal === 'adjust' && <AdjustForm allowed={allowed} sources={sources} onClose={() => setModal(null)} />}
       {modal && typeof modal === 'object' && <ExpenseDetail expense={modal} onClose={() => setModal(null)} />}
     </>
   );
 }
 
 /** One day of the 14-day table opened up: how the takings split between cash and card. */
-function DaySplit({ day }: { day: BalanceReport['recent'][number] }) {
+function DaySplit({ day, allowed }: { day: BalanceReport['recent'][number]; allowed: Array<'cash' | 'card'> }) {
   const parts = [
-    { label: 'Naqd', amount: day.cash_income, color: 'var(--cash)' },
-    { label: 'Karta', amount: day.card_income, color: methodColor('card') },
-    { label: 'Yandex', amount: day.yandex_income, color: methodColor('yandex') },
-    { label: 'Pochta', amount: day.pochta_income, color: methodColor('pochta') },
-  ];
+    { label: 'Naqd', amount: day.cash_income, color: 'var(--cash)', src: 'cash' },
+    { label: 'Karta', amount: day.card_income, color: methodColor('card'), src: 'card' },
+    { label: 'Yandex', amount: day.yandex_income, color: methodColor('yandex'), src: 'card' },
+    { label: 'Pochta', amount: day.pochta_income, color: methodColor('pochta'), src: 'card' },
+  ].filter((p) => allowed.includes(p.src as 'cash' | 'card'));
   const card = day.card_income + day.yandex_income + day.pochta_income;
   return (
     <div className="space-y-2 text-sm">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className={cx('grid grid-cols-2 gap-2', parts.length > 2 && 'sm:grid-cols-4')}>
         {parts.map((p) => (
           <div key={p.label} className="rounded-lg border border-line bg-surface px-3 py-2">
             <div className="flex items-center gap-1.5 text-xs text-ink-3"><span className="size-2 rounded-full" style={{ background: p.color }} />{p.label}</div>
@@ -309,8 +314,8 @@ function DaySplit({ day }: { day: BalanceReport['recent'][number] }) {
         ))}
       </div>
       <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-xs text-ink-2">
-        <span>Jami tushum: <b className="text-ink num">{money(day.income)}</b> · naqd <b className="text-ink num">{money(day.cash_income)}</b> · kartaga <b className="text-ink num">{money(card)}</b></span>
-        {day.expense > 0 && <span>Rasxod: <b className="text-down num">−{money(day.expense)}</b> · naqd <b className="text-ink num">{money(day.cash_expense)}</b> · karta <b className="text-ink num">{money(day.card_expense)}</b> · sof <b className="text-ink num">{signed(day.income - day.expense)}</b></span>}
+        <span>Jami tushum: <b className="text-ink num">{money(day.income)}</b>{allowed.length === 2 && <> · naqd <b className="text-ink num">{money(day.cash_income)}</b> · kartaga <b className="text-ink num">{money(card)}</b></>}</span>
+        {day.expense > 0 && <span>Rasxod: <b className="text-down num">−{money(day.expense)}</b>{allowed.length === 2 && <> · naqd <b className="text-ink num">{money(day.cash_expense)}</b> · karta <b className="text-ink num">{money(day.card_expense)}</b></>} · sof <b className="text-ink num">{signed(day.income - day.expense)}</b></span>}
       </div>
     </div>
   );
@@ -325,12 +330,12 @@ type ExpenseDraft = {
 
 // Saving closes the form at once and sends in the background, so a slow connection never holds the
 // screen; if the server refuses or cannot be reached, the form comes back with everything still filled in.
-function ExpenseForm({ draft, onClose, onFailed }: { draft: ExpenseDraft | null; onClose: () => void; onFailed: (d: ExpenseDraft) => void }) {
+function ExpenseForm({ allowed, draft, onClose, onFailed }: { allowed: Array<'cash' | 'card'>; draft: ExpenseDraft | null; onClose: () => void; onFailed: (d: ExpenseDraft) => void }) {
   const { bump } = useLive();
   const toast = useToast();
   const today = todayTashkent();
   const [amountText, setAmountText] = useState(draft?.amountText ?? '');
-  const [source, setSource] = useState<'cash' | 'card'>(draft?.source ?? 'cash');
+  const [source, setSource] = useState<'cash' | 'card'>(draft?.source ?? allowed[0] ?? 'cash');
   const [category, setCategory] = useState<ExpenseCategory | ''>(draft?.category ?? '');
   const [note, setNote] = useState(draft?.note ?? '');
   const [day, setDay] = useState(draft?.day ?? today);
@@ -375,7 +380,8 @@ function ExpenseForm({ draft, onClose, onFailed }: { draft: ExpenseDraft | null;
           </div>
         </Field>
         <Field label="Qayerdan toʻlandi" required error={errors.source}>
-          <Segmented className="flex w-full" value={source} onChange={setSource} options={[{ value: 'cash', label: 'Naqd (kassadan)' }, { value: 'card', label: 'Kartadan' }]} />
+          <Segmented className="flex w-full" value={source} onChange={setSource}
+            options={[{ value: 'cash' as const, label: '1-kassa · Naqd' }, { value: 'card' as const, label: '2-kassa · Karta' }].filter((o) => allowed.includes(o.value))} />
         </Field>
         <Field label="Toifa" required htmlFor="ex-cat" error={errors.category}>
           <Select id="ex-cat" value={category} onChange={(e) => setCategory(e.target.value as ExpenseCategory)} className="w-full">
@@ -399,7 +405,7 @@ function ExpenseForm({ draft, onClose, onFailed }: { draft: ExpenseDraft | null;
   );
 }
 
-function MonthExport({ onClose }: { onClose: () => void }) {
+function MonthExport({ allowed, onClose }: { allowed: Array<'cash' | 'card'>; onClose: () => void }) {
   const toast = useToast();
   const today = todayTashkent();
   const lastMonthEnd = addDays(startOfMonth(today), -1);
@@ -411,12 +417,13 @@ function MonthExport({ onClose }: { onClose: () => void }) {
   const [from, setFrom] = useState(quick[0].from);
   const [to, setTo] = useState(today);
   const [busy, setBusy] = useState(false);
+  const [source, setSource] = useState<'cash' | 'card'>(allowed[0] ?? 'cash');
   const valid = Boolean(from && to && from <= to && to <= today);
 
   async function download() {
     setBusy(true);
     try {
-      await downloadMonthXlsx(await api<BalanceMonth>('/balance/month', { query: { from, to } }), categoryLabel);
+      await downloadKassaBook(await api<BalanceMonth>('/balance/month', { query: { from, to } }), source, categoryLabel);
       onClose();
     } catch (e) {
       toast({ tone: 'error', title: 'Excel tayyorlanmadi', description: (e as Error).message });
@@ -427,9 +434,15 @@ function MonthExport({ onClose }: { onClose: () => void }) {
 
   return (
     <Modal open onClose={() => !busy && onClose()} title="Kassa (Excel)" size="sm"
-      description="Har kuni: bor boʻlgan summa, tushum, rasxod va sababi, qolgan summa. Naqd va karta alohida varaqda."
+      description="Sizning Excel daftaringiz koʻrinishida: sana, bor boʻlgan summa, tushgan, ishlatilgan, qolgan summa va izoh."
       footer={<><Button onClick={onClose} disabled={busy}>Bekor</Button><Button variant="primary" loading={busy} disabled={!valid} onClick={download} icon={<FileSpreadsheet className="size-4" />}>Yuklab olish</Button></>}>
       <div className="space-y-4">
+        {allowed.length > 1 && (
+          <Field label="Qaysi kassa">
+            <Segmented className="flex w-full" value={source} onChange={setSource}
+              options={[{ value: 'cash' as const, label: '1-kassa · Naqd' }, { value: 'card' as const, label: '2-kassa · Karta' }]} />
+          </Field>
+        )}
         <div className="flex flex-wrap gap-1.5">
           {quick.map((q) => (
             <Button key={q.label} size="sm" variant={q.from === from && q.to === to ? 'primary' : 'ghost'} onClick={() => { setFrom(q.from); setTo(q.to); }}>{q.label}</Button>
@@ -449,10 +462,10 @@ function MonthExport({ onClose }: { onClose: () => void }) {
   );
 }
 
-function AdjustForm({ sources, onClose }: { sources: SourceBalance[]; onClose: () => void }) {
+function AdjustForm({ allowed, sources, onClose }: { allowed: Array<'cash' | 'card'>; sources: SourceBalance[]; onClose: () => void }) {
   const { bump } = useLive();
   const toast = useToast();
-  const [source, setSource] = useState<'cash' | 'card'>('cash');
+  const [source, setSource] = useState<'cash' | 'card'>(allowed[0] ?? 'cash');
   const [mode, setMode] = useState<'actual' | 'plus' | 'minus'>('actual');
   const [amountText, setAmountText] = useState('');
   const [note, setNote] = useState('');
@@ -490,8 +503,8 @@ function AdjustForm({ sources, onClose }: { sources: SourceBalance[]; onClose: (
       <div className="space-y-4">
         <Field label="Hisob" required htmlFor="adj-src">
           <Select id="adj-src" value={source} onChange={(e) => setSource(e.target.value as 'cash' | 'card')} className="w-full">
-            <option value="cash">Naqd (kassa)</option>
-            <option value="card">Karta (Yandex va Pochta bilan)</option>
+            {allowed.includes('cash') && <option value="cash">1-kassa · Naqd</option>}
+            {allowed.includes('card') && <option value="card">2-kassa · Karta (Yandex va Pochta bilan)</option>}
           </Select>
         </Field>
         <div className="flex items-center justify-between rounded-lg border border-line bg-surface-2 px-3 py-2.5 text-sm">

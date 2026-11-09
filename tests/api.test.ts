@@ -378,10 +378,11 @@ test('worker permissions are set by the admin and enforced by the server', async
   assert.equal((await w.call('GET', '/summary')).status, 200);
 
   // Take away reports and payment entry, give the balance.
+  // The old single "balance.view" right still arrives from older pages: it means both kassas.
   const upd = await admin.call('PATCH', `/staff/${id}`, { permissions: ['balance.view', 'not-a-right'] });
   assert.equal(upd.status, 200, JSON.stringify(upd.body));
-  assert.deepEqual(upd.body.staff.permissions, ['balance.view']);
-  assert.deepEqual((await w.call('GET', '/auth/me')).body.user.permissions, ['balance.view'], 'applies without signing in again');
+  assert.deepEqual(upd.body.staff.permissions, ['kassa.cash', 'kassa.card']);
+  assert.deepEqual((await w.call('GET', '/auth/me')).body.user.permissions, ['kassa.cash', 'kassa.card'], 'applies without signing in again');
   assert.equal((await w.call('GET', '/summary')).status, 403);
   assert.equal((await w.call('GET', '/balance')).status, 200);
   assert.equal((await w.call('POST', '/payments', { photos: PHOTOS, clientCode: 'P-1', amount: 1000, method: 'cash' })).status, 403);
@@ -455,7 +456,7 @@ test('roles: the owner manages admins, an admin is limited by the owner and mana
   assert.ok(login.body.user.permissions.includes('staff.manage'), 'a new admin starts with every right');
 
   // The owner takes the balance away from the admin.
-  const all = login.body.user.permissions.filter((p: string) => p !== 'balance.view');
+  const all = login.body.user.permissions.filter((p: string) => !p.startsWith('kassa.'));
   assert.equal((await owner.call('PATCH', `/staff/${adminId}`, { permissions: all })).status, 200);
   assert.equal((await adm.call('GET', '/balance')).status, 403);
 
@@ -463,7 +464,7 @@ test('roles: the owner manages admins, an admin is limited by the owner and mana
   const worker = await adm.call('POST', '/staff', { username: 'kamol', fullName: 'Kamol', password: 'worker123', role: 'worker' });
   assert.equal(worker.status, 201);
   assert.equal((await adm.call('PATCH', `/staff/${worker.body.staff.id}`, { permissions: ['payments.void'] })).status, 200);
-  assert.equal((await adm.call('PATCH', `/staff/${worker.body.staff.id}`, { permissions: ['balance.view'] })).status, 403);
+  assert.equal((await adm.call('PATCH', `/staff/${worker.body.staff.id}`, { permissions: ['kassa.cash'] })).status, 403);
   assert.equal((await adm.call('POST', '/staff', { username: 'boss2', fullName: 'Boss', password: 'worker123', role: 'admin' })).status, 403);
   assert.equal((await adm.call('PATCH', `/staff/${worker.body.staff.id}`, { role: 'owner' })).status, 403);
   const ownerId = (await owner.call('GET', '/auth/me')).body.user.id;
@@ -477,7 +478,7 @@ test('roles: the owner manages admins, an admin is limited by the owner and mana
   assert.equal((await adm.call('GET', '/balance')).status, 200);
   const back = await owner.call('PATCH', `/staff/${adminId}`, { role: 'admin' });
   assert.equal(back.status, 200);
-  assert.ok(back.body.staff.permissions.includes('balance.view'));
+  assert.ok(back.body.staff.permissions.includes('kassa.cash') && back.body.staff.permissions.includes('kassa.card'));
 });
 
 test('telegram: owner connects a bot, gets void alerts, the evening report and a backup', async () => {
@@ -606,20 +607,19 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     const first = await cron('Bearer cron-test');
     assert.equal(first.status, 200, JSON.stringify(first.body));
     assert.equal(first.body.sent, true);
-    assert.deepEqual(sent.map((s) => s.method), ['sendMessage', 'sendDocument', 'sendDocument', 'sendDocument']);
+    assert.deepEqual(sent.map((s) => s.method), ['sendMessage', 'sendDocument', 'sendDocument', 'sendDocument', 'sendDocument']);
     assert.ok(sent.every((x) => Number(x.body.chat_id) === 777), 'report, Excel files and backup go to the owner only');
-    // The two Excel books cover the days since the 8 October inkassa, then comes the backup.
+    // The two kassa books and the otchyot cover the days since the 8 October inkassa, then comes the backup.
     const from = day < '2026-10-09' ? day : '2026-10-09';
     assert.deepEqual(sent.slice(1).map((x) => x.body.document.name),
-      [`kassa_${from}_${day}.xlsx`, `operatsiyalar_${from}_${day}.xlsx`, `laylak-zaxira-${day}.json.gz`]);
-    const { default: readXlsx } = await import('read-excel-file/node');
-    const opsFile = Buffer.from(await sent[2].body.document.arrayBuffer());
-    const ops = await readXlsx(opsFile, { sheet: 'Operatsiyalar' });
-    assert.equal(ops[0][0], 'Sana');
-    assert.ok(ops.length > 1, 'payments are in the operations book');
-    const kassaSheetNames = (await import('read-excel-file/node')).readSheetNames;
-    assert.deepEqual(await kassaSheetNames(Buffer.from(await sent[1].body.document.arrayBuffer())),
-      ['Naqd kassa', 'Naqd rasxodlar', 'Karta kassa', 'Karta rasxodlar', 'Naqd va karta']);
+      [`kassa_naxt_${from}_${day}.xlsx`, `kassa_karta_${from}_${day}.xlsx`, `otchyot_${from}_${day}.xlsx`, `laylak-zaxira-${day}.json.gz`]);
+    const { default: readXlsx, readSheetNames } = await import('read-excel-file/node');
+    const opsFile = Buffer.from(await sent[3].body.document.arrayBuffer());
+    const ops = await readXlsx(opsFile, { sheet: 'Лист1' });
+    assert.deepEqual(ops[0], ['sana', 'id', 'reyslar soni', 'naxt', 'karta', 'opshiy kassa', '10 kunlik kassa']);
+    assert.ok(ops.length > 1, 'payments are in the otchyot');
+    assert.deepEqual(await readSheetNames(Buffer.from(await sent[1].body.document.arrayBuffer())), ['kassa naxt', 'tushum umumiy']);
+    assert.deepEqual(await readSheetNames(Buffer.from(await sent[2].body.document.arrayBuffer())), ['kassa karta', 'tushum umumiy']);
     assert.match(sent[0].body.text, /Jami:/);
     assert.doesNotMatch(sent[0].body.text, /Kim qancha kiritdi|Davomat|Kelmadi/);
     assert.equal((await cron('Bearer cron-test')).body.reason, 'already-sent');
@@ -986,4 +986,95 @@ test('owner wipes the data and starts afresh: staff and settings stay', async ()
   assert.equal((await owner.call('GET', '/auth/me')).status, 200, 'still signed in');
   const summary = await owner.call('GET', '/summary', undefined, { from: today, to: today });
   assert.deepEqual([summary.status, summary.body.totals.total], [200, 0]);
+});
+
+test('two kassas: each person sees only the kassa the owner opened, and the books come out like the hand-kept files', async () => {
+  const owner = new Client();
+  await owner.call('POST', '/auth/login', { username: 'admin', password: 'password123' });
+  const make = async (username: string, permissions: string[]) => {
+    assert.equal((await owner.call('POST', '/staff', { username, fullName: username, password: 'worker123', role: 'worker', permissions })).status, 201);
+    const c = new Client();
+    await c.call('POST', '/auth/login', { username, password: 'worker123' });
+    return c;
+  };
+  const one = await make('kassa1', ['kassa.cash']);
+  const two = await make('kassa2', ['kassa.card']);
+  const none = await make('kassa0', ['reports.view']);
+
+  // The daily report book: the date only on the day's first row, a client paying cash and card on one line.
+  const { parseOtchyot, parseKassaBook } = await import('../src/lib/bookImport.js');
+  const d1 = new Date(Date.UTC(2026, 9, 20)), d2 = new Date(Date.UTC(2026, 9, 21));
+  const report = parseOtchyot([
+    ['sana', 'id', 'reyslar soni', 'naxt', 'karta', 'opshiy kassa'],
+    [d1, 106421, 2, 650000, 960000, null],
+    [null, 106323, 3, null, 155800, null],
+    [null, null, null, 650000, 1115800, 1765800],
+    [d2, 104298, 1, 164000, null, null],
+  ]);
+  assert.deepEqual(report.map((r) => [r.date, r.code, r.method, r.amount, r.trips]), [
+    ['2026-10-20', '106421', 'cash', 650000, 2], ['2026-10-20', '106421', 'card', 960000, 0],
+    ['2026-10-20', '106323', 'card', 155800, 3], ['2026-10-21', '104298', 'cash', 164000, 1],
+  ]);
+  const imported = await owner.call('POST', '/payments/import', { rows: report });
+  assert.equal(imported.status, 200, JSON.stringify(imported.body));
+  assert.equal(imported.body.adding.count, 4);
+
+  // The cash book, written with last month's dates: moved to the right month, a two-line note split in two.
+  const book = parseKassaBook([
+    ['sana', "bor bo'lgan summa", 'tushgan summa', 'ishlatilgan summa', 'qolgan summa'],
+    [new Date(Date.UTC(2026, 8, 19)), 0, null, null, 0],
+    [new Date(Date.UTC(2026, 8, 20)), 0, 650000, 135000, 515000, '105000 naxt  \n30000 paket'],
+    [new Date(Date.UTC(2026, 8, 21)), 515000, 164000, 0, 679000],
+  ], 'cash', '2026-10');
+  assert.equal(book.fileMonth, '2026-09');
+  assert.deepEqual(book.rows.map((r) => [r.date, r.kind, r.category, r.amount, r.note]), [
+    ['2026-10-19', 'opening', '', 0, ''], ['2026-10-20', 'expense', 'boshqa', 105000, '105000 naxt'], ['2026-10-20', 'expense', 'paket', 30000, '30000 paket'],
+  ]);
+  assert.equal((await two.call('POST', '/expenses/import', { rows: book.rows })).status, 400, '2-kassa person cannot load the cash book');
+  const loaded = await one.call('POST', '/expenses/import', { rows: book.rows });
+  assert.equal(loaded.status, 200, JSON.stringify(loaded.body));
+
+  // Who sees what.
+  assert.equal((await none.call('GET', '/balance')).status, 403);
+  const b1 = (await one.call('GET', '/balance', undefined, { date: '2026-10-20' })).body;
+  assert.deepEqual(b1.sources.map((s: any) => s.source), ['cash']);
+  assert.ok(b1.expenses.every((e: any) => e.source === 'cash'));
+  const b2 = (await two.call('GET', '/balance', undefined, { date: '2026-10-20' })).body;
+  assert.deepEqual(b2.sources.map((s: any) => s.source), ['card']);
+  assert.equal(b2.expenses.length, 0);
+  assert.equal((await two.call('POST', '/expenses', { amount: 1000, source: 'cash', category: 'paket' })).status, 400);
+  assert.equal((await two.call('POST', '/adjustments', { amount: 1000, source: 'cash', note: 'sanoq' })).status, 400);
+  const cashExpense = b1.expenses[0].id;
+  assert.equal((await two.call('POST', `/expenses/${cashExpense}/void`, { reason: 'xato yozilgan' })).status, 404);
+  const m2 = (await two.call('GET', '/balance/month', undefined, { from: '2026-10-19', to: '2026-10-21' })).body;
+  assert.deepEqual([m2.sources, Object.keys(m2.opening), m2.expenses.length], [['card'], ['card'], 0]);
+  assert.ok(m2.days.every((d: any) => d.source === 'card'));
+
+  // The books, read back cell by cell.
+  const { kassaXlsx, otchyotXlsx } = await import('../src/lib/kassaBooks.js');
+  const { default: readXlsx, readSheetNames } = await import('read-excel-file/node');
+  const month = (await owner.call('GET', '/balance/month', undefined, { from: '2026-10-19', to: '2026-10-21' })).body;
+  const cash = Buffer.from(kassaXlsx(month, 'cash', (c: string) => c, '2026-11-09'));
+  assert.deepEqual(await readSheetNames(cash), ['kassa naxt', 'tushum umumiy']);
+  const sheet = await readXlsx(cash, { sheet: 'kassa naxt' });
+  assert.deepEqual(sheet[0].slice(0, 5), ['sana', "bor bo'lgan summa", 'tushgan summa', 'ishlatilgan summa', 'qolgan summa']);
+  assert.deepEqual(sheet.slice(1).map((r) => r.slice(1, 6)), [
+    [0, null, null, 0, null],
+    [0, 650000, 135000, 515000, '105000 naxt\n30000 paket'],
+    [515000, 164000, 0, 679000, null],
+  ]);
+  const income = await readXlsx(cash, { sheet: 'tushum umumiy' });
+  assert.deepEqual(income[1].slice(1), [814000, 1115800, 1929800]);
+  const cardOnly = Buffer.from(kassaXlsx(m2, 'card', (c: string) => c, '2026-11-09'));
+  assert.deepEqual(await readSheetNames(cardOnly), ['kassa karta'], 'no cash takings for a 2-kassa person');
+
+  const pays = (await owner.call('GET', '/payments', undefined, { from: '2026-10-20', to: '2026-10-21', limit: '50' })).body.items;
+  const ot = await readXlsx(Buffer.from(otchyotXlsx(pays)), { sheet: 'Лист1' });
+  assert.deepEqual(ot.slice(1).map((r) => r.slice(1, 6)), [
+    [106421, 2, 650000, 960000, null],
+    [106323, 3, null, 155800, null],
+    [null, null, 650000, 1115800, 1765800],
+    [104298, 1, 164000, null, null],
+    [null, null, 164000, 0, 164000],
+  ]);
 });

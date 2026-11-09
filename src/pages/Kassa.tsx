@@ -15,7 +15,7 @@ import { can } from '../lib/perms';
 interface ClientInfo { client: { code: string; full_name: string | null }; stats: { total: number; count: number } }
 const METHOD_ICONS = { cash: Banknote, card: CreditCard, yandex: Navigation, pochta: Mail };
 
-type Errors = Partial<Record<'clientCode' | 'clientName' | 'amount' | 'method' | 'paidAt' | 'note' | 'photos', string>>;
+type Errors = Partial<Record<'clientCode' | 'clientName' | 'amount' | 'method' | 'paidAt' | 'note' | 'photos' | 'trips', string>>;
 const MAX_PHOTOS = 4;
 
 function nowLocalInput(): string {
@@ -35,6 +35,8 @@ export default function Kassa() {
   const [method, setMethod] = useState<Method>('cash');
   const [cardOpen, setCardOpen] = useState(false);
   const [note, setNote] = useState('');
+  // "Reyslar soni" for the daily report (otchyot) Excel; 1 unless the client brought more.
+  const [trips, setTrips] = useState('1');
   const [photos, setPhotos] = useState<string[]>([]);
   const [photoBusy, setPhotoBusy] = useState(false);
   const photoInput = useRef<HTMLInputElement>(null);
@@ -115,6 +117,7 @@ export default function Kassa() {
     else if (amount > 10_000_000_000) e.amount = 'Summa juda katta';
     if (clientName.length > 80) e.clientName = 'Ism juda uzun';
     if (note.length > 500) e.note = 'Izoh 500 belgidan oshmasin';
+    if (!/^\d{1,3}$/.test(trips)) e.trips = 'Reyslar sonini kiriting';
     if (!photos.length) e.photos = 'Buyurtmalar rasmini yuklang';
     if (customTime) {
       const t = Date.parse(`${paidAtLocal}:00+05:00`);
@@ -145,6 +148,7 @@ export default function Kassa() {
           amount,
           method,
           note: note.trim(),
+          trips: Number(trips),
           paidAt: customTime ? new Date(`${paidAtLocal}:00+05:00`).toISOString() : undefined,
           photos,
         },
@@ -154,7 +158,7 @@ export default function Kassa() {
       if (autoLabel) printPaymentLabel(payment);
       toast({ tone: 'success', title: 'Toʻlov saqlandi', description: `${payment.client_code} · ${money(payment.amount)} · ${methodLabel(payment.method)}` });
       if (telegram === 'off') toast({ tone: 'error', title: 'Rasm adminga yuborilmadi', description: TELEGRAM_MISS[telegram] });
-      setClientCode(''); setClientName(''); setAmountText(''); setNote(''); setPhotos([]); setErrors({}); setCustomTime(false);
+      setClientCode(''); setClientName(''); setAmountText(''); setNote(''); setTrips('1'); setPhotos([]); setErrors({}); setCustomTime(false);
       setLookup({ state: 'idle' });
       bump();
       setTimeout(() => codeRef.current?.focus(), 50);
@@ -279,9 +283,14 @@ export default function Kassa() {
               </div>
             </Field>
 
-            <Field label="Izoh" htmlFor="note" error={errors.note} hint="Ixtiyoriy">
-              <Textarea id="note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Masalan: 3 ta posilka, Guanchjou reysi" rows={2} invalid={Boolean(errors.note)} />
-            </Field>
+            <div className="grid gap-4 sm:grid-cols-[8rem_1fr]">
+              <Field label="Reyslar soni" htmlFor="trips" error={errors.trips}>
+                <Input id="trips" inputMode="numeric" value={trips} onChange={(e) => setTrips(e.target.value.replace(/\D/g, '').slice(0, 3))} invalid={Boolean(errors.trips)} className="num" />
+              </Field>
+              <Field label="Izoh" htmlFor="note" error={errors.note} hint="Ixtiyoriy">
+                <Textarea id="note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Masalan: 3 ta posilka, Guanchjou reysi" rows={2} invalid={Boolean(errors.note)} />
+              </Field>
+            </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Sana va vaqt" error={errors.paidAt}
@@ -363,6 +372,7 @@ export default function Kassa() {
         <dl className="mt-3 divide-y divide-line text-sm">
           <Row k="Mijoz ID" v={normalizedCode} />
           <Row k="Mijoz ismi" v={clientName.trim() || '—'} />
+          <Row k="Reyslar soni" v={trips} />
           <Row k="Sana va vaqt" v={customTime ? dateTime(new Date(`${paidAtLocal}:00+05:00`).toISOString()) : 'Hozir'} />
           <Row k="Ishchi" v={user.full_name} />
           {note.trim() && <Row k="Izoh" v={note.trim()} />}

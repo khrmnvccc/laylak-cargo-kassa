@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { ArrowDownRight, ArrowUpRight } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useApi } from '../lib/live';
-import { can, canSee, isPaused } from '../lib/perms';
+import { can, canSee, isPaused, seesKassa } from '../lib/perms';
 import { groupDigits, money, percentChange, todayTashkent } from '../lib/format';
 import { href, type Page } from '../lib/router';
 import type { AttendanceRow, BalanceReport, Summary } from '../lib/types';
@@ -48,7 +48,7 @@ export function StatsStrip({ range, summary: given }: { range?: { from: string; 
   const single = period.from === period.to;
   const isToday = single && period.from === today;
   const seesReports = can(user, 'reports.view');
-  const seesBalance = can(user, 'balance.view');
+  const seesBalance = seesKassa(user);
   const seesOrders = canSee(user, 'orders') && !isPaused('orders');
   const seesStaff = can(user, 'staff.view');
 
@@ -77,7 +77,8 @@ export function StatsStrip({ range, summary: given }: { range?: { from: string; 
     const of = (s: 'cash' | 'card') => sources.find((r) => r.source === s);
     const cash = Number(of('cash')?.current || 0);
     const card = Number(of('card')?.current || 0);
-    items.push({ key: 'balance', page: 'balance', title: 'Kassa balansi', value: money(cash + card), hint: [`Naqd: ${money(cash)}`, `Kartada: ${money(card)}`], dot: '#1f9d55' });
+    const hint = [of('cash') && `1-kassa (naqd): ${money(cash)}`, of('card') && `2-kassa (karta): ${money(card)}`].filter((h): h is string => !!h);
+    items.push({ key: 'balance', page: 'balance', title: 'Kassa balansi', value: money(cash + card), hint, dot: '#1f9d55' });
     const spent = (balance.data?.expenses || []).filter((e) => !e.voided_at);
     items.push({ key: 'expense', page: 'balance', title: 'Bugungi rasxod', value: money(spent.reduce((s, e) => s + e.amount, 0)), hint: [`${spent.length} ta rasxod`], dot: '#e0465a' });
   }

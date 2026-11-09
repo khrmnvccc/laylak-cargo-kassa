@@ -3,9 +3,10 @@ import { Upload } from 'lucide-react';
 import { api } from '../lib/api';
 import { useLive } from '../lib/live';
 import { formatDate, groupDigits, money } from '../lib/format';
+import { parseOtchyot } from '../lib/bookImport';
 import { Alert, Button, Modal, cx, td, th, useToast } from './ui';
 
-interface ImportRow { date: string; code: string; method: string; amount: number; note: string }
+interface ImportRow { date: string; code: string; method: string; amount: number; note: string; trips?: number | null }
 interface ImportResult {
   dryRun: boolean; from: string; to: string; alreadyInKassa: number; invalid: number; newClients: number;
   adding: { cash: number; card: number; yandex: number; pochta: number; total: number; count: number };
@@ -64,10 +65,22 @@ export function ImportPayments({ onClose }: { onClose: () => void }) {
   async function onFile(file: File | undefined) {
     setError(null); setPreview(null); setRows(null);
     if (!file) return;
-    if (/\.xlsx?$/i.test(file.name)) { setError('Excel faylni “Saqlash → CSV (UTF-8)” qilib saqlang yoki faylni chatga yuboring.'); return; }
     setFileName(file.name);
-    const parsed = parsePayments(await file.text());
-    if (!parsed.length) { setError('Faylda toʻlov topilmadi. Ustunlar: sana, id, turi, summa, izoh'); return; }
+    let parsed: ImportRow[];
+    if (/\.xlsx?$/i.test(file.name)) {
+      // The daily report book as it is kept: sana | id | reyslar soni | naxt | karta | opshiy kassa.
+      try {
+        const { default: readXlsxFile } = await import('read-excel-file');
+        parsed = parseOtchyot(await readXlsxFile(file) as never);
+      } catch (e) {
+        setError(`Excel ochilmadi: ${(e as Error).message}`);
+        return;
+      }
+      if (!parsed.length) { setError('Kitobda toʻlov topilmadi. Ustunlar: sana, id, reyslar soni, naxt, karta'); return; }
+    } else {
+      parsed = parsePayments(await file.text());
+      if (!parsed.length) { setError('Faylda toʻlov topilmadi. Ustunlar: sana, id, turi, summa, izoh'); return; }
+    }
     setRows(parsed);
     setBusy(true);
     try {
@@ -97,7 +110,7 @@ export function ImportPayments({ onClose }: { onClose: () => void }) {
   const shown = done || preview;
   const canSave = !done && !!preview && preview.adding.count > 0;
   return (
-    <Modal open onClose={() => !busy && onClose()} title="Hisobotdan toʻlovlarni yuklash" description="CSV fayl: sana, id, turi, summa, izoh" size="lg"
+    <Modal open onClose={() => !busy && onClose()} title="Hisobotdan toʻlovlarni yuklash" description="Excel otchyot (sana, id, reyslar soni, naxt, karta) yoki CSV: sana, id, turi, summa, izoh" size="lg"
       footer={done ? <Button variant="primary" onClick={onClose}>Tayyor</Button> : <>
         <Button onClick={onClose} disabled={busy}>Bekor</Button>
         <Button variant="primary" loading={busy && !!preview} disabled={!canSave} onClick={save}>
@@ -108,7 +121,7 @@ export function ImportPayments({ onClose }: { onClose: () => void }) {
         {!done && (
           <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-line-strong bg-surface-2 px-4 py-6 text-center hover:bg-surface-3">
             <Upload className="size-5 text-ink-3" />
-            <span className="text-sm font-medium text-ink">{fileName || 'CSV faylni tanlang'}</span>
+            <span className="text-sm font-medium text-ink">{fileName || 'Excel yoki CSV faylni tanlang'}</span>
             <span className="text-xs text-ink-3">Kassada allaqachon bor toʻlovlar (shu kun, shu mijoz, shu tur va summa) qayta qoʻshilmaydi.</span>
             <input type="file" accept=".csv,.txt,.tsv,.xlsx,.xls" className="sr-only" onChange={(e) => onFile(e.target.files?.[0])} />
           </label>

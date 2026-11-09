@@ -4,7 +4,7 @@ import { ChevronDown, ChevronLeft, ChevronRight, Download, Search, Upload, X } f
 import { api } from '../lib/api';
 import { useApi } from '../lib/live';
 import { CARD_METHODS, cardTotal, methodLabel, money, rangeLabel } from '../lib/format';
-import { downloadKassaXlsx } from '../lib/excel';
+import { downloadOtchyotXlsx } from '../lib/excel';
 import type { Method, Payment, PaymentList, Summary } from '../lib/types';
 import { DateRangePicker, presetRange, type Range } from '../components/DateRange';
 import { PaymentsTable } from '../components/PaymentsTable';
@@ -58,7 +58,7 @@ export default function Operations({ params }: { params: URLSearchParams }) {
         all.push(...chunk.items);
         if (chunk.items.length < 500) break;
       }
-      await downloadKassaXlsx(`kassa_${range.from}_${range.to}.xlsx`, all);
+      await downloadOtchyotXlsx(range.from, range.to, all);
     } catch (e) {
       toast({ tone: 'error', title: 'Eksport qilinmadi', description: (e as Error).message });
     } finally {

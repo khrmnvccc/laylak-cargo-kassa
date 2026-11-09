@@ -27,6 +27,8 @@ export interface Payment {
   void_reason: string | null;
   is_legacy: boolean;
   client_phone?: string | null;
+  /** Reyslar soni from the daily report; null = not given (counts as one). */
+  trips?: number | null;
 }
 
 export interface Totals {
@@ -161,6 +163,8 @@ export interface BalanceMonth {
   first: string;
   last: string;
   opening: Record<'cash' | 'card', number>;
+  /** The kassas the person may see: 'cash' = 1-kassa (naqd), 'card' = 2-kassa (karta). */
+  sources?: Array<'cash' | 'card'>;
   days: Array<{ day: string; source: 'cash' | 'card'; income: number; expense: number; adjustment: number }>;
   expenses: Array<Pick<Expense, 'id' | 'amount' | 'source' | 'category' | 'note' | 'spent_at' | 'created_by_name'>>;
   adjustments: Adjustment[];

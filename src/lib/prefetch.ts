@@ -1,6 +1,6 @@
 import { addDays, startOfMonth, startOfWeek, todayTashkent } from './format';
 import { prefetchApi } from './live';
-import { can, canSee, isPaused } from './perms';
+import { can, canSee, isPaused, seesKassa } from './perms';
 import type { User } from './types';
 
 // Page sizes and default periods live here so the pages and the prefetch below always ask the same
@@ -35,7 +35,7 @@ export function prefetchFirstScreens(user: User) {
     list.push(['/periods', { group: 'week', ...periodDefaultRange('week') }]);
   }
   if (canSee(user, 'kassa')) list.push(['/payments', { from: t, to: t, worker: user.id, limit: 20 }]);
-  if (can(user, 'balance.view')) list.push(['/balance', { date: t }]);
+  if (seesKassa(user)) list.push(['/balance', { date: t }]);
   if (can(user, 'staff.view')) {
     list.push(['/attendance', day]);
     list.push(['/attendance', month]);

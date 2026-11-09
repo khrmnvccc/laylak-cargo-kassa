@@ -7,7 +7,8 @@ export const PERMISSIONS = [
   'payments.import', // upload payment reports (CSV)
   'reports.view', // Dashboard, Operatsiyalar, daily / weekly / monthly reports and everyone's payments
   'clients.edit', // edit client names and phones, upload the client list
-  'balance.view', // cash balance, expenses and corrections
+  'kassa.cash', // 1-kassa (naqd): its balance, expenses, corrections and Excel
+  'kassa.card', // 2-kassa (karta, with Yandex and Pochta): the same for the card account
   'staff.view', // staff list with their totals, and everyone's attendance
   'staff.manage', // add and edit workers and cashiers, fix attendance, set the office location
 ] as const;
@@ -18,8 +19,16 @@ export const WORKER_DEFAULT: Perm[] = ['payments.create', 'reports.view'];
 
 export const isPerm = (p: unknown): p is Perm => (PERMISSIONS as readonly unknown[]).includes(p);
 
+/** The kassa had one right ("balance.view") before it was split in two: whoever had it keeps both kassas. */
+const LEGACY: Record<string, Perm[]> = { 'balance.view': ['kassa.cash', 'kassa.card'] };
+export const upgrade = (stored: string[]) => [...new Set(stored.flatMap((p) => LEGACY[p] ?? [p]))];
+
+/** Which kassa accounts someone may see: 'cash' (1-kassa) and/or 'card' (2-kassa). */
+export const kassaSources = (perms: readonly string[]): Array<'cash' | 'card'> =>
+  [perms.includes('kassa.cash') && 'cash' as const, perms.includes('kassa.card') && 'card' as const].filter((s): s is 'cash' | 'card' => !!s);
+
 /** Owner: everything, always. Admin: everything until the owner takes rights away. Worker: WORKER_DEFAULT until changed. */
 export function permsOf(role: string, stored: string[] | null | undefined): Perm[] {
   if (role === 'owner' || (role === 'admin' && !stored)) return [...PERMISSIONS];
-  return stored ? stored.filter(isPerm) : [...WORKER_DEFAULT];
+  return stored ? upgrade(stored).filter(isPerm) : [...WORKER_DEFAULT];
 }
