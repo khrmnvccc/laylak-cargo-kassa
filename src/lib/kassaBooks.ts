@@ -1,5 +1,5 @@
 import type { BalanceMonth, Payment } from './types';
-import { buildXlsx, type XCell, type XSheet, type XStyle } from './xlsx';
+import { buildXlsx, type XCell, type XSheet, type XStyle } from './xlsx.js';
 
 // The Excel books laid out cell for cell like the kassa's own hand-kept files: "kassa naxt.xlsx",
 // "kassa karta.xlsx" (the two kassas) and the daily "otchyot.xlsx". Same sheet names, column widths,
