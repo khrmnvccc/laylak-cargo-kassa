@@ -5,11 +5,13 @@ import { AuthContext } from './lib/auth';
 import { clearApiCache, LiveProvider } from './lib/live';
 import { useRoute } from './lib/router';
 import { useTheme } from './lib/theme';
-import { canSee, homePage } from './lib/perms';
+import { canSee, homePage, isPaused } from './lib/perms';
 import type { User } from './lib/types';
 import { Layout } from './components/Layout';
 import { InstallPrompt } from './components/InstallPrompt';
-import { ErrorState, ToastProvider } from './components/ui';
+import { Card, EmptyState, ErrorState, ToastProvider } from './components/ui';
+import { Wrench } from 'lucide-react';
+import { href } from './lib/router';
 import { LoginPage } from './pages/Login';
 
 const loaders = {
@@ -38,6 +40,20 @@ function preloadPages() {
 }
 
 type Boot = { state: 'loading' } | { state: 'error'; message: string } | { state: 'anon'; needsSetup: boolean; setupKeyConfigured: boolean } | { state: 'ready'; user: User };
+
+/** Shown in place of a page that is switched off for now (PAUSED_PAGES). */
+function PausedPage() {
+  return (
+    <Card className="mx-auto mt-6 max-w-lg">
+      <EmptyState
+        icon={<Wrench className="size-5" />}
+        title="Vaqtincha ishlamayapti"
+        description="Bu boʻlim hozircha yopiq, ustida ish olib borilmoqda. Tez orada qayta ochiladi."
+        action={<a href={href('dashboard')} className="text-sm font-medium text-primary hover:underline">Bosh sahifaga qaytish</a>}
+      />
+    </Card>
+  );
+}
 
 function PageFallback() {
   return (
@@ -115,7 +131,7 @@ export default function App() {
           <Layout page={page} user={user} onLogout={logout}>
             <Suspense fallback={<PageFallback />}>
               <div key={page} className="anim-rise">
-                <PageComponent params={route.params} />
+                {isPaused(page) ? <PausedPage /> : <PageComponent params={route.params} />}
               </div>
             </Suspense>
           </Layout>

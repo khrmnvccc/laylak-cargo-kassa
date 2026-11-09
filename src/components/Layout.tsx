@@ -8,7 +8,7 @@ import { useTheme } from '../lib/theme';
 import { formatDate, todayTashkent, weekday } from '../lib/format';
 import type { User } from '../lib/types';
 import { LANG, LANGS, setLang } from '../lib/i18n';
-import { can, canSee, roleLabel } from '../lib/perms';
+import { can, canSee, isPaused, roleLabel } from '../lib/perms';
 import { AttendanceButton } from './AttendanceButton';
 import { StorkMark } from './Brand';
 import { StickerPay } from './StickerPay';
@@ -100,6 +100,7 @@ function NavLinks({ page, user, onNavigate }: { page: Page; user: User; onNaviga
                   >
                     <item.icon className={cx('size-[18px] transition-colors', active ? 'text-ink' : 'text-ink-3 group-hover:text-ink-2')} strokeWidth={1.9} />
                     {item.label}
+                    {isPaused(item.page) && <span className="ml-auto rounded-full bg-warn-soft px-1.5 py-px text-[10px] font-semibold text-warn">Vaqtincha</span>}
                   </a>
                 );
               })}
