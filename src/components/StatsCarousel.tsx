@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowDownRight, ArrowUpRight, Banknote, ChevronRight, Package, ReceiptText, TrendingUp, UserCheck, Wallet, type LucideIcon } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useApi } from '../lib/live';
-import { can } from '../lib/perms';
+import { can, canSee } from '../lib/perms';
 import { groupDigits, money, percentChange, todayTashkent } from '../lib/format';
 import { href, type Page } from '../lib/router';
 import type { AttendanceRow, BalanceReport, Summary } from '../lib/types';
@@ -49,7 +49,7 @@ export function StatsCarousel({ range, summary: given }: { range?: { from: strin
   const isToday = single && period.from === today;
   const seesReports = can(user, 'reports.view');
   const seesBalance = can(user, 'balance.view');
-  const seesOrders = can(user, 'payments.create');
+  const seesOrders = canSee(user, 'orders');
   const seesStaff = can(user, 'staff.view');
 
   const fetched = useApi<Summary>(seesReports && given === undefined ? '/summary' : null, { from: today, to: today });
