@@ -1336,6 +1336,28 @@ route('GET', '/system', 'admin', async () => {
   return { meta: Object.fromEntries(meta.filter((m: any) => m.key !== 'telegram').map((m: any) => [m.key, m.value])), counts: counts[0] };
 });
 
+// Owner only: start the kassa afresh. Every payment, expense, balance correction, order, receipt, attendance
+// mark and the activity log are removed; staff accounts, sessions and settings (office place, Telegram) stay.
+// The client list goes too only when asked. The page downloads a backup first. Settings in app_meta keep the
+// old-data import from running again, so nothing comes back on the next start.
+const RESET_TABLES = ['orders', 'receipts', 'payments', 'expenses', 'balance_adjustments', 'attendance', 'audit_log', 'legacy_import'];
+
+route('POST', '/system/reset', 'owner', async (ctx) => {
+  if (ctx.body?.confirm !== 'TOZALASH') throw new HttpError(400, 'Tasdiqlash uchun TOZALASH deb yozing');
+  const tables = ctx.body?.clients === true ? [...RESET_TABLES, 'clients'] : RESET_TABLES;
+  const counts = await transaction(async (db) => {
+    const counted: Record<string, number> = {};
+    for (const t of tables) counted[t] = Number((await db.query(`SELECT COUNT(*)::bigint AS n FROM ${t}`)).rows[0].n);
+    // TRUNCATE skips the row triggers that keep single payments from being deleted; listing every table
+    // together (no CASCADE) makes it fail rather than reach into any table not named here.
+    await db.query(`TRUNCATE ${tables.join(', ')} RESTART IDENTITY`);
+    await db.query(`DELETE FROM app_meta WHERE key = 'daily_report'`);
+    await audit(db, ctx.user, 'data_reset', 'system', null, counted);
+    return counted;
+  });
+  return { ok: true, counts };
+});
+
 // ---------- kassa balance, expenses (admin) ----------
 
 const EXPENSE_CATEGORIES = ['tovar', 'paket', 'yetkazish', 'yoqilgi', 'ijara', 'oylik', 'kommunal', 'inkassa', 'boshqa'];

@@ -1,19 +1,19 @@
 import { useState, type FormEvent } from 'react';
-import { Download, Monitor, Moon, Send, Sun } from 'lucide-react';
+import { Download, Monitor, Moon, Send, Sun, Trash2 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { useApi } from '../lib/live';
+import { clearApiCache, useApi } from '../lib/live';
 import { dateTime, groupDigits, money } from '../lib/format';
 import { useTheme, type ThemePref } from '../lib/theme';
 import type { User } from '../lib/types';
-import { Alert, Badge, Button, Card, CardHeader, ErrorState, Field, Input, PageHeader, Segmented, SkeletonRows, useToast } from '../components/ui';
+import { Alert, Badge, Button, Card, CardHeader, ErrorState, Field, Input, Modal, PageHeader, Segmented, SkeletonRows, useToast } from '../components/ui';
 import { isBoss, roleLabel } from '../lib/perms';
 
 const ACTIONS: Record<string, string> = {
   setup: 'Tizim sozlandi', login: 'Tizimga kirdi', payment_create: 'Toʻlov kiritdi', payment_void: 'Toʻlovni bekor qildi', telegram_failed: 'Telegramga yuborilmadi',
   staff_create: 'Xodim qoʻshdi', staff_update: 'Xodimni oʻzgartirdi', client_update: 'Mijozni oʻzgartirdi', password_change: 'Parolini oʻzgartirdi',
   client_import: 'Mijozlar roʻyxatini yukladi', expense_create: 'Rasxod yozdi', expense_void: 'Rasxodni bekor qildi', balance_adjust: 'Qoldiqni tuzatdi',
-  telegram_set: 'Telegram botni kiritdi', telegram_connect: 'Telegramni uladi', telegram_remove: 'Telegramni uzdi', telegram_group: 'Telegram guruhini uladi', telegram_group_remove: 'Telegram guruhini uzdi', telegram_group_pause: 'Guruhga yuborishni toʻxtatdi', telegram_group_resume: 'Guruhga yuborishni qayta yoqdi', backup_download: 'Zaxirani yuklab oldi',
+  telegram_set: 'Telegram botni kiritdi', telegram_connect: 'Telegramni uladi', telegram_remove: 'Telegramni uzdi', telegram_group: 'Telegram guruhini uladi', telegram_group_remove: 'Telegram guruhini uzdi', telegram_group_pause: 'Guruhga yuborishni toʻxtatdi', telegram_group_resume: 'Guruhga yuborishni qayta yoqdi', backup_download: 'Zaxirani yuklab oldi', data_reset: 'Barcha maʼlumotlarni tozaladi',
   order_issue: 'Tovarni berdi', order_unissue: 'Tovarni omborga qaytardi', order_delete: 'Stikerni oʻchirdi', order_prepaid: 'Buyurtmani oldin toʻlangan deb belgiladi', order_unprepaid: 'Oldin toʻlangan belgisini olib tashladi',
 };
 
@@ -28,6 +28,7 @@ export default function Settings() {
         <Appearance />
         {isBoss(user) && <SystemInfo />}
         {user.role === 'owner' && <TelegramCard />}
+        {user.role === 'owner' && <ResetCard />}
       </div>
       {isBoss(user) && <AuditLog />}
     </>
@@ -194,6 +195,87 @@ function AuditLog() {
 interface TelegramState { botName: string; connected: boolean; chatName: string | null; code: string | null; groupName: string | null; groupPaused?: boolean; groupCode: string | null }
 
 /** Owner only: connect a Telegram bot for the evening report and nightly backup, and download a backup now. */
+/** Saves the server's full backup (.json.gz) to the device. */
+async function downloadBackup() {
+  const { filename, data: b64 } = await api<{ filename: string; data: string }>('/backup');
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/gzip' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+/** Owner only: wipe every payment, expense, order and attendance mark; staff accounts and settings stay. */
+function ResetCard() {
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [withClients, setWithClients] = useState(false);
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const close = () => { if (!busy) { setOpen(false); setTyped(''); setError(''); setWithClients(false); } };
+
+  const reset = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      // A copy of everything goes to the device first, so a mistake can still be undone by hand.
+      await downloadBackup();
+      await api('/system/reset', { method: 'POST', body: { confirm: 'TOZALASH', clients: withClients } });
+      clearApiCache();
+      toast({ tone: 'success', title: 'Maʼlumotlar tozalandi', description: 'Zaxira nusxasi qurilmangizga yuklab olindi.' });
+      setTimeout(() => location.reload(), 1200);
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader title="Maʼlumotlarni tozalash" subtitle="Faqat Ega koʻradi" />
+      <p className="text-sm text-ink-2">
+        Kassani noldan boshlash: barcha kirim, chiqim, buyurtma va davomat oʻchadi. Ishchilar, ularning parollari va sozlamalar qoladi.
+      </p>
+      <div className="mt-4">
+        <Button variant="danger" icon={<Trash2 className="size-4" />} onClick={() => setOpen(true)}>Tozalash…</Button>
+      </div>
+      <Modal open={open} onClose={close} title="Barcha maʼlumotlarni tozalash" size="sm"
+        description="Bu amalni ortga qaytarib boʻlmaydi. Oʻchirishdan oldin toʻliq zaxira nusxasi qurilmangizga yuklab olinadi."
+        footer={<>
+          <Button onClick={close} disabled={busy}>Bekor qilish</Button>
+          <Button variant="danger" icon={<Trash2 className="size-4" />} loading={busy} disabled={typed.trim().toUpperCase() !== 'TOZALASH'} onClick={reset}>Zaxira olib, tozalash</Button>
+        </>}>
+        <div className="space-y-4 text-sm">
+          <div>
+            <div className="font-medium text-ink">Oʻchadi:</div>
+            <ul className="mt-1 list-disc space-y-0.5 pl-5 text-ink-2">
+              <li>Barcha toʻlovlar (kirim), rasxodlar va balans tuzatishlari</li>
+              <li>Buyurtmalar, stikerlar va cheklar</li>
+              <li>Davomat (kim qachon kelib-ketgani)</li>
+              <li>Faoliyat jurnali va eski koʻchirilgan maʼlumotlar</li>
+            </ul>
+          </div>
+          <div>
+            <div className="font-medium text-ink">Qoladi:</div>
+            <p className="mt-1 text-ink-2">Ishchilar va ularning ruxsatlari, ishxona joyi, Telegram sozlamalari{withClients ? '' : ', mijozlar roʻyxati'}.</p>
+          </div>
+          <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-line px-3 py-2.5">
+            <input type="checkbox" checked={withClients} onChange={(e) => setWithClients(e.target.checked)} className="mt-0.5 size-4 accent-[var(--danger)]" />
+            <span><span className="font-medium text-ink">Mijozlar roʻyxatini ham oʻchirish</span><span className="block text-xs text-ink-3">ID, ism va telefonlar. Belgilanmasa qoladi.</span></span>
+          </label>
+          <Field label="Tasdiqlash uchun TOZALASH deb yozing" htmlFor="reset-confirm">
+            <Input id="reset-confirm" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" placeholder="TOZALASH" />
+          </Field>
+          {error && <Alert>{error}</Alert>}
+        </div>
+      </Modal>
+    </Card>
+  );
+}
+
 function TelegramCard() {
   const toast = useToast();
   const { data, error: loadError, loading } = useApi<{ telegram: TelegramState | null }>('/telegram');
@@ -222,16 +304,7 @@ function TelegramCard() {
     await api('/telegram/send', { method: 'POST' });
     toast({ tone: 'success', title: 'Hisobot va zaxira Telegramga yuborildi' });
   });
-  const download = () => run('backup', async () => {
-    const { filename, data: b64 } = await api<{ filename: string; data: string }>('/backup');
-    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/gzip' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
-  });
+  const download = () => run('backup', downloadBackup);
 
   return (
     <Card>
