@@ -957,3 +957,33 @@ test('ticked orders are taken off the list together, paid ones stay', async () =
   const left = (await owner.call('GET', '/orders', undefined, { q: 'DEL-', status: 'paid' })).body.items;
   assert.deepEqual(left.map((o: any) => o.id), [orders[2].id]);
 });
+
+test('owner wipes the data and starts afresh: staff and settings stay', async () => {
+  const owner = new Client();
+  await owner.call('POST', '/auth/login', { username: 'admin', password: 'password123' });
+  const before = (await owner.call('GET', '/system')).body.counts;
+  assert.ok(before.payments > 0 && before.clients > 0);
+  const worker = new Client();
+  const staff = (await owner.call('GET', '/staff')).body.items.find((s: any) => s.role === 'worker' && s.is_active);
+  if (staff) await worker.call('POST', '/auth/login', { username: staff.username, password: 'password123' });
+
+  assert.equal((await owner.call('POST', '/system/reset', { confirm: 'ha' })).status, 400, 'needs the typed word');
+  if (worker.cookie) assert.equal((await worker.call('POST', '/system/reset', { confirm: 'TOZALASH' })).status, 403, 'owner only');
+
+  const res = await owner.call('POST', '/system/reset', { confirm: 'TOZALASH' });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.ok(res.body.counts.payments > 0);
+  const after = (await owner.call('GET', '/system')).body.counts;
+  assert.deepEqual([after.payments, after.legacy_records, after.users], [0, 0, before.users]);
+  assert.equal(after.clients, before.clients, 'clients stay unless asked');
+  assert.equal((await owner.call('GET', '/orders')).body.items.length, 0);
+  const audit = (await owner.call('GET', '/audit')).body.items;
+  assert.deepEqual(audit.map((a: any) => a.action), ['data_reset']);
+
+  // The kassa keeps working: a new payment goes in, and the client list can go too when asked.
+  assert.equal((await owner.call('POST', '/system/reset', { confirm: 'TOZALASH', clients: true })).status, 200);
+  assert.equal((await owner.call('GET', '/system')).body.counts.clients, 0);
+  assert.equal((await owner.call('GET', '/auth/me')).status, 200, 'still signed in');
+  const summary = await owner.call('GET', '/summary', undefined, { from: today, to: today });
+  assert.deepEqual([summary.status, summary.body.totals.total], [200, 0]);
+});
