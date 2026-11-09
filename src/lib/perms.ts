@@ -30,13 +30,14 @@ const PAGE_PERM: Partial<Record<Page, Perm>> = {
 };
 
 /**
- * Pages switched off for everyone for now: gone from the menu and the dashboard, and opening their link
- * leads to the home page. The page and its data stay as they are; delete the name here to bring it back.
+ * Pages switched off for everyone for now: they stay in the menu, but opening one shows a
+ * "temporarily not working" notice instead of the page. Its code and data stay as they are;
+ * delete the name here to bring it back.
  */
-export const HIDDEN_PAGES: readonly Page[] = ['orders'];
+export const PAUSED_PAGES: readonly Page[] = ['orders'];
+export const isPaused = (page: Page) => PAUSED_PAGES.includes(page);
 
 export const canSee = (user: User, page: Page) => {
-  if (HIDDEN_PAGES.includes(page)) return false;
   const perm = PAGE_PERM[page];
   return !perm || can(user, perm);
 };

@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { ArrowDownRight, ArrowUpRight } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useApi } from '../lib/live';
-import { can, canSee } from '../lib/perms';
+import { can, canSee, isPaused } from '../lib/perms';
 import { groupDigits, money, percentChange, todayTashkent } from '../lib/format';
 import { href, type Page } from '../lib/router';
 import type { AttendanceRow, BalanceReport, Summary } from '../lib/types';
@@ -49,7 +49,7 @@ export function StatsStrip({ range, summary: given }: { range?: { from: string; 
   const isToday = single && period.from === today;
   const seesReports = can(user, 'reports.view');
   const seesBalance = can(user, 'balance.view');
-  const seesOrders = canSee(user, 'orders');
+  const seesOrders = canSee(user, 'orders') && !isPaused('orders');
   const seesStaff = can(user, 'staff.view');
 
   const fetched = useApi<Summary>(seesReports && given === undefined ? '/summary' : null, { from: today, to: today });
