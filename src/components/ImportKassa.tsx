@@ -1,16 +1,17 @@
 import { useState } from 'react';
-import { Upload } from 'lucide-react';
+import { Check, Pencil, Upload } from 'lucide-react';
 import { api } from '../lib/api';
 import { useLive } from '../lib/live';
 import { formatDate, groupDigits, money, monthLabel } from '../lib/format';
 import { bookSource, parseKassaBook } from '../lib/bookImport';
+import { EXPENSE_LABELS } from '../lib/excelSheets';
 import type { BalanceMonth } from '../lib/types';
-import { Alert, Button, Field, Input, Modal, Segmented, cx, td, th, useToast } from './ui';
+import { Alert, Button, Field, IconButton, Input, Modal, Segmented, Select, Textarea, cx, td, th, useToast } from './ui';
 
 interface KassaRow { date: string; kind: 'expense' | 'opening'; source: string; category: string; amount: number; note: string }
 interface KassaResult {
   dryRun: boolean; alreadyRecorded: number; invalid: number;
-  adding: { count: number; total: number; items: Array<{ date: string; source: string; category: string; amount: number; note: string }> };
+  adding: { count: number; total: number; items: Array<{ date: string; source: string; category: string; amount: number; note: string; row: number }> };
   opening: Array<{ source: string; date: string; target: number; before: number; adjustment: number }>;
   errors: Array<{ row: number; error: string }>;
 }
@@ -87,8 +88,12 @@ export function ImportKassa({ allowed, onClose, categoryLabel }: { allowed: Arra
   const [month, setMonth] = useState('');
   const [check, setCheck] = useState<{ mismatch: Mismatch; matched: number; moved?: string } | null>(null);
 
-  async function runPreview(parsed: KassaRow[]) {
-    setRows(parsed); setPreview(null);
+  // The line being corrected in the preview: its place in rows, and the values typed so far.
+  const [edit, setEdit] = useState<{ row: number; category: string; note: string; amount: string; error?: string } | null>(null);
+
+  async function runPreview(parsed: KassaRow[], keep = false) {
+    setRows(parsed); if (!keep) setPreview(null);
+    setEdit(null);
     setBusy(true);
     try {
       setPreview(await api<KassaResult>('/expenses/import', { method: 'POST', body: { rows: parsed, dryRun: true } }));
@@ -140,6 +145,15 @@ export function ImportKassa({ allowed, onClose, categoryLabel }: { allowed: Arra
     const parsed = parseKassa(await file.text());
     if (!parsed.length) { setError('Faylda maʼlumot topilmadi. Ustunlar: sana, turi, hisob, toifa, summa, izoh'); return; }
     await runPreview(parsed);
+  }
+
+  function applyEdit() {
+    if (!edit || !rows) return;
+    const amount = Number(edit.amount.replace(/\D/g, ''));
+    if (!amount) return setEdit({ ...edit, error: 'Summani kiriting' });
+    if (edit.category === 'boshqa' && edit.note.trim().length < 3) return setEdit({ ...edit, error: '“Boshqa” uchun izoh yozing' });
+    const next = rows.map((r, i) => (i === edit.row ? { ...r, category: edit.category, note: edit.note.trim(), amount } : r));
+    void runPreview(next, true);
   }
 
   async function save() {
@@ -212,21 +226,50 @@ export function ImportKassa({ allowed, onClose, categoryLabel }: { allowed: Arra
             {shown.adding.count > 0 ? (
               <div className="overflow-x-auto rounded-lg border border-line">
                 <table className="w-full">
-                  <thead><tr><th className={th}>Sana</th><th className={th}>Toifa</th><th className={th}>Izoh</th><th className={cx(th, 'text-right')}>Summa</th></tr></thead>
+                  <thead><tr><th className={th}>Sana</th><th className={th}>Toifa</th><th className={th}>Izoh</th><th className={cx(th, 'text-right')}>Summa</th>{!done && <th className={th}><span className="sr-only">Tahrirlash</span></th>}</tr></thead>
                   <tbody className="divide-y divide-line">
                     {shown.adding.items.map((e, i) => (
-                      <tr key={i}>
+                      <tr key={i} className={cx(edit?.row === e.row && 'bg-surface-2')}>
                         <td className={cx(td, 'whitespace-nowrap num')}>{e.date.slice(8)}.{e.date.slice(5, 7)}</td>
                         <td className={td}>{categoryLabel(e.category)} <span className="text-ink-3">· {accountLabel(e.source)}</span></td>
                         <td className={cx(td, 'max-w-[9rem] truncate text-ink-3')} title={e.note}>{e.note || '—'}</td>
                         <td className={cx(td, 'text-right num whitespace-nowrap')}>{money(e.amount)}</td>
+                        {!done && (
+                          <td className={cx(td, 'w-10 px-1')}>
+                            <IconButton label="Tahrirlash" disabled={busy} onClick={() => setEdit({ row: e.row, category: e.category, note: e.note, amount: groupDigits(e.amount) })}>
+                              <Pencil className="size-4" />
+                            </IconButton>
+                          </td>
+                        )}
                       </tr>
                     ))}
-                    <tr className="font-semibold"><td className={td} colSpan={3}>Jami · {groupDigits(shown.adding.count)} ta rasxod</td><td className={cx(td, 'text-right num')}>{money(shown.adding.total)}</td></tr>
+                    <tr className="font-semibold"><td className={td} colSpan={3}>Jami · {groupDigits(shown.adding.count)} ta rasxod</td><td className={cx(td, 'text-right num')}>{money(shown.adding.total)}</td>{!done && <td />}</tr>
                   </tbody>
                 </table>
               </div>
             ) : <p className="text-sm text-ink-3">Yangi rasxod yoʻq.</p>}
+            {edit && !done && (() => {
+              const e = shown.adding.items.find((x) => x.row === edit.row);
+              if (!e) return null;
+              return (
+                <div className="rounded-lg border border-line bg-surface-2 p-3">
+                  <div className="mb-2 text-xs text-ink-3 num">Tahrirlash · {e.date.slice(8)}.{e.date.slice(5, 7)} · {accountLabel(e.source)}</div>
+                  <div className="grid gap-2 sm:grid-cols-[1fr_10rem]">
+                    <Select aria-label="Toifa" value={edit.category} onChange={(ev) => setEdit({ ...edit, category: ev.target.value, error: undefined })} className="w-full">
+                      {Object.keys(EXPENSE_LABELS).map((c) => <option key={c} value={c}>{categoryLabel(c)}</option>)}
+                    </Select>
+                    <Input aria-label="Summa" inputMode="numeric" className="w-full num" value={edit.amount}
+                      onChange={(ev) => { const d = ev.target.value.replace(/\D/g, '').slice(0, 11); setEdit({ ...edit, amount: d ? groupDigits(Number(d)) : '', error: undefined }); }} />
+                  </div>
+                  <Textarea aria-label="Izoh" rows={2} className="mt-2 w-full" value={edit.note} onChange={(ev) => setEdit({ ...edit, note: ev.target.value, error: undefined })} />
+                  {edit.error && <p className="mt-1 text-xs text-danger">{edit.error}</p>}
+                  <div className="mt-2 flex justify-end gap-2">
+                    <Button size="sm" onClick={() => setEdit(null)}>Bekor</Button>
+                    <Button size="sm" variant="primary" icon={<Check className="size-4" />} loading={busy} onClick={applyEdit}>Tayyor</Button>
+                  </div>
+                </div>
+              );
+            })()}
             <ul className="space-y-1 text-sm text-ink-2">
               {shown.alreadyRecorded > 0 && <li>{groupDigits(shown.alreadyRecorded)} ta rasxod allaqachon yozilgan, qayta qoʻshilmaydi.</li>}
               {shown.invalid > 0 && <li className="text-danger">{groupDigits(shown.invalid)} ta qator xato, oʻtkazib yuboriladi.</li>}

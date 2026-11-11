@@ -1515,7 +1515,8 @@ route('POST', '/expenses/import', 'kassa', async (ctx) => {
   if (rows.length > 2000) throw new HttpError(400, 'Bir martada 2000 tadan koʻp qator yuklab boʻlmaydi');
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(new Date());
   const errors: Array<{ row: number; error: string }> = [];
-  const expenses: Array<{ date: string; source: string; category: string; amount: number; note: string; key: string }> = [];
+  // row: the line's place in the request, so the preview can be corrected line by line before saving.
+  const expenses: Array<{ date: string; source: string; category: string; amount: number; note: string; key: string; row: number }> = [];
   const openings = new Map<string, { date: string; source: string; amount: number }>();
   rows.forEach((r: any, index: number) => {
     const row = index + 1;
@@ -1536,7 +1537,7 @@ route('POST', '/expenses/import', 'kassa', async (ctx) => {
     if (amount <= 0) return errors.push({ row, error: 'Summa notoʻgʻri' });
     if (!EXPENSE_CATEGORIES.includes(category)) return errors.push({ row, error: 'Toifa notoʻgʻri' });
     if (category === 'boshqa' && note.length < 3) return errors.push({ row, error: '“Boshqa” uchun izoh kerak' });
-    expenses.push({ date, source, category, amount, note, key: `${date}|${source}|${category}|${amount}` });
+    expenses.push({ date, source, category, amount, note, key: `${date}|${source}|${category}|${amount}`, row: index });
   });
   if (!expenses.length && !openings.size) return { status: 400, body: { error: 'Yaroqli qator topilmadi', errors: errors.slice(0, 50) } };
 
