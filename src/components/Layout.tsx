@@ -11,7 +11,7 @@ import { LANG, LANGS, setLang } from '../lib/i18n';
 import { can, canSee, isPaused, pageLabel, roleLabel } from '../lib/perms';
 import { needsPick, useBranches } from '../lib/branch';
 import { AttendanceButton } from './AttendanceButton';
-import { StorkMark } from './Brand';
+import { BrandMark, groupLabel, useBrand } from '../lib/brand';
 import { StickerPay } from './StickerPay';
 import { Avatar, Button, IconButton, cx } from './ui';
 
@@ -52,12 +52,13 @@ export const PAGE_TITLES: Record<Page, string> = {
 };
 
 function Logo({ compact }: { compact?: boolean }) {
+  const brand = useBrand();
   return (
     <div className="flex min-w-0 items-center gap-2.5">
-      <StorkMark className={cx('w-auto shrink-0', compact ? 'h-6' : 'h-7')} />
-      <div className="min-w-0 whitespace-nowrap leading-tight">
-        <div className="text-[15px] font-semibold tracking-tight text-ink">Laylak Cargo</div>
-        <div className={cx('text-[11px] font-medium uppercase tracking-[0.08em] text-ink-3', compact && 'hidden sm:block')}>Kassa tizimi</div>
+      <BrandMark brand={brand} className={cx('w-auto max-w-[72px] shrink-0', compact ? 'h-6' : 'h-7')} />
+      <div className="min-w-0 leading-tight">
+        <div className="truncate text-[15px] font-semibold tracking-tight text-ink">{brand.name}</div>
+        {brand.tagline && <div className={cx('truncate text-[11px] font-medium uppercase tracking-[0.08em] text-ink-3', compact && 'hidden sm:block')}>{brand.tagline}</div>}
       </div>
     </div>
   );
@@ -106,6 +107,7 @@ function BranchSwitch({ className }: { className?: string }) {
 const WRITE_PAGES: Page[] = ['kassa', 'orders', 'balance'];
 
 function NavLinks({ page, user, onNavigate }: { page: Page; user: User; onNavigate?: () => void }) {
+  const brand = useBrand();
   return (
     <nav className="space-y-5">
       {NAV.map((group) => {
@@ -113,7 +115,7 @@ function NavLinks({ page, user, onNavigate }: { page: Page; user: User; onNaviga
         if (!items.length) return null;
         return (
           <div key={group.group}>
-            <div className="mb-1.5 px-3 text-[11px] font-medium uppercase tracking-[0.08em] text-ink-3">{group.group}</div>
+            <div className="mb-1.5 px-3 text-[11px] font-medium uppercase tracking-[0.08em] text-ink-3">{groupLabel(brand, group.group)}</div>
             <div className="space-y-0.5">
               {items.map((item) => {
                 const active = item.page === page;
@@ -181,12 +183,13 @@ export function Layout({ page, user, onLogout, children }: { page: Page; user: U
   const theme = useTheme();
   const today = todayTashkent();
   const branches = useBranches();
+  const brand = useBrand();
 
   useEffect(() => setDrawer(false), [page]);
   useEffect(() => {
-    document.title = `${pageLabel(page, PAGE_TITLES[page])} · Laylak Cargo Kassa`;
-    window.scrollTo({ top: 0 });
-  }, [page]);
+    document.title = `${pageLabel(page, PAGE_TITLES[page])} · ${brand.name}`;
+  }, [page, brand.name]);
+  useEffect(() => { window.scrollTo({ top: 0 }); }, [page]);
 
   const mobileTabs = ([
     { page: 'dashboard', label: 'Asosiy', icon: LayoutDashboard },

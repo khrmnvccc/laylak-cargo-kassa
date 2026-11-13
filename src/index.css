@@ -4,10 +4,11 @@
 
 @theme inline {
   --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif;
-  --radius-md: 0.625rem;
-  --radius-lg: 0.875rem;
-  --radius-xl: 1.25rem;
-  --radius-2xl: 1.625rem;
+  /* Corners follow the owner's design choice (Sozlamalar → Brend va dizayn). */
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-xl: var(--r-xl);
+  --radius-2xl: var(--r-2xl);
   --color-bg: var(--bg);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
@@ -35,6 +36,10 @@
 
 :root {
   color-scheme: light;
+  --r-md: 0.625rem;
+  --r-lg: 0.875rem;
+  --r-xl: 1.25rem;
+  --r-2xl: 1.625rem;
   /* iOS-like: system greys, translucent "material" surfaces over a soft tinted backdrop. */
   --bg: #f2f2f7;
   --backdrop:

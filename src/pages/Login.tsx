@@ -4,11 +4,12 @@ import { api } from '../lib/api';
 import type { User } from '../lib/types';
 import { Alert, Button, Field, Input } from '../components/ui';
 import { LangSwitch } from '../components/Layout';
-import { StorkMark } from '../components/Brand';
+import { BrandMark, useBrand } from '../lib/brand';
 
 export function LoginPage({ needsSetup, setupKeyConfigured, onAuthenticated }: {
   needsSetup: boolean; setupKeyConfigured: boolean; onAuthenticated: (u: User) => void;
 }) {
+  const brand = useBrand();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
@@ -42,11 +43,11 @@ export function LoginPage({ needsSetup, setupKeyConfigured, onAuthenticated }: {
         <div className="absolute inset-0" style={{ backgroundImage: 'linear-gradient(#ffffff08 1px, transparent 1px), linear-gradient(90deg, #ffffff08 1px, transparent 1px)', backgroundSize: '48px 48px' }} />
         <div className="relative flex h-full flex-col justify-between p-12 text-white">
           <div className="flex items-center gap-2.5">
-            <StorkMark className="h-9 w-auto [--brand-ink:#ffffff]" />
-            <span className="text-base font-semibold tracking-tight">Laylak Cargo</span>
+            <BrandMark brand={brand} className="h-9 w-auto max-w-[96px] [--brand-ink:#ffffff]" />
+            <span className="text-base font-semibold tracking-tight">{brand.name}</span>
           </div>
           <div className="max-w-lg">
-            <h2 className="text-4xl font-semibold leading-[1.15] tracking-tight">Kunlik kassa va hisobotlar — barcha xodimlar uchun yagona bazada.</h2>
+            <h2 className="text-4xl font-semibold leading-[1.15] tracking-tight">{brand.headline}</h2>
             <p className="mt-4 text-[15px] leading-relaxed text-white/60">Har bir toʻlov serverda saqlanadi va barcha qurilmalarda bir zumda koʻrinadi. Naqd va karta tushumi, xodimlar koʻrsatkichlari va mijozlar tarixi bir joyda.</p>
           </div>
           <div className="flex items-center gap-2 text-sm text-white/50">
@@ -59,11 +60,11 @@ export function LoginPage({ needsSetup, setupKeyConfigured, onAuthenticated }: {
         <form onSubmit={submit} className="w-full max-w-sm anim-rise" noValidate>
           <div className="mb-6 ml-auto w-44"><LangSwitch /></div>
           <div className="mb-8 lg:hidden">
-            <StorkMark className="h-11 w-auto" title="Laylak Cargo" />
+            <BrandMark brand={brand} className="h-11 w-auto max-w-[140px]" />
           </div>
           <h1 className="text-2xl font-semibold tracking-tight text-ink">{needsSetup ? 'Tizimni sozlash' : 'Tizimga kirish'}</h1>
           <p className="mt-1.5 text-sm text-ink-3">
-            {needsSetup ? 'Birinchi administrator akkauntini yarating. Qolgan xodimlarni keyin admin qoʻshadi.' : 'Laylak Cargo Kassa — xodimlar uchun'}
+            {needsSetup ? 'Birinchi administrator akkauntini yarating. Qolgan xodimlarni keyin admin qoʻshadi.' : `${brand.name} — xodimlar uchun`}
           </p>
 
           <div className="mt-7 space-y-4">

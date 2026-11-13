@@ -1,3 +1,4 @@
+import { brandNow } from './brand';
 // Printing: 76×130 mm package labels (label printer) and A4 documents.
 // Each document is rendered into a hidden iframe with its own @page size, so the
 // app's styles and layout never leak into the printout.
@@ -84,7 +85,7 @@ tfoot td { font-weight: 700; border-top: 0.4mm solid #000; border-bottom: 0; bac
 `;
 
 /** Prints a full HTML body on the chosen paper via a hidden iframe. */
-export function printHtml(body: string, size: PaperSize, title = 'Laylak Cargo'): void {
+export function printHtml(body: string, size: PaperSize, title = brandNow().name): void {
   const frame = document.createElement('iframe');
   frame.setAttribute('aria-hidden', 'true');
   frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
@@ -130,7 +131,7 @@ function labelHtml(client: LabelClient, payment?: Payment): string {
     if (payment.note) parts.push(`<div class="note">Izoh: ${esc(payment.note)}</div>`);
     if (payment.voided_at) parts.push(`<div class="void">BEKOR QILINGAN</div>`);
   }
-  parts.push(`<div class="foot">Laylak Cargo · kassa tizimi</div>`);
+  parts.push(`<div class="foot">${esc(brandNow().name)}${brandNow().tagline ? ` · ${esc(brandNow().tagline.toLowerCase())}` : ''}</div>`);
   return `<div class="label">${parts.join('')}</div>`;
 }
 

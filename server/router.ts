@@ -30,6 +30,7 @@ import { createHash, randomInt } from 'node:crypto';
 import { EXPENSE_LABELS } from '../src/lib/excelSheets.js';
 import { MAX_TEMPLATE_LENGTH, STAFF_TEMPLATES, TEMPLATE_BY_KEY, renderTemplate, sampleValues, type TemplateKey } from '../src/lib/tgTemplates.js';
 import { DEFAULT_PAGE_SETTINGS, cleanPageSettings } from '../src/lib/pageConfig.js';
+import { cleanBrand } from '../src/lib/brandConfig.js';
 import { kassaXlsx, otchyotXlsx } from '../src/lib/kassaBooks.js';
 import type { BalanceMonth, Payment } from '../src/lib/types.js';
 import { orderKey } from '../src/lib/orderImport.js';
@@ -2053,6 +2054,23 @@ route('PUT', '/pages', 'owner', async (ctx) => {
   );
   await audit(null, ctx.user, 'pages_set', 'pages', null, pages);
   return { pages };
+});
+
+// The site's name, colour, logo and corners. Read before signing in too, so the sign-in page looks right.
+route('GET', '/brand', 'public', async () => {
+  const rows = await query(`SELECT value FROM app_meta WHERE key = 'brand'`);
+  return { brand: cleanBrand(rows[0]?.value) };
+});
+
+route('PUT', '/brand', 'owner', async (ctx) => {
+  const brand = cleanBrand(ctx.body?.brand);
+  await query(
+    `INSERT INTO app_meta (key, value) VALUES ('brand', $1::jsonb)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [JSON.stringify(brand)],
+  );
+  await audit(null, ctx.user, 'brand_set', 'brand', null, { ...brand, logo: brand.logo ? 'yangi' : null });
+  return { brand };
 });
 
 // ---------- Telegram: daily report and nightly backup (owner) ----------
