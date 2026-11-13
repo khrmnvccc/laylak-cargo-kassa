@@ -44,7 +44,13 @@ export interface KassaBookRow { date: string; kind: 'expense' | 'opening'; sourc
 export interface KassaBookDay { date: string; income: number; expense: number }
 
 const CATEGORY_RULES: Array<[RegExp, string]> = [
-  [/ob kel|olib kel|dostavka|yetkaz|avto|avia|kargo|reys|yo'?l kira/i, 'yetkazish'],
+  // The card kassa's "avto 9.10 5ta" / "avia 30.10 1ta" lines pay for the goods themselves.
+  [/tovar o[bp] kel|tovar olib kel/i, 'tovar_olib_kelish'],
+  [/to[gʻ'‘`]*am(ga)?\b/i, 'togamga'],
+  [/arofat/i, 'arofat'],
+  [/\bavto\b|\bavia\b/i, 'tovar'],
+  [/\bkassa 0\b|kassa nol/i, 'inkassa'],
+  [/ob kel|olib kel|dostavka|yetkaz|kargo|reys|yo'?l kira/i, 'yetkazish'],
   [/paket|qadoq|skotch|skoch|lenta/i, 'paket'],
   [/tovar/i, 'tovar'],
   [/taksi|taxi|benzin|yoqilg|metan|propan/i, 'yoqilgi'],

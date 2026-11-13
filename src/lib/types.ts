@@ -112,7 +112,7 @@ export interface ClientList {
 }
 
 export type Source = Method;
-export type ExpenseCategory = 'tovar' | 'paket' | 'yetkazish' | 'yoqilgi' | 'ijara' | 'oylik' | 'kommunal' | 'inkassa' | 'boshqa';
+export type ExpenseCategory = 'tovar' | 'paket' | 'yetkazish' | 'yoqilgi' | 'ijara' | 'oylik' | 'kommunal' | 'inkassa' | 'tovar_olib_kelish' | 'togamga' | 'arofat' | 'boshqa';
 
 export interface SourceBalance {
   source: 'cash' | 'card';
