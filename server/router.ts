@@ -1630,7 +1630,7 @@ route('POST', '/expenses/:id/void', 'kassa', async (ctx) => {
   const reason = str(ctx.body?.reason, 300);
   if (reason.length < 3) throw new HttpError(400, 'Bekor qilish sababini yozing');
   if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Rasxod topilmadi');
-  return transaction(async (db) => {
+  const expense = await transaction(async (db) => {
     const updated = await db.query(
       `UPDATE expenses SET voided_at = NOW(), voided_by_name = $2, void_reason = $3
         WHERE id = $1 AND voided_at IS NULL AND source = ANY($4::text[]) RETURNING id, amount, source, category`,
@@ -1638,8 +1638,11 @@ route('POST', '/expenses/:id/void', 'kassa', async (ctx) => {
     );
     if (!updated.rowCount) throw new HttpError(404, 'Rasxod topilmadi yoki allaqachon bekor qilingan');
     await audit(db, ctx.user, 'expense_void', 'expense', ctx.params.id, { ...updated.rows[0], reason });
-    return { expense: updated.rows[0] };
+    return updated.rows[0];
   });
+  background(notify(`⚠️ <b>Rasxod bekor qilindi</b>\n${escapeHtml(EXPENSE_LABELS[expense.category] ?? expense.category)} · ${som(expense.amount)} · ${expense.source === 'card' ? '2-kassa (karta)' : '1-kassa (naqd)'}\n`
+    + `Kim: ${escapeHtml(ctx.user!.full_name)}\nSabab: ${escapeHtml(reason)}`));
+  return { expense };
 });
 
 route('POST', '/adjustments', 'kassa', async (ctx) => {
@@ -1927,7 +1930,7 @@ function telegramView(config: Awaited<ReturnType<typeof getTelegram>>) {
   if (!config) return { telegram: null };
   return { telegram: {
     botName: config.botName, connected: Boolean(config.chatId), chatName: config.chatName || null, code: config.chatId ? null : config.code,
-    groupName: config.groupId ? config.groupName || 'Guruh' : null, groupPaused: Boolean(config.groupId && config.groupPaused), groupCode: config.chatId && !config.groupId ? groupCode(config.token) : null,
+    groupName: config.groupId ? config.groupName || 'Guruh' : null, groupPaused: Boolean(config.groupId && config.groupPaused), personalPaused: Boolean(config.personalPaused), groupCode: config.chatId && !config.groupId ? groupCode(config.token) : null,
   } };
 }
 
@@ -2003,6 +2006,36 @@ route('PUT', '/telegram/group/pause', 'owner', async (ctx) => {
   await saveTelegram(next);
   await audit(null, ctx.user, paused ? 'telegram_group_pause' : 'telegram_group_resume', 'telegram', null, { group: config.groupName });
   return telegramView(next);
+});
+
+// Stop or resume payment pictures and alerts in the owner's own chat; the group is not affected, and the
+// evening report and backup still come.
+route('PUT', '/telegram/personal/pause', 'owner', async (ctx) => {
+  const config = await getTelegram();
+  if (!config?.chatId) throw new HttpError(400, 'Telegram ulanmagan');
+  const paused = ctx.body?.paused === true;
+  const next = { ...config, personalPaused: paused };
+  await saveTelegram(next);
+  await audit(null, ctx.user, paused ? 'telegram_personal_pause' : 'telegram_personal_resume', 'telegram', null, { chat: config.chatName });
+  return telegramView(next);
+});
+
+// A test message to one chat, so the owner sees at once whether it arrives and, if not, what Telegram said.
+route('POST', '/telegram/test', 'owner', async (ctx) => {
+  const config = await getTelegram();
+  const target = ctx.body?.target === 'group' ? 'group' : 'personal';
+  const chatId = target === 'group' ? config?.groupId : config?.chatId;
+  if (!config || !chatId) throw new HttpError(400, target === 'group' ? 'Guruh ulanmagan' : 'Telegram ulanmagan');
+  const topic = target === 'group' && config.groupThreadId ? { message_thread_id: config.groupThreadId } : {};
+  const text = '🔔 Laylak Cargo kassa: sinov xabari. Bu yerga xabarlar yetib kelyapti.';
+  try {
+    await tg(config.token, 'sendMessage', { chat_id: chatId, ...topic, text }, 10_000);
+  } catch (error) {
+    if (!(error instanceof ChatMoved) || target !== 'group') throw error;
+    await saveTelegram({ ...config, groupId: error.chatId });
+    await tg(config.token, 'sendMessage', { chat_id: error.chatId, ...topic, text }, 10_000);
+  }
+  return { ok: true };
 });
 
 route('DELETE', '/telegram/group', 'owner', async (ctx) => {
