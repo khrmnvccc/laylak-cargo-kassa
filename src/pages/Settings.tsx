@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Building2, Download, Monitor, Moon, Plus, Send, Sun, Trash2 } from 'lucide-react';
 import { useBranches } from '../lib/branch';
 import { BrandMark, groupLabel, previewBrand, setBrand, useBrand } from '../lib/brand';
-import { BRAND_LIMITS, COLOR_PRESETS, DEFAULT_BRAND, MENU_GROUPS, cleanBrand, type BrandSettings } from '../lib/brandConfig';
+import { BRAND_LIMITS, COLOR_PRESETS, DEFAULT_BRAND, MENU_GROUPS, EFFECTS, cleanBrand, type BrandSettings, type EffectName } from '../lib/brandConfig';
 import { TEMPLATE_BY_KEY, type TemplateKey } from '../lib/tgTemplates';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -315,7 +315,9 @@ function readLogo(file: File): Promise<string> {
   });
 }
 
-/** Owner only: the site's name, main colour, logo, corners, sign-in text and menu section names. */
+const EFFECT_ICONS: Record<EffectName, string> = { none: '▫️', stars: '✨', snow: '❄️', sparks: '🔥', bubbles: '🫧', confetti: '🎉', petals: '🌸', glow: '🌈' };
+
+/** Owner only: the site's name, main colour, logo, corners, moving background, sign-in text and menu section names. */
 function BrandCard() {
   const saved = useBrand();
   const toast = useToast();
@@ -396,6 +398,24 @@ function BrandCard() {
 
           <Field label="Burchaklar">
             <Segmented value={b.corners} onChange={(v) => edit({ corners: v })} options={[{ value: 'sharp', label: 'Tik' }, { value: 'soft', label: 'Oddiy' }, { value: 'round', label: 'Yumaloq' }]} />
+          </Field>
+
+          <Field label="Harakatlanuvchi fon" hint="Sahifa orqasida yengil harakat. Telefonida “kamroq harakat” yoqilgan xodimda chiqmaydi">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {EFFECTS.map((e) => (
+                <button key={e.value} type="button" aria-pressed={b.effect === e.value} onClick={() => edit({ effect: e.value })}
+                  className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm font-medium transition-colors ${b.effect === e.value ? 'border-primary bg-primary/10 text-ink' : 'border-line bg-surface-2/60 text-ink-2 hover:bg-surface-3'}`}>
+                  <span aria-hidden="true" className="text-base leading-none">{EFFECT_ICONS[e.value]}</span>{e.label}
+                </button>
+              ))}
+            </div>
+            {b.effect !== 'none' && (
+              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+                <Segmented value={b.effectAmount} onChange={(v) => edit({ effectAmount: v })} options={[{ value: 'low', label: 'Kam' }, { value: 'mid', label: 'Oʻrtacha' }, { value: 'high', label: 'Koʻp' }]} />
+                <Segmented value={b.effectWhere} onChange={(v) => edit({ effectWhere: v })} options={[{ value: 'all', label: 'Hamma sahifada' }, { value: 'login', label: 'Faqat kirish sahifasida' }]} />
+                <Segmented value={b.effectLayer} onChange={(v) => edit({ effectLayer: v })} options={[{ value: 'front', label: 'Sahifa ustida' }, { value: 'back', label: 'Faqat orqa fonda' }]} />
+              </div>
+            )}
           </Field>
 
           <Field label="Kirish sahifasidagi katta yozuv" htmlFor="br-head">

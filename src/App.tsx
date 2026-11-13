@@ -9,6 +9,7 @@ import { useTheme } from './lib/theme';
 import { canSee, homePage, isPaused, setPageSettings } from './lib/perms';
 import { useApi } from './lib/live';
 import { setBrand } from './lib/brand';
+import { Effects } from './components/Effects';
 import { BranchContext, currentBranch, saveBranch, type Branch } from './lib/branch';
 import type { PageSettings } from './lib/pageConfig';
 import type { Route } from './lib/router';
@@ -150,6 +151,7 @@ export default function App() {
       <ToastProvider>
         <LoginPage needsSetup={boot.needsSetup} setupKeyConfigured={boot.setupKeyConfigured} onAuthenticated={(user) => { clearApiCache(); saveUser(user); setBoot({ state: 'ready', user }); preloadPages(user); }} />
         <InstallPrompt top />
+        <Effects signedIn={false} />
       </ToastProvider>
     );
   }
@@ -166,6 +168,7 @@ export default function App() {
             <Pages user={user} route={route} onLogout={logout} />
           </Branches>
           <InstallPrompt />
+          <Effects signedIn />
         </LiveProvider>
       </ToastProvider>
     </AuthContext.Provider>
