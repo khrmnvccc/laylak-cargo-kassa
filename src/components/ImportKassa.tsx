@@ -19,7 +19,8 @@ interface KassaResult {
 const CATEGORY_ALIASES: Record<string, string> = {
   tovar: 'tovar', paket: 'paket', qadoq: 'paket', yetkazish: 'yetkazish', dostavka: 'yetkazish',
   yoqilgi: 'yoqilgi', taksi: 'yoqilgi', transport: 'yoqilgi', benzin: 'yoqilgi', ijara: 'ijara', arenda: 'ijara',
-  oylik: 'oylik', avans: 'oylik', kommunal: 'kommunal', svet: 'kommunal', internet: 'kommunal', inkassa: 'inkassa', boshqa: 'boshqa',
+  oylik: 'oylik', avans: 'oylik', kommunal: 'kommunal', svet: 'kommunal', internet: 'kommunal', inkassa: 'inkassa',
+  tovar_olib_kelish: 'tovar_olib_kelish', togamga: 'togamga', togam: 'togamga', arofat: 'arofat', boshqa: 'boshqa',
 };
 const accountLabel = (s: string) => (s === 'cash' ? '1-kassa · Naqd' : '2-kassa · Karta');
 const nextMonth = (m: string) => { const [y, mo] = m.split('-').map(Number); return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, '0')}`; };

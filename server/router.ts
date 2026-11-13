@@ -1372,7 +1372,7 @@ route('POST', '/system/reset', 'owner', async (ctx) => {
 
 // ---------- kassa balance, expenses (admin) ----------
 
-const EXPENSE_CATEGORIES = ['tovar', 'paket', 'yetkazish', 'yoqilgi', 'ijara', 'oylik', 'kommunal', 'inkassa', 'boshqa'];
+const EXPENSE_CATEGORIES = ['tovar', 'paket', 'yetkazish', 'yoqilgi', 'ijara', 'oylik', 'kommunal', 'inkassa', 'tovar_olib_kelish', 'togamga', 'arofat', 'boshqa'];
 // Yandex and Pochta money lands on the card, so the balance has two accounts: 1-kassa (naqd) and
 // 2-kassa (karta). Each person sees only the kassas the owner opened for them.
 const SOURCES = ['cash', 'card'];

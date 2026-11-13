@@ -24,6 +24,9 @@ export const EXPENSE_CATEGORIES: Array<{ value: ExpenseCategory; label: string }
   { value: 'oylik', label: 'Oylik va avans' },
   { value: 'kommunal', label: 'Kommunal va aloqa' },
   { value: 'inkassa', label: 'Inkassa (pul topshirildi)' },
+  { value: 'tovar_olib_kelish', label: 'Tovar olib kelish' },
+  { value: 'togamga', label: 'Togʻamga' },
+  { value: 'arofat', label: 'Arofat akaga' },
   { value: 'boshqa', label: 'Boshqa' },
 ];
 const ACCOUNTS = [

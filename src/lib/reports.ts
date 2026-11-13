@@ -118,7 +118,8 @@ export function printClientStatement(d: ClientDetailLike, printedBy: string) {
 
 const CATEGORY: Record<string, string> = {
   tovar: 'Tovar xaridi', paket: 'Paket va qadoq', yetkazish: 'Yetkazib berish', yoqilgi: 'Yoqilgʻi va transport', ijara: 'Ijara',
-  oylik: 'Oylik va avans', kommunal: 'Kommunal va aloqa', inkassa: 'Inkassa', boshqa: 'Boshqa',
+  oylik: 'Oylik va avans', kommunal: 'Kommunal va aloqa', inkassa: 'Inkassa',
+  tovar_olib_kelish: 'Tovar olib kelish', togamga: 'Togʻamga', arofat: 'Arofat akaga', boshqa: 'Boshqa',
 };
 
 export function printBalance(r: BalanceReport, printedBy: string) {

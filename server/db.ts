@@ -358,7 +358,13 @@ const SCHEMA_V11_SQL = `
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS trips INTEGER CHECK (trips IS NULL OR trips BETWEEN 0 AND 1000);
 `;
 
-const SCHEMA_VERSION = 11;
+// v12: three more expense categories from the kassa books (tovar olib kelish, togʻamga, Arofat akaga).
+const SCHEMA_V12_SQL = `
+ALTER TABLE expenses DROP CONSTRAINT IF EXISTS expenses_category_check;
+ALTER TABLE expenses ADD CONSTRAINT expenses_category_check CHECK (category IN ('tovar', 'paket', 'yetkazish', 'yoqilgi', 'ijara', 'oylik', 'kommunal', 'inkassa', 'tovar_olib_kelish', 'togamga', 'arofat', 'boshqa'));
+`;
+
+const SCHEMA_VERSION = 12;
 
 export function ensureSchema(): Promise<void> {
   if (!globalForPool.__kassaSchema) {
@@ -397,6 +403,7 @@ async function migrate() {
       if (current < 9) await client.query(SCHEMA_V9_SQL);
       if (current < 10) await client.query(SCHEMA_V10_SQL);
       if (current < 11) await client.query(SCHEMA_V11_SQL);
+      if (current < 12) await client.query(SCHEMA_V12_SQL);
       await client.query(
         `INSERT INTO app_meta (key, value) VALUES ('schema_version', $1::jsonb)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
