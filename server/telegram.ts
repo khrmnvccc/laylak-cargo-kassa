@@ -94,7 +94,7 @@ export async function sendDocument(data: Buffer, filename: string, caption: stri
 export async function notify(text: string) {
   const config = await getTelegram();
   if (!config?.chatId) return;
-  await everyChat(config, (chatId, topic) => tg(config.token, 'sendMessage', { chat_id: chatId, ...topic, text, parse_mode: 'HTML', disable_web_page_preview: true }, 4000))
+  await everyChat(config, (chatId, topic) => tg(config.token, 'sendMessage', { chat_id: chatId, ...topic, text, parse_mode: 'HTML', disable_web_page_preview: true }, 10_000))
     .catch((error) => console.error('Telegram notify failed', error));
 }
 

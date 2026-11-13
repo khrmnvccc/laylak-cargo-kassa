@@ -597,6 +597,14 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     await owner.call('PUT', '/telegram/group/pause', { paused: false });
     assert.equal((await owner.call('PUT', '/telegram/personal/pause', { paused: false })).body.telegram.personalPaused, false);
 
+    // A cancelled expense is reported too, like a cancelled payment.
+    const exp = await owner.call('POST', '/expenses', { amount: 7000, source: 'cash', category: 'paket', note: 'sinov' });
+    sent.length = 0;
+    assert.equal((await owner.call('POST', `/expenses/${exp.body.expense.id}/void`, { reason: 'xato yozildi' })).status, 200);
+    await backgroundSettled();
+    assert.match(sent[0]?.body.text ?? '', /Rasxod bekor qilindi[\s\S]*7 000 soʻm[\s\S]*xato yozildi/);
+    assert.deepEqual(sent.map((x) => Number(x.body.chat_id)).sort(), [-1001, 777]);
+
     // Telegram down: the payment is still saved at once, and the miss is written to the audit log.
     failSends = true;
     const offline = await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'TG-4', amount: 1000, method: 'cash' });

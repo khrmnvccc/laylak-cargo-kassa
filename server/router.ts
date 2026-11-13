@@ -1630,7 +1630,7 @@ route('POST', '/expenses/:id/void', 'kassa', async (ctx) => {
   const reason = str(ctx.body?.reason, 300);
   if (reason.length < 3) throw new HttpError(400, 'Bekor qilish sababini yozing');
   if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Rasxod topilmadi');
-  return transaction(async (db) => {
+  const expense = await transaction(async (db) => {
     const updated = await db.query(
       `UPDATE expenses SET voided_at = NOW(), voided_by_name = $2, void_reason = $3
         WHERE id = $1 AND voided_at IS NULL AND source = ANY($4::text[]) RETURNING id, amount, source, category`,
@@ -1638,8 +1638,11 @@ route('POST', '/expenses/:id/void', 'kassa', async (ctx) => {
     );
     if (!updated.rowCount) throw new HttpError(404, 'Rasxod topilmadi yoki allaqachon bekor qilingan');
     await audit(db, ctx.user, 'expense_void', 'expense', ctx.params.id, { ...updated.rows[0], reason });
-    return { expense: updated.rows[0] };
+    return updated.rows[0];
   });
+  background(notify(`⚠️ <b>Rasxod bekor qilindi</b>\n${escapeHtml(EXPENSE_LABELS[expense.category] ?? expense.category)} · ${som(expense.amount)} · ${expense.source === 'card' ? '2-kassa (karta)' : '1-kassa (naqd)'}\n`
+    + `Kim: ${escapeHtml(ctx.user!.full_name)}\nSabab: ${escapeHtml(reason)}`));
+  return { expense };
 });
 
 route('POST', '/adjustments', 'kassa', async (ctx) => {
