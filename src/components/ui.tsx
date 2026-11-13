@@ -68,7 +68,7 @@ export function CardHeader({ title, subtitle, action }: { title: ReactNode; subt
   );
 }
 
-export function PageHeader({ title, subtitle, actions, collapse }: { title: string; subtitle?: ReactNode; actions?: ReactNode; collapse?: boolean }) {
+export function PageHeader({ title, subtitle, actions, collapse, filters }: { title: string; subtitle?: ReactNode; actions?: ReactNode; collapse?: boolean; filters?: ReactNode }) {
   // On a phone, `collapse` tucks the buttons into one "Amallar" menu at the title's right, so the page starts at once.
   // The buttons stay mounted (only hidden), so dialogs they open keep working after the menu closes.
   const [open, setOpen] = useState(false);
@@ -88,8 +88,12 @@ export function PageHeader({ title, subtitle, actions, collapse }: { title: stri
           </button>
         )}
       </div>
+      {(actions || filters) && <div className="flex flex-wrap items-center gap-2">
+      {/* Filters (period, dates) stay in sight on a phone; only the buttons fold into the menu. */}
+      {filters && <div className="no-print flex flex-wrap items-center gap-2">{filters}</div>}
       {actions && (menu ? (
-        <div className="relative sm:static">
+        // First on a phone, so the open menu drops right under the "Amallar" button, above the filters.
+        <div className="relative max-sm:order-first max-sm:w-full sm:static">
           {open && <div className="fixed inset-0 z-30 sm:hidden" onClick={() => setOpen(false)} />}
           <div onClick={(e) => { if ((e.target as HTMLElement).closest('button')) setOpen(false); }}
             className={cx('no-print flex flex-wrap items-center gap-2',
@@ -100,6 +104,7 @@ export function PageHeader({ title, subtitle, actions, collapse }: { title: stri
           </div>
         </div>
       ) : <div className="no-print flex flex-wrap items-center gap-2">{actions}</div>)}
+      </div>}
     </div>
   );
 }

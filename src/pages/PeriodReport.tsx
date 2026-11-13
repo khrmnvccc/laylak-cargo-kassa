@@ -41,9 +41,12 @@ export default function PeriodReport() {
       <PageHeader
         title="Haftalik va oylik hisobot"
         subtitle={rangeLabel(range.from, range.to)}
-        actions={<>
+        collapse
+        filters={<>
           <Segmented value={group} onChange={(g) => { setGroup(g); setRange(defaultRange(g)); }} options={[{ value: 'week', label: 'Haftalik' }, { value: 'month', label: 'Oylik' }]} />
           <DateRangePicker value={range} onChange={setRange} />
+        </>}
+        actions={<>
           <Button icon={<Download className="size-4" />} onClick={exportCsv} disabled={!data?.rows.length}>CSV</Button>
           <PrintButton disabled={!data?.rows.length} run={() => data && printPeriodReport({ group, from: data.from, to: data.to, rows: data.rows, totals: data.totals, label, printedBy: user.full_name })} />
         </>}
