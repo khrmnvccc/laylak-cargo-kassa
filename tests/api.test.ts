@@ -714,10 +714,43 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     assert.equal((await adm.call('GET', '/backup')).status, 403);
     await owner.call('PATCH', `/staff/${admId}`, { isActive: false });
 
+    // A worker links their own Telegram; the owner picks which messages reach them.
+    const mine = (await w.call('GET', '/telegram/me')).body.telegram;
+    assert.equal(mine.linked, false);
+    assert.match(mine.code, /^K\d{8}$/);
+    assert.equal((await w.call('POST', '/telegram/me/check')).status, 404, 'nothing sent to the bot yet');
+    groupUpdates.push({ message: { text: `/start ${mine.code}`, chat: { id: 555, type: 'private', first_name: 'Sardor' } } });
+    const linkedMe = await w.call('POST', '/telegram/me/check');
+    assert.equal(linkedMe.status, 200, JSON.stringify(linkedMe.body));
+    assert.deepEqual([linkedMe.body.telegram.linked, linkedMe.body.telegram.messages], [true, []]);
+    assert.equal((await w.call('GET', '/telegram/people')).status, 403);
+    const people = (await owner.call('GET', '/telegram/people')).body.items;
+    assert.deepEqual(people.map((p: any) => p.chat_name), ['Sardor']);
+    assert.equal((await w.call('PUT', '/telegram/templates', { key: 'paymentVoid', chats: { staff: [people[0].id] } })).status, 403);
+    assert.equal((await owner.call('PUT', '/telegram/templates', { key: 'dailyReport', chats: { staff: [people[0].id] } })).status, 400);
+    const given = await owner.call('PUT', '/telegram/templates', { key: 'paymentVoid', chats: { staff: [people[0].id, 'nonsense'] } });
+    assert.deepEqual(given.body.chats.paymentVoid.staff, [people[0].id]);
+    assert.deepEqual((await w.call('GET', '/telegram/me')).body.telegram.messages, ['paymentVoid']);
+    sent.length = 0;
+    const r3 = await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'RT-3', amount: 1000, method: 'cash' });
+    await backgroundSettled();
+    assert.ok(!sent.some((x) => Number(x.body.chat_id) === 555), 'payment pictures are not given to the worker');
+    sent.length = 0;
+    await owner.call('POST', `/payments/${r3.body.payment.id}/void`, { reason: 'sinov uchun' });
+    await backgroundSettled();
+    assert.deepEqual(sent.map((x) => Number(x.body.chat_id)).sort(), [-1001, 555, 777]);
+    const staffLog = (await owner.call('GET', '/telegram/log', undefined, { limit: '5' })).body.items;
+    assert.ok(staffLog.some((m: any) => m.chat === 'staff:Sardor Aliyev' || m.chat.startsWith('staff:')));
+    assert.equal((await owner.call('DELETE', `/telegram/people/${people[0].id}`)).status, 200);
+    sent.length = 0;
+    await owner.call('POST', `/payments/${(await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'RT-4', amount: 1000, method: 'cash' })).body.payment.id}/void`, { reason: 'sinov uchun' });
+    await backgroundSettled();
+    assert.ok(!sent.some((x) => Number(x.body.chat_id) === 555), 'unlinked: nothing more');
+
     // The sent list shows what went where, newest first.
     const sentList = (await owner.call('GET', '/telegram/log', undefined, { limit: '40' })).body;
     assert.ok(sentList.total > 0);
-    assert.equal(sentList.items[0].template, 'payment', 'newest first');
+    assert.equal(sentList.items[0].template, 'paymentVoid', 'newest first');
     assert.ok(sentList.items.some((m: any) => m.template === 'test'));
     assert.ok(sentList.items.some((m: any) => m.template === 'paymentVoid' && m.ok));
     assert.equal((await w.call('GET', '/telegram/log')).status, 403);

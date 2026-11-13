@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Send } from 'lucide-react';
+import { Send, UserMinus } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useApi } from '../lib/live';
 import { Alert, Badge, Button, Card, CardHeader, ErrorState, Field, Input, PageHeader, useToast } from '../components/ui';
-import TelegramTemplates from '../components/TelegramTemplates';
+import TelegramTemplates, { type LinkedPerson } from '../components/TelegramTemplates';
+import { useLive } from '../lib/live';
 
 // Xabarlar: everything the kassa sends to Telegram. Who it goes to (the owner's own account, the group),
 // whether each message is sent at all, and in which words. The owner, or someone the owner allowed.
@@ -14,17 +15,61 @@ export default function Messages() {
   const [override, setOverride] = useState<{ telegram: TelegramState | null } | null>(null);
   const tg = (override ?? data)?.telegram ?? null;
   const ready = Boolean(override || data);
+  const people = useApi<{ items: LinkedPerson[]; notLinked: number }>(tg?.connected ? '/telegram/people' : null);
   return (
     <>
       <PageHeader title="Xabarlar" subtitle="Telegram: akkauntingizga va guruhga boradigan xabarlar" />
       <div className="grid gap-4">
         <TelegramCard tg={tg} ready={ready} loadError={error} setOverride={setOverride} />
+        {tg?.connected && <PeopleCard items={people.data?.items} notLinked={people.data?.notLinked ?? 0} />}
         {tg?.connected && (
-          <TelegramTemplates personalName={tg.chatName}
+          <TelegramTemplates personalName={tg.chatName} people={people.data?.items ?? []}
             group={{ linked: Boolean(tg.groupName), name: tg.groupName, payments: tg.groupPayments !== false, cancels: tg.groupCancels !== false }} />
         )}
       </div>
     </>
+  );
+}
+
+/** Staff who linked their own Telegram: the owner sees who, and can unlink someone. */
+function PeopleCard({ items, notLinked }: { items?: LinkedPerson[]; notLinked: number }) {
+  const { bump } = useLive();
+  const toast = useToast();
+  const [busy, setBusy] = useState<string | null>(null);
+  const unlink = async (p: LinkedPerson) => {
+    setBusy(p.id);
+    try {
+      await api(`/telegram/people/${p.id}`, { method: 'DELETE' });
+      bump();
+      toast({ tone: 'success', title: `${p.full_name} Telegrami uzildi` });
+    } catch (e) {
+      toast({ tone: 'error', title: (e as Error).message });
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <Card>
+      <CardHeader title="Xodimlar Telegrami" subtitle="Har bir xodim Sozlamalar → Telegram boʻlimida oʻzi ulaydi. Kimga qaysi xabar borishini pastda, har bir xabarda belgilaysiz." />
+      {!items ? <div className="skeleton h-16" /> : !items.length ? (
+        <p className="text-sm text-ink-2">Hali hech kim ulamagan.{notLinked ? ` ${notLinked} ta faol xodim ulanmagan.` : ''}</p>
+      ) : (
+        <>
+          <div className="divide-y divide-line rounded-lg border border-line">
+            {items.map((p) => (
+              <div key={p.id} className={`flex items-center justify-between gap-3 px-3 py-2.5 ${p.is_active ? '' : 'opacity-55'}`}>
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-ink">{p.full_name} <span className="font-normal text-ink-3">@{p.username}</span></div>
+                  <div className="truncate text-xs text-ink-3">Telegram: {p.chat_name || '—'}{p.is_active ? '' : ' · akkaunt oʻchirilgan'}</div>
+                </div>
+                <Button size="sm" variant="ghost" icon={<UserMinus className="size-4" />} loading={busy === p.id} onClick={() => unlink(p)}>Uzish</Button>
+              </div>
+            ))}
+          </div>
+          {notLinked > 0 && <p className="mt-2 text-xs text-ink-3">{notLinked} ta faol xodim hali ulamagan.</p>}
+        </>
+      )}
+    </Card>
   );
 }
 

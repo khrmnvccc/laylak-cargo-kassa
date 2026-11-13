@@ -86,8 +86,14 @@ export const TEMPLATES: TemplateDef[] = [
   },
 ];
 
-/** Which chats one message goes to. A missing value means: the owner's chat yes, the group as before. */
-export interface TemplateChats { personal?: boolean; group?: boolean }
+/**
+ * Which chats one message goes to. A missing value means: the owner's chat yes, the group as before,
+ * no staff. `staff` lists the people (user ids) who linked their own Telegram and get this message.
+ */
+export interface TemplateChats { personal?: boolean; group?: boolean; staff?: string[] }
+
+/** Messages a staff member may be given; the evening report carries the backup, so it stays with the owner. */
+export const STAFF_TEMPLATES: TemplateKey[] = ['payment', 'paymentVoid', 'expenseVoid', 'orderDelete'];
 
 /** What the owner changed: their own texts, the messages they switched off, and where each one goes. */
 export interface TemplateSettings { texts: Partial<Record<TemplateKey, string>>; off: TemplateKey[]; chats?: Partial<Record<TemplateKey, TemplateChats>> }

@@ -27,7 +27,7 @@ import { background } from './background.js';
 import { gzipSync } from 'node:zlib';
 import { createHash, randomInt } from 'node:crypto';
 import { EXPENSE_LABELS } from '../src/lib/excelSheets.js';
-import { MAX_TEMPLATE_LENGTH, TEMPLATE_BY_KEY, renderTemplate, sampleValues, type TemplateKey } from '../src/lib/tgTemplates.js';
+import { MAX_TEMPLATE_LENGTH, STAFF_TEMPLATES, TEMPLATE_BY_KEY, renderTemplate, sampleValues, type TemplateKey } from '../src/lib/tgTemplates.js';
 import { DEFAULT_PAGE_SETTINGS, cleanPageSettings } from '../src/lib/pageConfig.js';
 import { kassaXlsx, otchyotXlsx } from '../src/lib/kassaBooks.js';
 import type { BalanceMonth, Payment } from '../src/lib/types.js';
@@ -1975,6 +1975,69 @@ async function sendDailyReport(date: string) {
 /** Code the owner types in a group to link it; made from the bot token, so only the kassa knows it. */
 const groupCode = (token: string) => String(100000 + (createHash('sha256').update(`group:${token}`).digest().readUInt32BE(0) % 900000));
 
+/** The code one person sends the bot to link their own chat; made from the token and their id. */
+const personCode = (token: string, userId: string) => `K${String(10_000_000 + (createHash('sha256').update(`person:${token}:${userId}`).digest().readUInt32BE(0) % 90_000_000))}`;
+
+/** What one person sees about their own Telegram: linked or not, and which messages the owner gave them. */
+async function myTelegram(userId: string) {
+  const config = await getTelegram();
+  if (!config?.chatId) return { telegram: null };
+  const [rows, settings] = await Promise.all([
+    query(`SELECT chat_name, linked_at FROM telegram_people WHERE user_id = $1`, [userId]),
+    getTemplateSettings(),
+  ]);
+  const messages = STAFF_TEMPLATES.filter((k) => !settings.off.includes(k) && settings.chats?.[k]?.staff?.includes(userId));
+  return { telegram: {
+    botName: config.botName, linked: Boolean(rows[0]), chatName: rows[0]?.chat_name ?? null,
+    code: rows[0] ? null : personCode(config.token, userId), messages,
+  } };
+}
+
+// Anyone can link their own Telegram to the kassa bot; the owner decides on the Xabarlar page what they get.
+route('GET', '/telegram/me', 'user', async (ctx) => myTelegram(ctx.user!.id));
+
+route('POST', '/telegram/me/check', 'user', async (ctx) => {
+  const config = await getTelegram();
+  if (!config?.chatId) throw new HttpError(400, 'Telegram bot hali ulanmagan');
+  const code = personCode(config.token, ctx.user!.id);
+  const updates: any[] = await tg(config.token, 'getUpdates', { offset: -100, allowed_updates: ['message'], timeout: 0 });
+  const match = updates.reverse().find((u) => typeof u.message?.text === 'string' && u.message.text.includes(code) && u.message.chat?.type === 'private');
+  if (!match) throw new HttpError(404, `Botga hali kod kelmadi. @${config.botName} ni ochib, “Start” bosing yoki ${code} deb yozing`);
+  const chat = match.message.chat;
+  const name = [chat.first_name, chat.last_name].filter(Boolean).join(' ') || chat.username || 'Telegram';
+  await query(
+    `INSERT INTO telegram_people (user_id, chat_id, chat_name) VALUES ($1, $2, $3)
+     ON CONFLICT (user_id) DO UPDATE SET chat_id = EXCLUDED.chat_id, chat_name = EXCLUDED.chat_name, linked_at = NOW()`,
+    [ctx.user!.id, chat.id, name],
+  );
+  await tg(config.token, 'sendMessage', { chat_id: chat.id, text: `✅ ${ctx.user!.full_name}, Laylak Cargo kassa ulandi. Qaysi xabarlar kelishini Ega belgilaydi.` }).catch(() => undefined);
+  await audit(null, ctx.user, 'telegram_person_link', 'user', ctx.user!.id, { chat: name });
+  return myTelegram(ctx.user!.id);
+});
+
+route('DELETE', '/telegram/me', 'user', async (ctx) => {
+  await query(`DELETE FROM telegram_people WHERE user_id = $1`, [ctx.user!.id]);
+  await audit(null, ctx.user, 'telegram_person_unlink', 'user', ctx.user!.id, {});
+  return myTelegram(ctx.user!.id);
+});
+
+// Who linked their Telegram, for the owner to pick per message.
+route('GET', '/telegram/people', 'messages.manage', async () => {
+  const items = await query(
+    `SELECT u.id, u.full_name, u.username, u.role, u.is_active, p.chat_name, p.linked_at
+       FROM telegram_people p JOIN app_users u ON u.id = p.user_id ORDER BY u.full_name`,
+  );
+  const [{ n }] = await query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM app_users u WHERE u.is_active AND NOT EXISTS (SELECT 1 FROM telegram_people p WHERE p.user_id = u.id)`);
+  return { items, notLinked: n };
+});
+
+route('DELETE', '/telegram/people/:id', 'messages.manage', async (ctx) => {
+  if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Xodim topilmadi');
+  await query(`DELETE FROM telegram_people WHERE user_id = $1`, [ctx.params.id]);
+  await audit(null, ctx.user, 'telegram_person_unlink', 'user', ctx.params.id, {});
+  return { ok: true };
+});
+
 async function telegramView(config: Awaited<ReturnType<typeof getTelegram>>) {
   if (!config) return { telegram: null };
   const errors = config.chatId ? await getTelegramErrors() : [];
@@ -1994,7 +2057,7 @@ route('GET', '/telegram/templates', 'messages.manage', async () => getTemplateSe
 route('PUT', '/telegram/templates', 'messages.manage', async (ctx) => {
   const key = String(ctx.body?.key || '') as TemplateKey;
   if (!TEMPLATE_BY_KEY[key]) throw new HttpError(400, 'Bunday xabar yoʻq');
-  const change: { text?: string | null; on?: boolean; chats?: { personal?: boolean; group?: boolean } } = {};
+  const change: { text?: string | null; on?: boolean; chats?: { personal?: boolean; group?: boolean; staff?: string[] } } = {};
   if ('text' in (ctx.body || {})) change.text = ctx.body.text == null ? null : String(ctx.body.text);
   if (typeof ctx.body?.on === 'boolean') change.on = ctx.body.on;
   const chats = ctx.body?.chats;
@@ -2003,10 +2066,14 @@ route('PUT', '/telegram/templates', 'messages.manage', async (ctx) => {
     change.chats = {};
     if (typeof chats.personal === 'boolean') change.chats.personal = chats.personal;
     if (typeof chats.group === 'boolean') change.chats.group = chats.group;
+    if (Array.isArray(chats.staff)) {
+      if (!STAFF_TEMPLATES.includes(key)) throw new HttpError(400, 'Bu xabar xodimlarga yuborilmaydi');
+      change.chats.staff = [...new Set<string>((chats.staff as unknown[]).filter((id): id is string => typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id)))].slice(0, 100);
+    }
   }
   const settings = await saveTemplate(key, change);
   const action = change.chats ? 'telegram_template_chats' : change.on === undefined ? 'telegram_template' : change.on ? 'telegram_template_on' : 'telegram_template_off';
-  await audit(null, ctx.user, action, 'telegram', null, { key, ...change.chats });
+  await audit(null, ctx.user, action, 'telegram', null, { key, ...change.chats, staff: change.chats?.staff?.length });
   return settings;
 });
 

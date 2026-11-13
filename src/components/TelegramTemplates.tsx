@@ -3,7 +3,7 @@ import { BarChart3, Check, FileSpreadsheet, Image as ImageIcon, Receipt, RotateC
 import { api } from '../lib/api';
 import { useApi } from '../lib/live';
 import {
-  MAX_TEMPLATE_LENGTH, TEMPLATES, TEMPLATE_BY_KEY, TEMPLATE_GROUPS, renderTemplate, sampleValues,
+  MAX_TEMPLATE_LENGTH, STAFF_TEMPLATES, TEMPLATES, TEMPLATE_BY_KEY, TEMPLATE_GROUPS, renderTemplate, sampleValues,
   type TemplateKey, type TemplateSettings,
 } from '../lib/tgTemplates';
 import { Alert, Button, Card, ErrorState, useToast } from './ui';
@@ -13,7 +13,7 @@ const ICONS: Record<TemplateKey, typeof Wallet> = {
 };
 const LOG_TITLES: Record<string, string> = { ...Object.fromEntries(TEMPLATES.map((t) => [t.key, t.title])), test: 'Sinov xabari', other: 'Xabar' };
 
-interface LogItem { id: number; at: string; template: string; chat: 'personal' | 'group'; ok: boolean; text: string; error: string | null }
+interface LogItem { id: number; at: string; template: string; chat: string; ok: boolean; text: string; error: string | null }
 
 const time = (iso: string) => new Date(iso).toLocaleString('uz-UZ', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
@@ -63,6 +63,9 @@ function SectionLabel({ children, right }: { children: ReactNode; right?: ReactN
 /** The group as the connection card knows it: linked or not, and what it got before messages had their own say. */
 export interface GroupInfo { linked: boolean; name: string | null; payments: boolean; cancels: boolean }
 
+/** A staff member who linked their own Telegram. */
+export interface LinkedPerson { id: string; full_name: string; username: string; role: string; is_active: boolean; chat_name: string | null }
+
 /** A pill that says whether one message goes to one chat; pressing it flips that. */
 function ChatPill({ on, icon, label, sub, disabled, onClick }: { on: boolean; icon: ReactNode; label: string; sub: string; disabled?: boolean; onClick?: () => void }) {
   return (
@@ -79,7 +82,7 @@ function ChatPill({ on, icon, label, sub, disabled, onClick }: { on: boolean; ic
 }
 
 /** Every Telegram message the kassa sends, each with its own words, its own switch and its own chats, plus what was sent lately. */
-export default function TelegramTemplates({ group, personalName }: { group: GroupInfo; personalName: string | null }) {
+export default function TelegramTemplates({ group, personalName, people }: { group: GroupInfo; personalName: string | null; people: LinkedPerson[] }) {
   const toast = useToast();
   const { data, error: loadError, loading } = useApi<TemplateSettings>('/telegram/templates');
   const log = useApi<{ items: LogItem[]; total: number }>('/telegram/log', { limit: 40 });
@@ -124,7 +127,10 @@ export default function TelegramTemplates({ group, personalName }: { group: Grou
     setBusy(name);
     try { await fn(); } catch (e) { setError((e as Error).message); } finally { setBusy(null); }
   }
-  const put = (k: TemplateKey, body: { text?: string | null; on?: boolean; chats?: { personal?: boolean; group?: boolean } }) =>
+  const staffOf = (k: TemplateKey) => settings.chats?.[k]?.staff ?? [];
+  const activePeople = people.filter((p) => p.is_active);
+  const staffCount = (k: TemplateKey) => staffOf(k).filter((id) => activePeople.some((p) => p.id === id)).length;
+  const put = (k: TemplateKey, body: { text?: string | null; on?: boolean; chats?: { personal?: boolean; group?: boolean; staff?: string[] } }) =>
     api<TemplateSettings>('/telegram/templates', { method: 'PUT', body: { key: k, ...body } }).then(setSaved);
   const save = () => run('save', async () => {
     await put(key, { text });
@@ -143,6 +149,12 @@ export default function TelegramTemplates({ group, personalName }: { group: Grou
   const route = (k: TemplateKey, chat: 'personal' | 'group', on: boolean) => run(`chat-${chat}`, async () => {
     await put(k, { chats: { [chat]: on } });
     toast({ tone: 'success', title: `${TEMPLATE_BY_KEY[k].title}: ${chat === 'group' ? 'guruhga' : 'sizga'} ${on ? 'boradi' : 'bormaydi'}` });
+  });
+  const toggleStaff = (k: TemplateKey, person: LinkedPerson) => run(`staff-${person.id}`, async () => {
+    const list = staffOf(k);
+    const on = !list.includes(person.id);
+    await put(k, { chats: { staff: on ? [...list, person.id] : list.filter((id) => id !== person.id) } });
+    toast({ tone: 'success', title: `${person.full_name}: “${TEMPLATE_BY_KEY[k].title}” ${on ? 'keladi' : 'kelmaydi'}` });
   });
   const test = () => run('test', async () => {
     await api('/telegram/templates/test', { method: 'POST', body: { key, text } });
@@ -198,6 +210,7 @@ export default function TelegramTemplates({ group, personalName }: { group: Grou
                                 {t.photo && <span title="Rasm bilan"><ImageIcon className="size-3.5" /></span>}
                                 {isOn(t.key) && toMe(t.key) && <span title="Sizga boradi"><User className="size-3.5" /></span>}
                                 {isOn(t.key) && toGroup(t.key) && group.linked && <span title="Guruhga boradi"><Users className="size-3.5" /></span>}
+                                {isOn(t.key) && staffCount(t.key) > 0 && <span className="text-[11px] font-medium text-ink-2" title="Xodimlarga boradi">+{staffCount(t.key)} xodim</span>}
                                 {t.files && <span title="Excel va zaxira fayllari bilan"><FileSpreadsheet className="size-3.5" /></span>}
                                 {settings.texts[t.key] && <span className="text-[11px] font-medium text-success">oʻzgartirilgan</span>}
                               </div>
@@ -226,7 +239,7 @@ export default function TelegramTemplates({ group, personalName }: { group: Grou
                     <div key={m.id} className="rounded-xl border border-line p-3">
                       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
                         <span className="font-semibold text-ink">{LOG_TITLES[m.template] ?? m.template}</span>
-                        <span className="rounded-md bg-surface-2 px-1.5 py-0.5 text-ink-2">{m.chat === 'group' ? 'Guruh' : 'Siz'}</span>
+                        <span className="rounded-md bg-surface-2 px-1.5 py-0.5 text-ink-2">{m.chat === 'group' ? 'Guruh' : m.chat.startsWith('staff:') ? m.chat.slice(6) || 'Xodim' : 'Siz'}</span>
                         {m.ok
                           ? <span className="inline-flex items-center gap-1 text-success"><Check className="size-3.5" />yetib bordi</span>
                           : <span className="inline-flex items-center gap-1 text-danger"><X className="size-3.5" />yetib bormadi</span>}
@@ -265,7 +278,27 @@ export default function TelegramTemplates({ group, personalName }: { group: Grou
                       sub={key === 'dailyReport' ? 'Hisobot va fayllar guruhga bormaydi' : group.linked ? group.name ?? 'Guruh' : 'Guruh ulanmagan'}
                       disabled={busy === 'chat-group' || !group.linked} onClick={key === 'dailyReport' || !group.linked ? undefined : () => route(key, 'group', !toGroup(key))} />
                   </div>
-                  {isOn(key) && !toMe(key) && !(toGroup(key) && group.linked) && <p className="mt-2 text-xs text-warn">Hech qaysi chat tanlanmagan: bu xabar hech kimga bormaydi.</p>}
+                  {STAFF_TEMPLATES.includes(key) && (
+                    <div className="mt-3">
+                      <div className="mb-1.5 text-xs font-medium text-ink-2">Xodimlar</div>
+                      {activePeople.length ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {activePeople.map((p) => {
+                            const on = staffOf(key).includes(p.id);
+                            return (
+                              <button key={p.id} type="button" aria-pressed={on} disabled={busy === `staff-${p.id}`} onClick={() => toggleStaff(key, p)}
+                                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-medium transition-colors disabled:opacity-60 ${on ? 'border-[var(--card)] bg-[var(--card)] text-white' : 'border-line bg-surface text-ink-2 hover:bg-surface-2'}`}>
+                                {on ? <Check className="size-3.5" /> : <User className="size-3.5" />}{p.full_name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-ink-3">Hali hech bir xodim Telegramini ulamagan. Har kim Sozlamalar → Telegram boʻlimida oʻzi ulaydi.</p>
+                      )}
+                    </div>
+                  )}
+                  {isOn(key) && !toMe(key) && !(toGroup(key) && group.linked) && staffCount(key) === 0 && <p className="mt-2 text-xs text-warn">Hech qaysi chat tanlanmagan: bu xabar hech kimga bormaydi.</p>}
                 </div>
 
                 <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_330px]">
