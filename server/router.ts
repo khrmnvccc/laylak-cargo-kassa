@@ -21,7 +21,7 @@ import {
   forgetSessions,
 } from './auth.js';
 import { PERMISSIONS, WORKER_DEFAULT, isPerm, kassaSources, permsOf, upgrade, type Perm } from './perms.js';
-import { ChatMoved, escapeHtml, getTelegram, notify, photoFromDataUrl, reportPhotos, reportText, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
+import { ChatMoved, escapeHtml, getTelegram, getTelegramErrors, notify, setTelegramError, photoFromDataUrl, reportPhotos, reportText, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
 import { receiptKey } from './receipts.js';
 import { background } from './background.js';
 import { gzipSync } from 'node:zlib';
@@ -723,18 +723,28 @@ route('POST', '/orders/delete', 'payments.void', async (ctx) => {
   const ids = Array.isArray(ctx.body?.ids) ? [...new Set(ctx.body.ids.filter((id: unknown) => typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id)))] : [];
   if (!ids.length) throw new HttpError(400, 'Buyurtmalarni tanlang');
   if (ids.length > 500) throw new HttpError(400, 'Bir martada 500 tadan koʻp buyurtma oʻchirib boʻlmaydi');
-  return transaction(async (db) => {
+  const rows = await transaction(async (db) => {
     const rows = (await db.query(
       `UPDATE orders o SET deleted_at = NOW(), updated_at = NOW()
         WHERE o.id = ANY($1) AND o.deleted_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.id = o.payment_id AND p.voided_at IS NULL)
-        RETURNING o.id, o.scan_code, o.amount`,
+        RETURNING o.id, o.scan_code, o.client_code, o.amount`,
       [ids],
     )).rows;
     for (const r of rows) await audit(db, ctx.user, 'order_delete', 'order', r.id, { scanCode: r.scan_code, amount: Number(r.amount) });
-    return { deleted: rows.length, kept: ids.length - rows.length };
+    return rows;
   });
+  if (rows.length) background(notify(orderDeleteText(rows, ctx.user!.full_name)));
+  return { deleted: rows.length, kept: ids.length - rows.length };
 });
+
+/** Telegram alert for orders taken off the list: how many, the total, and the first few of them. */
+function orderDeleteText(rows: { scan_code: string; client_code: string; amount: string | number }[], who: string) {
+  const total = rows.reduce((sum, r) => sum + Number(r.amount || 0), 0);
+  const lines = rows.slice(0, 10).map((r) => `• ${escapeHtml(r.client_code || '—')} · ${escapeHtml(r.scan_code || '')} · ${som(r.amount || 0)}`);
+  if (rows.length > 10) lines.push(`… yana ${rows.length - 10} ta`);
+  return [`🗑 <b>${rows.length === 1 ? 'Buyurtma' : `${rows.length} ta buyurtma`} oʻchirildi</b> · ${som(total)}`, ...lines, `Kim: ${escapeHtml(who)}`].join('\n');
+}
 
 // Orders entered twice: the same client and order number, or with no number the same client, sum and day.
 // Each group lists its copies oldest first; the oldest is the one to keep.
@@ -754,13 +764,15 @@ route('GET', '/orders/duplicates', 'payments.void', async () => {
 
 route('DELETE', '/orders/:id', 'payments.void', async (ctx) => {
   if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Buyurtma topilmadi');
-  await transaction(async (db) => {
+  const order = await transaction(async (db) => {
     const rows = (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = $1 AND o.deleted_at IS NULL FOR UPDATE OF o`, [ctx.params.id])).rows;
     if (!rows.length) throw new HttpError(404, 'Buyurtma topilmadi');
     if (rows[0].payment_id) throw new HttpError(409, 'Toʻlangan buyurtmani oʻchirib boʻlmaydi. Avval toʻlovni bekor qiling');
     await db.query(`UPDATE orders SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1`, [ctx.params.id]);
     await audit(db, ctx.user, 'order_delete', 'order', ctx.params.id, { scanCode: rows[0].scan_code, amount: Number(rows[0].amount) });
+    return rows[0];
   });
+  background(notify(orderDeleteText([order], ctx.user!.full_name)));
   return { ok: true };
 });
 
@@ -1345,7 +1357,7 @@ route('GET', '/system', 'admin', async () => {
                   (SELECT COUNT(*) FROM legacy_import)::bigint AS legacy_records`),
   ]);
   // The Telegram bot token stays on the server.
-  return { meta: Object.fromEntries(meta.filter((m: any) => m.key !== 'telegram').map((m: any) => [m.key, m.value])), counts: counts[0] };
+  return { meta: Object.fromEntries(meta.filter((m: any) => !String(m.key).startsWith('telegram')).map((m: any) => [m.key, m.value])), counts: counts[0] };
 });
 
 // Owner only: start the kassa afresh. Every payment, expense, balance correction, order, receipt, attendance
@@ -1861,7 +1873,7 @@ async function backupData() {
   for (const { name } of tables) {
     let rows = await query(`SELECT * FROM "${name.replace(/"/g, '')}"`);
     if (name === 'app_users') rows = rows.map(({ password_hash, ...u }: any) => u);
-    if (name === 'app_meta') rows = rows.filter((r: any) => r.key !== 'telegram');
+    if (name === 'app_meta') rows = rows.filter((r: any) => !String(r.key).startsWith('telegram'));
     data[name] = rows;
   }
   const counts = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, v.length]));
@@ -1926,15 +1938,28 @@ async function sendDailyReport(date: string) {
 /** Code the owner types in a group to link it; made from the bot token, so only the kassa knows it. */
 const groupCode = (token: string) => String(100000 + (createHash('sha256').update(`group:${token}`).digest().readUInt32BE(0) % 900000));
 
-function telegramView(config: Awaited<ReturnType<typeof getTelegram>>) {
+async function telegramView(config: Awaited<ReturnType<typeof getTelegram>>) {
   if (!config) return { telegram: null };
+  const errors = config.chatId ? await getTelegramErrors() : [];
   return { telegram: {
+    groupPayments: config.groupPayments !== false, groupCancels: config.groupCancels !== false,
+    errors: errors.filter((e) => e.chat === 'personal' || config.groupId),
     botName: config.botName, connected: Boolean(config.chatId), chatName: config.chatName || null, code: config.chatId ? null : config.code,
     groupName: config.groupId ? config.groupName || 'Guruh' : null, groupPaused: Boolean(config.groupId && config.groupPaused), personalPaused: Boolean(config.personalPaused), groupCode: config.chatId && !config.groupId ? groupCode(config.token) : null,
   } };
 }
 
 route('GET', '/telegram', 'owner', async () => telegramView(await getTelegram()));
+
+// What the group gets: payment pictures, cancel alerts, or both. The owner's own chat still gets everything.
+route('PUT', '/telegram/group/kinds', 'owner', async (ctx) => {
+  const config = await getTelegram();
+  if (!config?.groupId) throw new HttpError(400, 'Guruh ulanmagan');
+  const next = { ...config, groupPayments: ctx.body?.payments !== false, groupCancels: ctx.body?.cancels !== false };
+  await saveTelegram(next);
+  await audit(null, ctx.user, 'telegram_group_kinds', 'telegram', null, { payments: next.groupPayments, cancels: next.groupCancels });
+  return telegramView(next);
+});
 
 route('PUT', '/telegram', 'owner', async (ctx) => {
   const token = str(ctx.body?.token, 100);
@@ -2029,26 +2054,34 @@ route('POST', '/telegram/test', 'owner', async (ctx) => {
   const topic = target === 'group' && config.groupThreadId ? { message_thread_id: config.groupThreadId } : {};
   const text = '🔔 Laylak Cargo kassa: sinov xabari. Bu yerga xabarlar yetib kelyapti.';
   try {
-    await tg(config.token, 'sendMessage', { chat_id: chatId, ...topic, text }, 10_000);
+    try {
+      await tg(config.token, 'sendMessage', { chat_id: chatId, ...topic, text }, 10_000);
+    } catch (error) {
+      if (!(error instanceof ChatMoved) || target !== 'group') throw error;
+      await saveTelegram({ ...config, groupId: error.chatId });
+      await tg(config.token, 'sendMessage', { chat_id: error.chatId, ...topic, text }, 10_000);
+    }
   } catch (error) {
-    if (!(error instanceof ChatMoved) || target !== 'group') throw error;
-    await saveTelegram({ ...config, groupId: error.chatId });
-    await tg(config.token, 'sendMessage', { chat_id: error.chatId, ...topic, text }, 10_000);
+    await setTelegramError(target, error);
+    throw error;
   }
-  return { ok: true };
+  await setTelegramError(target, null);
+  return telegramView(await getTelegram());
 });
 
 route('DELETE', '/telegram/group', 'owner', async (ctx) => {
   const config = await getTelegram();
   if (!config) throw new HttpError(400, 'Telegram ulanmagan');
-  const { groupId: _id, groupName: _name, groupThreadId: _thread, groupPaused: _paused, ...rest } = config;
+  const { groupId: _id, groupName: _name, groupThreadId: _thread, groupPaused: _paused, groupPayments: _p, groupCancels: _c, ...rest } = config;
   await saveTelegram(rest);
+  await setTelegramError('group', null);
   await audit(null, ctx.user, 'telegram_group_remove', 'telegram', null);
   return telegramView(rest);
 });
 
 route('DELETE', '/telegram', 'owner', async (ctx) => {
   await saveTelegram(null);
+  await Promise.all([setTelegramError('personal', null), setTelegramError('group', null)]);
   await audit(null, ctx.user, 'telegram_remove', 'telegram', null);
   return { telegram: null };
 });

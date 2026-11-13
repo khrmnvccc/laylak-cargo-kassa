@@ -613,6 +613,40 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     failSends = false;
     const miss = await getPool().query(`SELECT 1 FROM audit_log WHERE action = 'telegram_failed' AND entity_id = $1`, [offline.body.payment.id]);
     assert.equal(miss.rowCount, 1);
+    // The refusal is shown on the settings page until a message gets through again.
+    const withError = (await owner.call('GET', '/telegram')).body.telegram;
+    assert.deepEqual(withError.errors.map((e: any) => e.chat).sort(), ['group', 'personal']);
+    assert.match(withError.errors[0].message, /aloqa/);
+    assert.deepEqual((await owner.call('POST', '/telegram/test', { target: 'personal' })).body.telegram.errors.map((e: any) => e.chat), ['group']);
+    assert.equal((await owner.call('POST', '/telegram/test', { target: 'group' })).body.telegram.errors.length, 0);
+
+    // The group can skip payment pictures or cancel alerts; the owner still gets both.
+    assert.equal((await w.call('PUT', '/telegram/group/kinds', { payments: false, cancels: true })).status, 403);
+    const kinds = (await owner.call('PUT', '/telegram/group/kinds', { payments: false, cancels: true })).body.telegram;
+    assert.deepEqual([kinds.groupPayments, kinds.groupCancels], [false, true]);
+    sent.length = 0;
+    const tg6 = await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'TG-6', amount: 1000, method: 'cash' });
+    await backgroundSettled();
+    assert.deepEqual(sent.filter((x) => x.method === 'sendPhoto').map((x) => Number(x.body.chat_id)), [777], 'no pictures in the group');
+    sent.length = 0;
+    await owner.call('POST', `/payments/${tg6.body.payment.id}/void`, { reason: 'sinov uchun' });
+    await backgroundSettled();
+    assert.deepEqual(sent.map((x) => Number(x.body.chat_id)).sort(), [-1001, 777], 'cancel alerts still go to the group');
+    await owner.call('PUT', '/telegram/group/kinds', { payments: true, cancels: false });
+    sent.length = 0;
+    await owner.call('POST', `/expenses/${(await owner.call('POST', '/expenses', { amount: 5000, source: 'cash', category: 'paket', note: 'x' })).body.expense.id}/void`, { reason: 'sinov uchun' });
+    await backgroundSettled();
+    assert.deepEqual(sent.map((x) => Number(x.body.chat_id)), [777], 'cancel alerts only to the owner');
+    await owner.call('PUT', '/telegram/group/kinds', { payments: true, cancels: true });
+
+    // Orders taken off the list: one alert with how many, the total and who.
+    const delRows = [1, 2].map((i) => ({ clientCode: 'TGD-10000' + i, orderNo: `7700${i}`, transport: 'Avto', amount: 2000 * i }));
+    const delOrders = (await owner.call('POST', '/orders/import', { rows: delRows })).body.orders;
+    sent.length = 0;
+    await owner.call('POST', '/orders/delete', { ids: delOrders.map((o: any) => o.id) });
+    await backgroundSettled();
+    assert.equal(sent.length, 2, 'owner and group, once each');
+    assert.match(sent[0].body.text, /2 ta buyurtma oʻchirildi[\s\S]*6 000 soʻm[\s\S]*TGD-100001/);
 
     // Backup: every table, without passwords or the token.
     const backup = await owner.call('GET', '/backup');
