@@ -4,7 +4,7 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useApi, useLive } from '../lib/live';
 import { groupDigits, money, rangeLabel, relativeDay } from '../lib/format';
-import { PERM_INFO, PRESETS, can, roleLabel, type Perm } from '../lib/perms';
+import { ADMIN_DEFAULT, NEEDS_KASSA, PERM_GROUPS, PRESETS, can, roleLabel, type Perm } from '../lib/perms';
 import type { Role, Staff } from '../lib/types';
 import { DateRangePicker, presetRange, type Range } from '../components/DateRange';
 import { Alert, Avatar, Badge, Button, Card, EmptyState, ErrorState, Field, Input, MethodCells, MethodHeads, Modal, PageHeader, Segmented, SkeletonRows, cx, td, th, useToast } from '../components/ui';
@@ -131,7 +131,7 @@ function StaffModal({ staff, onClose }: { staff: Staff | null; onClose: () => vo
     if (k === 'ega') return setRole('owner');
     if (k === 'admin') {
       setRole('admin');
-      return setPerms(PERM_INFO.map((p) => p.perm));
+      return setPerms(ADMIN_DEFAULT);
     }
     setRole('worker');
     setPerms(PRESETS[k]);
@@ -140,7 +140,7 @@ function StaffModal({ staff, onClose }: { staff: Staff | null; onClose: () => vo
   if (isOwner) kinds.push({ value: 'admin', label: 'Admin' }, { value: 'ega', label: 'Ega' });
   const KIND_HINT: Record<Kind, string> = {
     ega: 'Hamma narsani qiladi, adminlarni ham boshqaradi. Uni cheklab boʻlmaydi',
-    admin: 'Barcha ruxsatlar bilan boshlanadi. Keraksizini pastda olib tashlang',
+    admin: 'Xabarlardan boshqa barcha ruxsatlar bilan boshlanadi. Keraksizini pastda olib tashlang',
     kassir: 'Toʻlov kiritadi. Qolgan ruxsatlarni pastda belgilang',
     ishchi: 'Faqat kelish-ketishini belgilaydi. Kerak boʻlsa pastda ruxsat bering',
   };
@@ -203,18 +203,48 @@ function StaffModal({ staff, onClose }: { staff: Staff | null; onClose: () => vo
         </Field>
         {role !== 'owner' && (
           <div>
-            <div className="mb-1.5 text-sm font-medium text-ink">Ruxsatlar</div>
-            <div className="divide-y divide-line rounded-lg border border-line">
-              {PERM_INFO.map((p) => (
-                <label key={p.perm} className={cx('flex items-start gap-3 px-3 py-2.5', can(user, p.perm) ? 'cursor-pointer hover:bg-surface-2/60' : 'opacity-50')}>
-                  {/* Nobody can hand out a right they do not have themselves. */}
-                  <input type="checkbox" checked={perms.includes(p.perm)} disabled={!can(user, p.perm)} onChange={() => toggle(p.perm)} className="mt-0.5 size-4 shrink-0 accent-[var(--ink)]" />
-                  <span className="min-w-0">
-                    <span className="block text-sm text-ink">{p.label}</span>
-                    <span className="block text-xs text-ink-3">{p.hint}</span>
-                  </span>
-                </label>
-              ))}
+            <div className="mb-1.5 flex items-baseline justify-between gap-2">
+              <div className="text-sm font-medium text-ink">Ruxsatlar</div>
+              <div className="text-xs text-ink-3 num">{perms.length} ta yoqilgan</div>
+            </div>
+            <div className="space-y-3">
+              {PERM_GROUPS.map((g) => {
+                const mine = g.perms.filter((p) => can(user, p.perm));
+                const onCount = g.perms.filter((p) => perms.includes(p.perm)).length;
+                const allOn = mine.length > 0 && mine.every((p) => perms.includes(p.perm));
+                const setAll = (on: boolean) => setPerms((list) => on
+                  ? [...new Set([...list, ...mine.map((p) => p.perm)])]
+                  : list.filter((x) => !mine.some((p) => p.perm === x)));
+                return (
+                  <section key={g.title} className="overflow-hidden rounded-xl border border-line">
+                    <div className="flex items-center justify-between gap-3 bg-surface-2/70 px-3 py-2">
+                      <div className="flex items-center gap-2 text-[13px] font-semibold text-ink">
+                        {g.title}
+                        <span className={cx('rounded-full px-1.5 py-px text-[11px] font-medium num', onCount ? 'bg-success-soft text-success' : 'bg-surface-3 text-ink-3')}>{onCount}/{g.perms.length}</span>
+                      </div>
+                      {g.perms.length > 1 && mine.length > 0 && (
+                        <button type="button" onClick={() => setAll(!allOn)} className="text-xs font-medium text-primary hover:underline">{allOn ? 'Hammasini olish' : 'Hammasini berish'}</button>
+                      )}
+                    </div>
+                    <div className="divide-y divide-line">
+                      {g.perms.map((p) => {
+                        // Nobody can hand out a right they do not have themselves.
+                        const allowed = can(user, p.perm);
+                        const idle = NEEDS_KASSA.includes(p.perm) && !perms.includes('kassa.cash') && !perms.includes('kassa.card');
+                        return (
+                          <label key={p.perm} className={cx('flex items-start gap-3 px-3 py-2.5', allowed ? 'cursor-pointer hover:bg-surface-2/60' : 'opacity-50')}>
+                            <input type="checkbox" checked={perms.includes(p.perm)} disabled={!allowed} onChange={() => toggle(p.perm)} className="mt-0.5 size-4 shrink-0 accent-[var(--ink)]" />
+                            <span className="min-w-0">
+                              <span className="block text-sm text-ink">{p.label}</span>
+                              <span className="block text-xs text-ink-3">{idle && perms.includes(p.perm) ? 'Kassa ochilmagan: avval 1-kassa yoki 2-kassani belgilang' : p.hint}</span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </section>
+                );
+              })}
             </div>
             <p className="mt-1.5 text-xs text-ink-3">Kelish-ketishni belgilash hammaga ochiq. Oʻzgarish xodimda darhol kuchga kiradi.</p>
           </div>

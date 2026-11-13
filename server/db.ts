@@ -378,7 +378,19 @@ CREATE TABLE IF NOT EXISTS telegram_log (
 ALTER TABLE telegram_log ENABLE ROW LEVEL SECURITY;
 `;
 
-const SCHEMA_VERSION = 13;
+// New rights split out of older ones: whoever had the older right keeps what it used to allow.
+const SCHEMA_V14_SQL = `
+UPDATE app_users SET permissions = array_cat(permissions, ARRAY['orders.manage'])
+ WHERE permissions IS NOT NULL AND 'payments.create' = ANY(permissions) AND NOT 'orders.manage' = ANY(permissions);
+UPDATE app_users SET permissions = array_cat(permissions, ARRAY['orders.delete'])
+ WHERE permissions IS NOT NULL AND 'payments.void' = ANY(permissions) AND NOT 'orders.delete' = ANY(permissions);
+UPDATE app_users SET permissions = array_cat(permissions, ARRAY['expenses.create', 'expenses.void', 'kassa.adjust', 'kassa.import'])
+ WHERE permissions IS NOT NULL AND permissions && ARRAY['kassa.cash', 'kassa.card', 'balance.view'] AND NOT 'expenses.create' = ANY(permissions);
+UPDATE app_users SET permissions = array_cat(permissions, ARRAY['clients.view'])
+ WHERE permissions IS NOT NULL AND NOT 'clients.view' = ANY(permissions);
+`;
+
+const SCHEMA_VERSION = 14;
 
 export function ensureSchema(): Promise<void> {
   if (!globalForPool.__kassaSchema) {
@@ -419,6 +431,7 @@ async function migrate() {
       if (current < 11) await client.query(SCHEMA_V11_SQL);
       if (current < 12) await client.query(SCHEMA_V12_SQL);
       if (current < 13) await client.query(SCHEMA_V13_SQL);
+      if (current < 14) await client.query(SCHEMA_V14_SQL);
       await client.query(
         `INSERT INTO app_meta (key, value) VALUES ('schema_version', $1::jsonb)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,

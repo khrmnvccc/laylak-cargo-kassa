@@ -8,7 +8,7 @@ import { ImportKassa } from '../components/ImportKassa';
 import { useApi, useLive } from '../lib/live';
 import { addDays, dateTime, formatDate, groupDigits, methodColor, methodLabel, money, nowMs, rangeLabel, startOfMonth, timeOf, todayTashkent, weekday } from '../lib/format';
 import { downloadKassaBook } from '../lib/excel';
-import { kassaSources } from '../lib/perms';
+import { can, kassaSources } from '../lib/perms';
 import type { BalanceMonth, BalanceReport, Expense, ExpenseCategory, SourceBalance } from '../lib/types';
 import {
   Alert, Badge, Button, Card, CardHeader, EmptyState, ErrorState, Field, IconButton, Input, MethodBadge, Modal, PageHeader, Segmented, Select,
@@ -73,11 +73,11 @@ export default function Balance() {
         subtitle={both ? '1-kassa (naqd) va 2-kassa (karta): qancha pul borligi, kunlik rasxodlar' : `${accounts[0]?.label ?? 'Kassa'}: qancha pul borligi, kunlik rasxodlar`}
         collapse
         actions={<>
-          <Button icon={<Upload className="size-4" />} onClick={() => setModal('import')}>Daftarni yuklash</Button>
+          {can(user, 'kassa.import') && <Button icon={<Upload className="size-4" />} onClick={() => setModal('import')}>Daftarni yuklash</Button>}
           <Button icon={<FileSpreadsheet className="size-4" />} onClick={() => setModal('month')}>Kassa Excel</Button>
           <PrintButton disabled={!data} run={() => data && printBalance(data, user.full_name)} />
-          <Button icon={<Scale className="size-4" />} onClick={() => setModal('adjust')}>Qoldiqni tuzatish</Button>
-          <Button variant="primary" icon={<Minus className="size-4" />} onClick={() => setModal('expense')}>Rasxod qoʻshish</Button>
+          {can(user, 'kassa.adjust') && <Button icon={<Scale className="size-4" />} onClick={() => setModal('adjust')}>Qoldiqni tuzatish</Button>}
+          {can(user, 'expenses.create') && <Button variant="primary" icon={<Minus className="size-4" />} onClick={() => setModal('expense')}>Rasxod qoʻshish</Button>}
         </>}
       />
 
@@ -202,7 +202,7 @@ export default function Balance() {
                   <h3 className="text-[15px] font-semibold tracking-tight text-ink">Kunlik rasxod</h3>
                   <p className="mt-0.5 text-[13px] text-ink-3 num">{data ? `${activeExpenses.length} ta · jami ${money(expenseTotal)}` : ' '}</p>
                 </div>
-                <Button size="sm" icon={<Plus className="size-4" />} onClick={() => setModal('expense')}>Qoʻshish</Button>
+                {can(user, 'expenses.create') && <Button size="sm" icon={<Plus className="size-4" />} onClick={() => setModal('expense')}>Qoʻshish</Button>}
               </div>
               <div className="mt-3 border-t border-line">
                 {loading && !data ? <SkeletonRows rows={3} cols={3} /> : !data?.expenses.length ? (
@@ -535,6 +535,8 @@ function AdjustForm({ allowed, sources, onClose }: { allowed: Array<'cash' | 'ca
 }
 
 function ExpenseDetail({ expense, onClose }: { expense: Expense; onClose: () => void }) {
+  const { user } = useAuth();
+  const canVoid = can(user, 'expenses.void');
   const { bump } = useLive();
   const toast = useToast();
   const [voiding, setVoiding] = useState(false);
@@ -572,7 +574,7 @@ function ExpenseDetail({ expense, onClose }: { expense: Expense; onClose: () => 
         <><Button onClick={() => setVoiding(false)}>Ortga</Button><Button variant="danger" loading={busy} onClick={doVoid} icon={<Ban className="size-4" />}>Bekor qilishni tasdiqlash</Button></>
       ) : (
         <>
-          {!expense.voided_at && <Button variant="ghost" className="text-danger hover:text-danger sm:mr-auto" onClick={() => setVoiding(true)} icon={<Ban className="size-4" />}>Bekor qilish</Button>}
+          {!expense.voided_at && canVoid && <Button variant="ghost" className="text-danger hover:text-danger sm:mr-auto" onClick={() => setVoiding(true)} icon={<Ban className="size-4" />}>Bekor qilish</Button>}
           <Button onClick={onClose} data-autofocus>Yopish</Button>
         </>
       )}>
