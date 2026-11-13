@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ButtonHTMLAttributes, type ComponentProps, type ReactNode, type SelectHTMLAttributes } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertCircle, ArrowDownRight, ArrowUpRight, CheckCircle2, ChevronDown, Inbox, Loader2, Minus, RefreshCw, X } from 'lucide-react';
+import { AlertCircle, ArrowDownRight, ArrowUpRight, CheckCircle2, ChevronDown, Inbox, Loader2, Minus, MoreHorizontal, RefreshCw, X } from 'lucide-react';
 import { CARD_METHODS, cardTotal, isCardMethod, methodColor, methodLabel, money, percentChange } from '../lib/format';
 
 export const cx = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
@@ -68,14 +68,38 @@ export function CardHeader({ title, subtitle, action }: { title: ReactNode; subt
   );
 }
 
-export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: ReactNode; actions?: ReactNode }) {
+export function PageHeader({ title, subtitle, actions, collapse }: { title: string; subtitle?: ReactNode; actions?: ReactNode; collapse?: boolean }) {
+  // On a phone, `collapse` tucks the buttons into one "Amallar" menu at the title's right, so the page starts at once.
+  // The buttons stay mounted (only hidden), so dialogs they open keep working after the menu closes.
+  const [open, setOpen] = useState(false);
+  const menu = Boolean(collapse && actions);
   return (
     <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-end sm:justify-between">
-      <div className="min-w-0">
-        <h1 className="text-[22px] font-semibold tracking-tight text-ink sm:text-2xl">{title}</h1>
-        {subtitle && <p className="mt-1 text-sm text-ink-3">{subtitle}</p>}
+      <div className={cx('min-w-0', menu && 'flex items-start justify-between gap-3 sm:block')}>
+        <div className="min-w-0">
+          <h1 className="text-[22px] font-semibold tracking-tight text-ink sm:text-2xl">{title}</h1>
+          {subtitle && <p className="mt-1 text-sm text-ink-3">{subtitle}</p>}
+        </div>
+        {menu && (
+          <button type="button" aria-expanded={open} aria-label="Amallar" onClick={() => setOpen((v) => !v)}
+            className={cx('no-print relative z-40 inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-line px-3 text-[13px] font-medium transition-colors sm:hidden',
+              open ? 'bg-surface-2 text-ink' : 'bg-surface text-ink-2')}>
+            Amallar<MoreHorizontal className="size-4" />
+          </button>
+        )}
       </div>
-      {actions && <div className="no-print flex flex-wrap items-center gap-2">{actions}</div>}
+      {actions && (menu ? (
+        <div className="relative sm:static">
+          {open && <div className="fixed inset-0 z-30 sm:hidden" onClick={() => setOpen(false)} />}
+          <div onClick={(e) => { if ((e.target as HTMLElement).closest('button')) setOpen(false); }}
+            className={cx('no-print flex flex-wrap items-center gap-2',
+              'max-sm:absolute max-sm:right-0 max-sm:-top-2 max-sm:z-40 max-sm:w-64 max-sm:flex-col max-sm:items-stretch max-sm:gap-1 max-sm:rounded-xl max-sm:border max-sm:border-line max-sm:bg-[var(--bg)] max-sm:p-1.5 max-sm:shadow-pop',
+              'max-sm:[&_button]:w-full max-sm:[&_button]:justify-start',
+              !open && 'max-sm:hidden')}>
+            {actions}
+          </div>
+        </div>
+      ) : <div className="no-print flex flex-wrap items-center gap-2">{actions}</div>)}
     </div>
   );
 }
