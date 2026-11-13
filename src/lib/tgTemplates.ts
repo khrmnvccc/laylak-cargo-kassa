@@ -86,8 +86,11 @@ export const TEMPLATES: TemplateDef[] = [
   },
 ];
 
-/** What the owner changed: their own texts, and the messages they switched off. */
-export interface TemplateSettings { texts: Partial<Record<TemplateKey, string>>; off: TemplateKey[] }
+/** Which chats one message goes to. A missing value means: the owner's chat yes, the group as before. */
+export interface TemplateChats { personal?: boolean; group?: boolean }
+
+/** What the owner changed: their own texts, the messages they switched off, and where each one goes. */
+export interface TemplateSettings { texts: Partial<Record<TemplateKey, string>>; off: TemplateKey[]; chats?: Partial<Record<TemplateKey, TemplateChats>> }
 
 export const TEMPLATE_BY_KEY = Object.fromEntries(TEMPLATES.map((t) => [t.key, t])) as Record<TemplateKey, TemplateDef>;
 

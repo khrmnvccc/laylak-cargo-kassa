@@ -322,11 +322,11 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry?: ()
   );
 }
 
-export function Alert({ tone = 'danger', children }: { tone?: 'danger' | 'success' | 'warn'; children: ReactNode }) {
+export function Alert({ tone = 'danger', className, children }: { tone?: 'danger' | 'success' | 'warn'; className?: string; children: ReactNode }) {
   const map = { danger: 'bg-danger-soft text-danger', success: 'bg-success-soft text-success', warn: 'bg-warn-soft text-warn' };
   const Icon = tone === 'success' ? CheckCircle2 : AlertCircle;
   return (
-    <div className={cx('flex items-start gap-2 rounded-lg px-3 py-2.5 text-[13px] anim-fade', map[tone])}>
+    <div className={cx('flex items-start gap-2 rounded-lg px-3 py-2.5 text-[13px] anim-fade', map[tone], className)}>
       <Icon className="mt-px size-4 shrink-0" />
       <div>{children}</div>
     </div>

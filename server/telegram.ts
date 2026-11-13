@@ -1,5 +1,5 @@
 import { HttpError, query } from './db.js';
-import { MAX_TEMPLATE_LENGTH, TEMPLATE_BY_KEY, renderTemplate, type TemplateKey, type TemplateSettings } from '../src/lib/tgTemplates.js';
+import { MAX_TEMPLATE_LENGTH, TEMPLATE_BY_KEY, renderTemplate, type TemplateChats, type TemplateKey, type TemplateSettings } from '../src/lib/tgTemplates.js';
 
 // The owner's Telegram bot. The token is typed in once on the Sozlamalar page and kept only in the
 // database (app_meta 'telegram'); it is never sent back to the browser or put in a backup.
@@ -160,9 +160,13 @@ export async function notify(text: string | null, template: TemplateKey) {
  * Returns false when both are paused, so nothing was sent.
  */
 async function everyChat(config: TelegramConfig, kind: MessageKind, log: { template: string; text: string }, send: (chatId: number, topic: Record<string, number>) => Promise<unknown>): Promise<boolean> {
-  const groupWants = kind === 'payments' ? config.groupPayments !== false : config.groupCancels !== false;
+  // Each message can be sent to the owner's chat, the group, or both (set on the Xabarlar page).
+  const settings = await getTemplateSettings().catch((): TemplateSettings => ({ texts: {}, off: [] }));
+  const where = settings.chats?.[log.template as TemplateKey];
+  const groupWants = where?.group ?? (kind === 'payments' ? config.groupPayments !== false : config.groupCancels !== false);
+  const personalWants = where?.personal !== false;
   const chats = [
-    config.personalPaused ? undefined : config.chatId,
+    config.personalPaused || !personalWants ? undefined : config.chatId,
     config.groupPaused || !groupWants ? undefined : config.groupId,
   ].filter((id): id is number => Boolean(id));
   if (!chats.length) return false;
@@ -251,13 +255,14 @@ export async function getTemplateSettings(): Promise<TemplateSettings> {
   if (templateCache && templateCache.until > Date.now()) return templateCache.value;
   const rows = await query(`SELECT value FROM app_meta WHERE key = 'telegram_templates'`);
   const raw = (rows[0]?.value || {}) as Partial<TemplateSettings>;
-  const value: TemplateSettings = { texts: raw.texts || {}, off: (raw.off || []).filter((k) => TEMPLATE_BY_KEY[k]) };
+  const chats = Object.fromEntries(Object.entries(raw.chats || {}).filter(([k]) => TEMPLATE_BY_KEY[k as TemplateKey]));
+  const value: TemplateSettings = { texts: raw.texts || {}, off: (raw.off || []).filter((k) => TEMPLATE_BY_KEY[k]), chats };
   templateCache = { value, until: Date.now() + 30_000 };
   return value;
 }
 
 /** Changes one message: its text (null or the default puts the default back) and/or whether it is sent at all. */
-export async function saveTemplate(key: TemplateKey, change: { text?: string | null; on?: boolean }) {
+export async function saveTemplate(key: TemplateKey, change: { text?: string | null; on?: boolean; chats?: TemplateChats }) {
   const current = await getTemplateSettings();
   const texts = { ...current.texts };
   let off = [...current.off];
@@ -268,7 +273,9 @@ export async function saveTemplate(key: TemplateKey, change: { text?: string | n
     else texts[key] = clean;
   }
   if (change.on !== undefined) off = change.on ? off.filter((k) => k !== key) : [...new Set([...off, key])];
-  const next: TemplateSettings = { texts, off };
+  const chats = { ...current.chats };
+  if (change.chats) chats[key] = { ...chats[key], ...change.chats };
+  const next: TemplateSettings = { texts, off, chats };
   templateCache = null;
   await query(
     `INSERT INTO app_meta (key, value) VALUES ('telegram_templates', $1::jsonb)

@@ -373,7 +373,7 @@ test('worker permissions are set by the admin and enforced by the server', async
   const id = created.body.staff.id;
   const w = new Client();
   const login = await w.call('POST', '/auth/login', { username: 'nodir', password: 'worker123' });
-  assert.deepEqual(login.body.user.permissions, ['payments.create', 'reports.view'], 'default worker rights');
+  assert.deepEqual(login.body.user.permissions, ['payments.create', 'reports.view', 'orders.manage', 'clients.view'], 'default worker rights');
   assert.equal((await w.call('GET', '/balance')).status, 403);
   assert.equal((await w.call('GET', '/summary')).status, 200);
 
@@ -666,7 +666,7 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     assert.equal((await owner.call('POST', '/telegram/templates/test', { key: 'payment', text: '' })).status, 200);
     assert.match(sent[0].body.text, /Namuna[\s\S]*<b>Naqd · 125 000 soʻm<\/b>/);
     assert.deepEqual((await owner.call('PUT', '/telegram/templates', { key: 'paymentVoid', text: null })).body.texts, {});
-    assert.deepEqual((await owner.call('GET', '/telegram/templates')).body, { texts: {}, off: [] });
+    assert.deepEqual((await owner.call('GET', '/telegram/templates')).body, { texts: {}, off: [], chats: {} });
 
     // A message switched off is not sent at all; the payment itself is still saved.
     assert.deepEqual((await owner.call('PUT', '/telegram/templates', { key: 'payment', on: false })).body.off, ['payment']);
@@ -677,10 +677,48 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     assert.equal(sent.length, 0, 'payment message switched off');
     assert.deepEqual((await owner.call('PUT', '/telegram/templates', { key: 'payment', on: true })).body.off, []);
 
+    // Each message picks its own chats: the owner's account, the group, or both.
+    await owner.call('PUT', '/telegram/templates', { key: 'paymentVoid', text: null });
+    const routed = await owner.call('PUT', '/telegram/templates', { key: 'paymentVoid', chats: { group: false } });
+    assert.deepEqual(routed.body.chats, { paymentVoid: { group: false } });
+    const r1 = await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'RT-1', amount: 1000, method: 'cash' });
+    await backgroundSettled();
+    sent.length = 0;
+    await owner.call('POST', `/payments/${r1.body.payment.id}/void`, { reason: 'sinov uchun' });
+    await backgroundSettled();
+    assert.deepEqual(sent.map((x) => Number(x.body.chat_id)), [777], 'cancel alert to the owner only');
+    await owner.call('PUT', '/telegram/templates', { key: 'payment', chats: { personal: false } });
+    sent.length = 0;
+    const r2 = await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'RT-2', amount: 1000, method: 'cash' });
+    await backgroundSettled();
+    assert.deepEqual(sent.map((x) => Number(x.body.chat_id)), [-1001], 'payment picture to the group only');
+    await owner.call('PUT', '/telegram/templates', { key: 'paymentVoid', chats: { personal: false, group: false } });
+    sent.length = 0;
+    await owner.call('POST', `/payments/${r2.body.payment.id}/void`, { reason: 'sinov uchun' });
+    await backgroundSettled();
+    assert.equal(sent.length, 0, 'no chat chosen: sent nowhere');
+    assert.equal((await owner.call('PUT', '/telegram/templates', { key: 'dailyReport', chats: { group: true } })).status, 400, 'the report stays with the owner');
+    await owner.call('PUT', '/telegram/templates', { key: 'paymentVoid', chats: { personal: true, group: true } });
+    await owner.call('PUT', '/telegram/templates', { key: 'payment', chats: { personal: true } });
+
+    // Someone the owner allowed manages the messages; linking the bot and the backup stay with the owner.
+    assert.equal((await owner.call('POST', '/staff', { username: 'xabarchi', fullName: 'Xabarchi', password: 'worker123', role: 'admin' })).status, 201);
+    const adm = new Client();
+    assert.equal((await adm.call('POST', '/auth/login', { username: 'xabarchi', password: 'worker123' })).status, 200);
+    assert.equal((await adm.call('GET', '/telegram')).status, 403, 'an admin does not get messages by default');
+    const admId = (await owner.call('GET', '/staff')).body.items.find((u: any) => u.username === 'xabarchi').id;
+    assert.equal((await owner.call('PATCH', `/staff/${admId}`, { permissions: ['messages.manage', 'reports.view'] })).status, 200);
+    assert.equal((await adm.call('GET', '/telegram')).status, 200);
+    assert.equal((await adm.call('PUT', '/telegram/templates', { key: 'expenseVoid', on: true })).status, 200);
+    assert.equal((await adm.call('DELETE', '/telegram')).status, 403);
+    assert.equal((await adm.call('GET', '/backup')).status, 403);
+    await owner.call('PATCH', `/staff/${admId}`, { isActive: false });
+
     // The sent list shows what went where, newest first.
-    const sentList = (await owner.call('GET', '/telegram/log', undefined, { limit: '5' })).body;
+    const sentList = (await owner.call('GET', '/telegram/log', undefined, { limit: '40' })).body;
     assert.ok(sentList.total > 0);
-    assert.equal(sentList.items[0].template, 'test');
+    assert.equal(sentList.items[0].template, 'payment', 'newest first');
+    assert.ok(sentList.items.some((m: any) => m.template === 'test'));
     assert.ok(sentList.items.some((m: any) => m.template === 'paymentVoid' && m.ok));
     assert.equal((await w.call('GET', '/telegram/log')).status, 403);
 
@@ -1095,8 +1133,9 @@ test('two kassas: each person sees only the kassa the owner opened, and the book
     await c.call('POST', '/auth/login', { username, password: 'worker123' });
     return c;
   };
-  const one = await make('kassa1', ['kassa.cash']);
-  const two = await make('kassa2', ['kassa.card']);
+  const KASSA_WORK = ['expenses.create', 'expenses.void', 'kassa.adjust', 'kassa.import'];
+  const one = await make('kassa1', ['kassa.cash', ...KASSA_WORK]);
+  const two = await make('kassa2', ['kassa.card', ...KASSA_WORK]);
   const none = await make('kassa0', ['reports.view']);
 
   // The daily report book: the date only on the day's first row, a client paying cash and card on one line.
@@ -1175,4 +1214,51 @@ test('two kassas: each person sees only the kassa the owner opened, and the book
     [104298, 1, 164000, null, null],
     [null, null, 164000, 0, 164000],
   ]);
+});
+
+test('rights for orders and the kassa, older rights carried over, and page settings', async () => {
+  const owner = new Client();
+  assert.equal((await owner.call('POST', '/auth/login', { username: 'admin', password: 'password123' })).status, 200);
+  const make = async (username: string, permissions: string[]) => {
+    const r = await owner.call('POST', '/staff', { username, fullName: username, password: 'worker123', role: 'worker', permissions });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    const c = new Client();
+    await c.call('POST', '/auth/login', { username, password: 'worker123' });
+    return { c, id: r.body.staff.id as string };
+  };
+
+  // Seeing a kassa no longer means writing in it: each action has its own right.
+  const viewer = (await make('kassa_view', ['kassa.cash'])).c;
+  assert.equal((await viewer.call('GET', '/balance')).status, 200);
+  assert.equal((await viewer.call('POST', '/expenses', { amount: 1000, source: 'cash', category: 'paket' })).status, 403);
+  assert.equal((await viewer.call('POST', '/adjustments', { amount: 1000, source: 'cash', note: 'sinov' })).status, 403);
+  assert.equal((await viewer.call('POST', '/expenses/import', { rows: [{}] })).status, 403);
+  const spender = (await make('kassa_spend', ['kassa.cash', 'expenses.create'])).c;
+  const spent = await spender.call('POST', '/expenses', { amount: 1000, source: 'cash', category: 'paket' });
+  assert.equal(spent.status, 201);
+  assert.equal((await spender.call('POST', `/expenses/${spent.body.expense.id}/void`, { reason: 'sinov uchun' })).status, 403);
+
+  // Orders: working with them and deleting them are separate rights.
+  const cashier = (await make('buyurtmachi', ['orders.manage'])).c;
+  assert.equal((await cashier.call('GET', '/orders')).status, 200);
+  assert.equal((await cashier.call('POST', '/orders/delete', { ids: [] })).status, 403);
+  assert.equal((await (await make('kassir_eski', ['payments.create'])).c.call('GET', '/orders')).status, 403, 'payment entry alone does not open orders');
+
+  // Lists saved before these rights existed keep what the older right allowed.
+  const old = await make('eski', ['payments.create']);
+  await getPool().query(`UPDATE app_users SET permissions = ARRAY['payments.create', 'payments.void', 'kassa.card'] WHERE id = $1`, [old.id]);
+  await getPool().query(`UPDATE app_meta SET value = '13'::jsonb WHERE key = 'schema_version'`);
+  const { ensureSchema } = await import('../server/db.js');
+  (globalThis as any).__kassaSchema = undefined;
+  await ensureSchema();
+  const upgraded = (await getPool().query(`SELECT permissions FROM app_users WHERE id = $1`, [old.id])).rows[0].permissions;
+  assert.deepEqual([...upgraded].sort(), ['clients.view', 'expenses.create', 'expenses.void', 'kassa.adjust', 'kassa.card', 'kassa.import', 'orders.delete', 'orders.manage', 'payments.create', 'payments.void'].sort());
+
+  // Pages: everyone reads the settings, only the owner changes them; settings itself can never be paused.
+  assert.deepEqual((await cashier.call('GET', '/pages')).body.pages, { orders: { paused: true } }, 'Buyurtmalar stays paused as before');
+  assert.equal((await cashier.call('PUT', '/pages', { pages: {} })).status, 403);
+  const saved = await owner.call('PUT', '/pages', { pages: { orders: {}, clients: { who: 'boss', label: '  Mijozlar   roʻyxati ' }, settings: { paused: true, who: 'owner' }, nimadir: { paused: true }, daily: { paused: true, who: 'all' } } });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.body.pages, { clients: { who: 'boss', label: 'Mijozlar roʻyxati' }, daily: { paused: true } });
+  assert.deepEqual((await cashier.call('GET', '/pages')).body.pages, saved.body.pages);
 });

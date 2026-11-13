@@ -6,11 +6,14 @@ import { clearApiCache, LiveProvider, loadApiCache } from './lib/live';
 import { prefetchFirstScreens } from './lib/prefetch';
 import { useRoute } from './lib/router';
 import { useTheme } from './lib/theme';
-import { canSee, homePage, isPaused } from './lib/perms';
+import { canSee, homePage, isPaused, setPageSettings } from './lib/perms';
+import { useApi } from './lib/live';
+import type { PageSettings } from './lib/pageConfig';
+import type { Route } from './lib/router';
 import type { User } from './lib/types';
 import { Layout } from './components/Layout';
 import { InstallPrompt } from './components/InstallPrompt';
-import { Card, EmptyState, ErrorState, ToastProvider } from './components/ui';
+import { Alert, Card, EmptyState, ErrorState, ToastProvider } from './components/ui';
 import { Wrench } from 'lucide-react';
 import { href } from './lib/router';
 import { LoginPage } from './pages/Login';
@@ -26,6 +29,7 @@ const loaders = {
   balance: () => import('./pages/Balance'),
   clients: () => import('./pages/Clients'),
   attendance: () => import('./pages/Attendance'),
+  messages: () => import('./pages/Messages'),
   settings: () => import('./pages/Settings'),
 };
 const pages = Object.fromEntries(Object.entries(loaders).map(([k, load]) => [k, lazy(load)])) as { [K in keyof typeof loaders]: ReturnType<typeof lazy> };
@@ -56,7 +60,7 @@ function saveUser(user: User | null) {
 
 type Boot = { state: 'loading' } | { state: 'error'; message: string } | { state: 'anon'; needsSetup: boolean; setupKeyConfigured: boolean } | { state: 'ready'; user: User };
 
-/** Shown in place of a page that is switched off for now (PAUSED_PAGES). */
+/** Shown in place of a page the owner paused for now (Sozlamalar → Oynalar). */
 function PausedPage() {
   return (
     <Card className="mx-auto mt-6 max-w-lg">
@@ -146,23 +150,38 @@ export default function App() {
 
   const user = boot.user;
   loadApiCache(user.id);
-  const page = canSee(user, route.page) ? route.page : homePage(user);
-  const PageComponent = pages[page];
 
   return (
     <AuthContext.Provider value={{ user, setUser: (u) => { saveUser(u); setBoot({ state: 'ready', user: u }); }, logout }}>
       <ToastProvider>
         <LiveProvider key={user.id}>
-          <Layout page={page} user={user} onLogout={logout}>
-            <Suspense fallback={<PageFallback />}>
-              <div key={page} className="anim-rise">
-                {isPaused(page) ? <PausedPage /> : <PageComponent params={route.params} />}
-              </div>
-            </Suspense>
-          </Layout>
+          <Pages user={user} route={route} onLogout={logout} />
           <InstallPrompt />
         </LiveProvider>
       </ToastProvider>
     </AuthContext.Provider>
+  );
+}
+
+/** The menu and the open page, drawn with the owner's page settings (who sees what, what is paused). */
+function Pages({ user, route, onLogout }: { user: User; route: Route; onLogout: () => void }) {
+  const { data } = useApi<{ pages: PageSettings }>('/pages');
+  setPageSettings(data?.pages);
+  const page = canSee(user, route.page) ? route.page : homePage(user);
+  const PageComponent = pages[page];
+  const paused = isPaused(page);
+  return (
+    <Layout page={page} user={user} onLogout={onLogout}>
+      <Suspense fallback={<PageFallback />}>
+        <div key={page} className="anim-rise">
+          {paused && user.role !== 'owner' ? <PausedPage /> : (
+            <>
+              {paused && <Alert tone="warn" className="mb-4">Bu oyna vaqtincha toʻxtatilgan: boshqalar uni ochsa “Vaqtincha ishlamayapti” koʻradi. Sozlamalar → Oynalar boʻlimida qayta yoqasiz.</Alert>}
+              <PageComponent params={route.params} />
+            </>
+          )}
+        </div>
+      </Suspense>
+    </Layout>
   );
 }

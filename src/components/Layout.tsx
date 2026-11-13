@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import {
-  BarChart3, Clock, Landmark, CalendarDays, LayoutDashboard, ListOrdered, LogOut, Menu, Moon, Package, Plus, Settings, Sun, UserSearch, Users, Wallet, X,
+  BarChart3, Bell, Clock, Landmark, CalendarDays, LayoutDashboard, ListOrdered, LogOut, Menu, Moon, Package, Plus, Settings, Sun, UserSearch, Users, Wallet, X,
 } from 'lucide-react';
 import { href, type Page } from '../lib/router';
 import { useLive } from '../lib/live';
@@ -8,14 +8,14 @@ import { useTheme } from '../lib/theme';
 import { formatDate, todayTashkent, weekday } from '../lib/format';
 import type { User } from '../lib/types';
 import { LANG, LANGS, setLang } from '../lib/i18n';
-import { can, canSee, isPaused, roleLabel } from '../lib/perms';
+import { can, canSee, isPaused, pageLabel, roleLabel } from '../lib/perms';
 import { AttendanceButton } from './AttendanceButton';
 import { StorkMark } from './Brand';
 import { StickerPay } from './StickerPay';
 import { Avatar, Button, IconButton, cx } from './ui';
 
 interface NavItem { page: Page; label: string; icon: typeof Wallet }
-const NAV: Array<{ group: string; items: NavItem[] }> = [
+export const NAV: Array<{ group: string; items: NavItem[] }> = [
   {
     group: 'Asosiy',
     items: [
@@ -39,6 +39,7 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
       { page: 'workers', label: 'Ishchilar', icon: Users },
       { page: 'attendance', label: 'Davomat', icon: Clock },
       { page: 'clients', label: 'Mijozlar', icon: UserSearch },
+      { page: 'messages', label: 'Xabarlar', icon: Bell },
       { page: 'settings', label: 'Sozlamalar', icon: Settings },
     ],
   },
@@ -46,7 +47,7 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
 
 export const PAGE_TITLES: Record<Page, string> = {
   dashboard: 'Dashboard', kassa: 'Toʻlov kiritish', orders: 'Buyurtmalar', operations: 'Operatsiyalar', daily: 'Kunlik hisobot',
-  periods: 'Haftalik va oylik hisobot', workers: 'Ishchilar', attendance: 'Davomat', clients: 'Mijozlar', balance: 'Kassa balansi', settings: 'Sozlamalar',
+  periods: 'Haftalik va oylik hisobot', workers: 'Ishchilar', attendance: 'Davomat', clients: 'Mijozlar', balance: 'Kassa balansi', messages: 'Xabarlar', settings: 'Sozlamalar',
 };
 
 function Logo({ compact }: { compact?: boolean }) {
@@ -99,7 +100,7 @@ function NavLinks({ page, user, onNavigate }: { page: Page; user: User; onNaviga
                     )}
                   >
                     <item.icon className={cx('size-[18px] transition-colors', active ? 'text-ink' : 'text-ink-3 group-hover:text-ink-2')} strokeWidth={1.9} />
-                    {item.label}
+                    <span className="truncate">{pageLabel(item.page, item.label)}</span>
                     {isPaused(item.page) && <span className="ml-auto rounded-full bg-warn-soft px-1.5 py-px text-[10px] font-semibold text-warn">Vaqtincha</span>}
                   </a>
                 );
@@ -153,7 +154,7 @@ export function Layout({ page, user, onLogout, children }: { page: Page; user: U
 
   useEffect(() => setDrawer(false), [page]);
   useEffect(() => {
-    document.title = `${PAGE_TITLES[page]} · Laylak Cargo Kassa`;
+    document.title = `${pageLabel(page, PAGE_TITLES[page])} · Laylak Cargo Kassa`;
     window.scrollTo({ top: 0 });
   }, [page]);
 
@@ -166,7 +167,7 @@ export function Layout({ page, user, onLogout, children }: { page: Page; user: U
 
   return (
     <div className="min-h-screen">
-      {can(user, 'payments.create') && <StickerPay />}
+      {can(user, 'payments.create') && can(user, 'orders.manage') && <StickerPay />}
       {/* Desktop sidebar */}
       <aside className="no-print fixed inset-y-0 left-0 z-30 hidden w-[248px] flex-col border-r border-line bg-surface glass px-3 py-5 lg:flex">
         <div className="px-2"><Logo /></div>

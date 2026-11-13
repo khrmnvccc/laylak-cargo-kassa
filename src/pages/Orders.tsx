@@ -46,7 +46,7 @@ export default function Orders() {
   }, [q]);
   const list = useApi<{ items: Order[]; total: number; totalAmount: number }>('/orders', { q: debounced, status: status === 'all' ? '' : status }, { keep: true });
   // Orders entered twice; only someone who may delete stickers is shown them.
-  const dups = useApi<{ groups: Order[][] }>(can(user, 'payments.void') ? '/orders/duplicates' : null);
+  const dups = useApi<{ groups: Order[][] }>(can(user, 'orders.delete') ? '/orders/duplicates' : null);
   const dupGroups = dups.data?.groups || [];
   const extraCopies = dupGroups.reduce((n, g) => n + g.length - 1, 0);
   const [showDups, setShowDups] = useState(false);
@@ -318,7 +318,7 @@ export default function Orders() {
                               aria-label={o.prepaid_at ? 'Toʻlangan belgisi' : 'Toʻlangan deb belgilash'} />
                           )}
                           <Button size="sm" variant="ghost" icon={<Printer className="size-4" />} onClick={() => void printOrderSticker(o)} aria-label="Chop etish" />
-                          {!o.payment_id && can(user, 'payments.void') && (
+                          {!o.payment_id && can(user, 'orders.delete') && (
                             <Button size="sm" variant="ghost" icon={<Trash2 className="size-4" />} onClick={() => setRemoving(o)} aria-label="Oʻchirish" />
                           )}
                         </div>
@@ -361,7 +361,7 @@ export default function Orders() {
         <div className="fixed inset-x-3 bottom-[calc(5.5rem+env(safe-area-inset-bottom,0px))] z-30 mx-auto flex max-w-md items-center gap-2 rounded-xl border border-line [background:linear-gradient(var(--surface-solid),var(--surface-solid)),var(--bg)] px-3 py-2 text-[13px] shadow-lg md:bottom-6">
           <span className="min-w-0 flex-1 text-ink-2"><b className="text-ink num">{pickedOrders.length} ta</b> tanlandi · <b className="text-ink num">{money(pickedOrders.reduce((n, o) => n + Number(o.amount), 0))}</b></span>
           <Button size="sm" variant="ghost" icon={<X className="size-4" />} onClick={() => setPicked(new Set())} aria-label="Bekor" />
-          {can(user, 'payments.void') && <Button size="sm" variant="danger" icon={<Trash2 className="size-4" />} onClick={() => setDeletingMany(true)}>Oʻchirish</Button>}
+          {can(user, 'orders.delete') && <Button size="sm" variant="danger" icon={<Trash2 className="size-4" />} onClick={() => setDeletingMany(true)}>Oʻchirish</Button>}
           <Button size="sm" variant="primary" icon={<PackageCheck className="size-4" />} onClick={() => setIssuing(true)}>Berildi</Button>
         </div>,
         document.body,

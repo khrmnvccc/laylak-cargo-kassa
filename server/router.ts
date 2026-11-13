@@ -28,6 +28,7 @@ import { gzipSync } from 'node:zlib';
 import { createHash, randomInt } from 'node:crypto';
 import { EXPENSE_LABELS } from '../src/lib/excelSheets.js';
 import { MAX_TEMPLATE_LENGTH, TEMPLATE_BY_KEY, renderTemplate, sampleValues, type TemplateKey } from '../src/lib/tgTemplates.js';
+import { DEFAULT_PAGE_SETTINGS, cleanPageSettings } from '../src/lib/pageConfig.js';
 import { kassaXlsx, otchyotXlsx } from '../src/lib/kassaBooks.js';
 import type { BalanceMonth, Payment } from '../src/lib/types.js';
 import { orderKey } from '../src/lib/orderImport.js';
@@ -400,7 +401,7 @@ const ORDER_KEY_SQL = `(o.client_code || '|' || ${ORDER_NO_SQL})`;
 // The printed code: "77" and eight digits, so it never looks like a client ID.
 const SCAN_RE = /^77\d{8}$/;
 
-route('GET', '/orders', 'payments.create', async (ctx) => {
+route('GET', '/orders', 'orders.manage', async (ctx) => {
   const q = str(ctx.query.q, 60).toUpperCase();
   const where = ['o.deleted_at IS NULL'];
   const args: unknown[] = [];
@@ -420,7 +421,7 @@ route('GET', '/orders', 'payments.create', async (ctx) => {
 });
 
 // Counts only, for the dashboard's rotating cards: what is still in stock, what is unpaid, what came in today.
-route('GET', '/orders/stats', 'payments.create', async () => {
+route('GET', '/orders/stats', 'orders.manage', async () => {
   const rows = await query(
     `SELECT COUNT(*) FILTER (WHERE o.issued_at IS NULL)::int AS stock,
             COUNT(*) FILTER (WHERE ${UNPAID_SQL})::int AS unpaid,
@@ -506,7 +507,7 @@ async function insertOrders(db: pg.PoolClient, user: AuthUser, list: NewOrder[])
   return inserted.rows.map((r: any) => r.id as string);
 }
 
-route('POST', '/orders', 'payments.create', async (ctx) => {
+route('POST', '/orders', 'orders.manage', async (ctx) => {
   const { order: o, errors } = readOrder(ctx.body || {}, todayTashkent());
   if (Object.keys(errors).length) return { status: 400, body: { error: 'Ma’lumotlarni tekshiring', fields: errors } };
   const order = await transaction(async (db) => {
@@ -525,7 +526,7 @@ route('POST', '/orders', 'payments.create', async (ctx) => {
 
 // A whole list at once (copied from the admin panel or Excel). An order already in the kassa
 // (same client and order number) is skipped, so the same list can be loaded twice safely.
-route('POST', '/orders/import', 'payments.create', async (ctx) => {
+route('POST', '/orders/import', 'orders.manage', async (ctx) => {
   const b = ctx.body || {};
   const list = Array.isArray(b.rows) ? b.rows : [];
   if (!list.length) throw new HttpError(400, 'Roʻyxat boʻsh');
@@ -605,7 +606,7 @@ function shortName(name: string | null): string | null {
   return parts.length > 1 ? `${parts[0]} ${parts[1][0].toUpperCase()}.` : parts[0];
 }
 
-route('GET', '/orders/scan/:code', 'payments.create', async (ctx) => {
+route('GET', '/orders/scan/:code', 'orders.manage', async (ctx) => {
   const code = ctx.params.code.replace(/\D/g, '');
   if (!SCAN_RE.test(code)) throw new HttpError(404, 'Bu kod kassa stikeri emas');
   const rows = await query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.scan_code = $1 AND o.deleted_at IS NULL`, [code]);
@@ -688,7 +689,7 @@ route('POST', '/orders/:id/prepaid', 'payments.void', async (ctx) => {
 });
 
 // Mark a parcel handed out (or, by mistake, back in the warehouse) without taking a payment.
-route('POST', '/orders/:id/issue', 'payments.create', async (ctx) => {
+route('POST', '/orders/:id/issue', 'orders.manage', async (ctx) => {
   if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Buyurtma topilmadi');
   const issued = ctx.body?.issued !== false;
   const order = await transaction(async (db) => {
@@ -706,7 +707,7 @@ route('POST', '/orders/:id/issue', 'payments.create', async (ctx) => {
 });
 
 // Several orders handed over at once, ticked in the list.
-route('POST', '/orders/issue', 'payments.create', async (ctx) => {
+route('POST', '/orders/issue', 'orders.manage', async (ctx) => {
   const ids = Array.isArray(ctx.body?.ids) ? [...new Set(ctx.body.ids.filter((id: unknown) => typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id)))] : [];
   if (!ids.length) throw new HttpError(400, 'Buyurtmalarni tanlang');
   if (ids.length > 500) throw new HttpError(400, 'Bir martada 500 tadan koʻp buyurtma berib boʻlmaydi');
@@ -723,7 +724,7 @@ route('POST', '/orders/issue', 'payments.create', async (ctx) => {
 });
 
 // Several ticked orders taken off the list at once. Ones with a live payment stay: cancel the payment first.
-route('POST', '/orders/delete', 'payments.void', async (ctx) => {
+route('POST', '/orders/delete', 'orders.delete', async (ctx) => {
   const ids = Array.isArray(ctx.body?.ids) ? [...new Set(ctx.body.ids.filter((id: unknown) => typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id)))] : [];
   if (!ids.length) throw new HttpError(400, 'Buyurtmalarni tanlang');
   if (ids.length > 500) throw new HttpError(400, 'Bir martada 500 tadan koʻp buyurtma oʻchirib boʻlmaydi');
@@ -752,7 +753,7 @@ function orderDeleteText(rows: { scan_code: string; client_code: string; amount:
 
 // Orders entered twice: the same client and order number, or with no number the same client, sum and day.
 // Each group lists its copies oldest first; the oldest is the one to keep.
-route('GET', '/orders/duplicates', 'payments.void', async () => {
+route('GET', '/orders/duplicates', 'orders.delete', async () => {
   const rows = await query(
     `SELECT * FROM (
        SELECT ${ORDER_COLUMNS},
@@ -766,7 +767,7 @@ route('GET', '/orders/duplicates', 'payments.void', async () => {
   return { groups: [...groups.values()] };
 });
 
-route('DELETE', '/orders/:id', 'payments.void', async (ctx) => {
+route('DELETE', '/orders/:id', 'orders.delete', async (ctx) => {
   if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Buyurtma topilmadi');
   const order = await transaction(async (db) => {
     const rows = (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = $1 AND o.deleted_at IS NULL FOR UPDATE OF o`, [ctx.params.id])).rows;
@@ -1395,6 +1396,11 @@ const EXPENSE_CATEGORIES = ['tovar', 'paket', 'yetkazish', 'yoqilgi', 'ijara', '
 const SOURCES = ['cash', 'card'];
 const ACCOUNT_SQL = (col: string) => `(CASE WHEN ${col} = 'cash' THEN 'cash' ELSE 'card' END)`;
 
+/** A second right a kassa action needs on top of seeing the kassa. */
+function need(user: AuthUser, perm: Perm) {
+  if (!user.permissions.includes(perm)) throw new HttpError(403, 'Sizda bu amal uchun ruxsat yoʻq');
+}
+
 function allowedSource(user: AuthUser, source: unknown, errors?: Record<string, string>) {
   if (!SOURCES.includes(source as string) || kassaSources(user.permissions).includes(source as 'cash' | 'card')) return;
   const msg = `${source === 'cash' ? '1-kassa (naqd)' : '2-kassa (karta)'} sizga ochilmagan`;
@@ -1526,6 +1532,7 @@ async function balanceMonth(first: string, last: string, sources: Array<'cash' |
 // skipped; the opening balance becomes the one adjustment that makes the balance at the start of
 // that day equal the given amount, so re-uploading the same file changes nothing.
 route('POST', '/expenses/import', 'kassa', async (ctx) => {
+  need(ctx.user!, 'kassa.import');
   const rows = Array.isArray(ctx.body?.rows) ? ctx.body.rows : null;
   const dryRun = ctx.body?.dryRun === true;
   if (!rows || !rows.length) throw new HttpError(400, 'Fayldan maʼlumot topilmadi');
@@ -1618,6 +1625,7 @@ route('POST', '/expenses/import', 'kassa', async (ctx) => {
 });
 
 route('POST', '/expenses', 'kassa', async (ctx) => {
+  need(ctx.user!, 'expenses.create');
   const b = ctx.body || {};
   const errors: Record<string, string> = {};
   const amount = Number(b.amount);
@@ -1644,6 +1652,7 @@ route('POST', '/expenses', 'kassa', async (ctx) => {
 });
 
 route('POST', '/expenses/:id/void', 'kassa', async (ctx) => {
+  need(ctx.user!, 'expenses.void');
   const reason = str(ctx.body?.reason, 300);
   if (reason.length < 3) throw new HttpError(400, 'Bekor qilish sababini yozing');
   if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Rasxod topilmadi');
@@ -1665,6 +1674,7 @@ route('POST', '/expenses/:id/void', 'kassa', async (ctx) => {
 });
 
 route('POST', '/adjustments', 'kassa', async (ctx) => {
+  need(ctx.user!, 'kassa.adjust');
   const b = ctx.body || {};
   const errors: Record<string, string> = {};
   const amount = Number(b.amount);
@@ -1839,6 +1849,24 @@ route('PUT', '/office', 'staff.manage', async (ctx) => {
   return { office };
 });
 
+// ---------- pages (oynalar): the owner pauses a page, decides who sees it, renames it in the menu ----------
+
+route('GET', '/pages', 'user', async () => {
+  const rows = await query(`SELECT value FROM app_meta WHERE key = 'pages'`);
+  return { pages: rows[0] ? cleanPageSettings(rows[0].value) : DEFAULT_PAGE_SETTINGS };
+});
+
+route('PUT', '/pages', 'owner', async (ctx) => {
+  const pages = cleanPageSettings(ctx.body?.pages);
+  await query(
+    `INSERT INTO app_meta (key, value) VALUES ('pages', $1::jsonb)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [JSON.stringify(pages)],
+  );
+  await audit(null, ctx.user, 'pages_set', 'pages', null, pages);
+  return { pages };
+});
+
 // ---------- Telegram: daily report and nightly backup (owner) ----------
 
 const METHOD_LABEL: Record<string, string> = { cash: 'Naqd', card: 'Karta', yandex: 'Yandex', pochta: 'Pochta' };
@@ -1958,24 +1986,32 @@ async function telegramView(config: Awaited<ReturnType<typeof getTelegram>>) {
   } };
 }
 
-route('GET', '/telegram', 'owner', async () => telegramView(await getTelegram()));
+route('GET', '/telegram', 'messages.manage', async () => telegramView(await getTelegram()));
 
 // Message texts: the owner's own words for each Telegram message (defaults live in src/lib/tgTemplates.ts).
-route('GET', '/telegram/templates', 'owner', async () => getTemplateSettings());
+route('GET', '/telegram/templates', 'messages.manage', async () => getTemplateSettings());
 
-route('PUT', '/telegram/templates', 'owner', async (ctx) => {
+route('PUT', '/telegram/templates', 'messages.manage', async (ctx) => {
   const key = String(ctx.body?.key || '') as TemplateKey;
   if (!TEMPLATE_BY_KEY[key]) throw new HttpError(400, 'Bunday xabar yoʻq');
-  const change: { text?: string | null; on?: boolean } = {};
+  const change: { text?: string | null; on?: boolean; chats?: { personal?: boolean; group?: boolean } } = {};
   if ('text' in (ctx.body || {})) change.text = ctx.body.text == null ? null : String(ctx.body.text);
   if (typeof ctx.body?.on === 'boolean') change.on = ctx.body.on;
+  const chats = ctx.body?.chats;
+  if (chats && typeof chats === 'object') {
+    if (key === 'dailyReport') throw new HttpError(400, 'Kechki hisobot faqat sizga keladi');
+    change.chats = {};
+    if (typeof chats.personal === 'boolean') change.chats.personal = chats.personal;
+    if (typeof chats.group === 'boolean') change.chats.group = chats.group;
+  }
   const settings = await saveTemplate(key, change);
-  await audit(null, ctx.user, change.on === undefined ? 'telegram_template' : change.on ? 'telegram_template_on' : 'telegram_template_off', 'telegram', null, { key });
+  const action = change.chats ? 'telegram_template_chats' : change.on === undefined ? 'telegram_template' : change.on ? 'telegram_template_on' : 'telegram_template_off';
+  await audit(null, ctx.user, action, 'telegram', null, { key, ...change.chats });
   return settings;
 });
 
 // The sent list: the newest messages first, with where they went and whether they arrived.
-route('GET', '/telegram/log', 'owner', async (ctx) => {
+route('GET', '/telegram/log', 'messages.manage', async (ctx) => {
   const limit = Math.min(Math.max(Number(ctx.query.limit) || 40, 1), 200);
   const [items, total] = await Promise.all([
     query(`SELECT id, at, template, chat, ok, text, error FROM telegram_log ORDER BY id DESC LIMIT $1`, [limit]),
@@ -1985,7 +2021,7 @@ route('GET', '/telegram/log', 'owner', async (ctx) => {
 });
 
 // A sample of one message sent to the owner's own chat, exactly as it would arrive.
-route('POST', '/telegram/templates/test', 'owner', async (ctx) => {
+route('POST', '/telegram/templates/test', 'messages.manage', async (ctx) => {
   const config = await getTelegram();
   if (!config?.chatId) throw new HttpError(400, 'Telegram ulanmagan');
   const key = String(ctx.body?.key || '') as TemplateKey;
@@ -1997,7 +2033,7 @@ route('POST', '/telegram/templates/test', 'owner', async (ctx) => {
 });
 
 // What the group gets: payment pictures, cancel alerts, or both. The owner's own chat still gets everything.
-route('PUT', '/telegram/group/kinds', 'owner', async (ctx) => {
+route('PUT', '/telegram/group/kinds', 'messages.manage', async (ctx) => {
   const config = await getTelegram();
   if (!config?.groupId) throw new HttpError(400, 'Guruh ulanmagan');
   const next = { ...config, groupPayments: ctx.body?.payments !== false, groupCancels: ctx.body?.cancels !== false };
@@ -2068,7 +2104,7 @@ route('POST', '/telegram/group', 'owner', async (ctx) => {
 });
 
 // Stop or resume messages to the group without unlinking it; the owner's own chat is not affected.
-route('PUT', '/telegram/group/pause', 'owner', async (ctx) => {
+route('PUT', '/telegram/group/pause', 'messages.manage', async (ctx) => {
   const config = await getTelegram();
   if (!config?.groupId) throw new HttpError(400, 'Guruh ulanmagan');
   const paused = ctx.body?.paused === true;
@@ -2080,7 +2116,7 @@ route('PUT', '/telegram/group/pause', 'owner', async (ctx) => {
 
 // Stop or resume payment pictures and alerts in the owner's own chat; the group is not affected, and the
 // evening report and backup still come.
-route('PUT', '/telegram/personal/pause', 'owner', async (ctx) => {
+route('PUT', '/telegram/personal/pause', 'messages.manage', async (ctx) => {
   const config = await getTelegram();
   if (!config?.chatId) throw new HttpError(400, 'Telegram ulanmagan');
   const paused = ctx.body?.paused === true;
@@ -2091,7 +2127,7 @@ route('PUT', '/telegram/personal/pause', 'owner', async (ctx) => {
 });
 
 // A test message to one chat, so the owner sees at once whether it arrives and, if not, what Telegram said.
-route('POST', '/telegram/test', 'owner', async (ctx) => {
+route('POST', '/telegram/test', 'messages.manage', async (ctx) => {
   const config = await getTelegram();
   const target = ctx.body?.target === 'group' ? 'group' : 'personal';
   const chatId = target === 'group' ? config?.groupId : config?.chatId;

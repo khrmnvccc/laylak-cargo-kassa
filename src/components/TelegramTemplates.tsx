@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
-import { BarChart3, Check, FileSpreadsheet, Image as ImageIcon, Receipt, RotateCcw, Save, Send, Trash2, Undo2, Users, Wallet, X, Zap } from 'lucide-react';
+import { BarChart3, Check, FileSpreadsheet, Image as ImageIcon, Receipt, RotateCcw, Save, Send, Trash2, Undo2, User, Users, Wallet, X, Zap } from 'lucide-react';
 import { api } from '../lib/api';
 import { useApi } from '../lib/live';
 import {
@@ -18,7 +18,7 @@ interface LogItem { id: number; at: string; template: string; chat: 'personal' |
 const time = (iso: string) => new Date(iso).toLocaleString('uz-UZ', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
 /** A small on/off switch. */
-function Toggle({ on, onChange, disabled, label }: { on: boolean; onChange: (on: boolean) => void; disabled?: boolean; label: string }) {
+export function Toggle({ on, onChange, disabled, label }: { on: boolean; onChange: (on: boolean) => void; disabled?: boolean; label: string }) {
   return (
     <button type="button" role="switch" aria-checked={on} aria-label={label} disabled={disabled}
       onClick={(e) => { e.stopPropagation(); onChange(!on); }}
@@ -60,8 +60,26 @@ function SectionLabel({ children, right }: { children: ReactNode; right?: ReactN
   );
 }
 
-/** Owner only: every Telegram message the kassa sends, each with its own words and its own switch, plus what was sent lately. */
-export default function TelegramTemplates() {
+/** The group as the connection card knows it: linked or not, and what it got before messages had their own say. */
+export interface GroupInfo { linked: boolean; name: string | null; payments: boolean; cancels: boolean }
+
+/** A pill that says whether one message goes to one chat; pressing it flips that. */
+function ChatPill({ on, icon, label, sub, disabled, onClick }: { on: boolean; icon: ReactNode; label: string; sub: string; disabled?: boolean; onClick?: () => void }) {
+  return (
+    <button type="button" aria-pressed={on} disabled={disabled || !onClick} onClick={onClick}
+      className={`flex min-w-0 flex-1 items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-colors disabled:cursor-default ${on ? 'border-[var(--card)] bg-[color-mix(in_srgb,var(--card)_10%,transparent)]' : 'border-line bg-surface hover:bg-surface-2'} ${disabled ? 'opacity-60' : ''}`}>
+      <span className={`flex size-8 shrink-0 items-center justify-center rounded-full ${on ? 'bg-[var(--card)] text-white' : 'bg-surface-3 text-ink-3'}`}>{icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className={`block text-[13px] font-semibold ${on ? 'text-ink' : 'text-ink-3'}`}>{label}</span>
+        <span className="block truncate text-[11.5px] text-ink-3">{sub}</span>
+      </span>
+      {onClick && <span className={`flex size-5 shrink-0 items-center justify-center rounded-md border ${on ? 'border-[var(--card)] bg-[var(--card)] text-white' : 'border-line'}`}>{on && <Check className="size-3.5" />}</span>}
+    </button>
+  );
+}
+
+/** Every Telegram message the kassa sends, each with its own words, its own switch and its own chats, plus what was sent lately. */
+export default function TelegramTemplates({ group, personalName }: { group: GroupInfo; personalName: string | null }) {
   const toast = useToast();
   const { data, error: loadError, loading } = useApi<TemplateSettings>('/telegram/templates');
   const log = useApi<{ items: LogItem[]; total: number }>('/telegram/log', { limit: 40 });
@@ -81,6 +99,9 @@ export default function TelegramTemplates() {
   const changed = text !== current;
   const custom = Boolean(settings.texts[key]);
   const isOn = (k: TemplateKey) => !settings.off.includes(k);
+  // Where each message goes. The evening report (with the files and the backup) only ever goes to the owner.
+  const toMe = (k: TemplateKey) => k === 'dailyReport' || settings.chats?.[k]?.personal !== false;
+  const toGroup = (k: TemplateKey) => k !== 'dailyReport' && (settings.chats?.[k]?.group ?? (k === 'payment' ? group.payments : group.cancels));
   const onCount = TEMPLATES.filter((t) => isOn(t.key)).length;
   const preview = useMemo(() => renderTemplate(text, sampleValues(key)), [text, key]);
 
@@ -103,7 +124,7 @@ export default function TelegramTemplates() {
     setBusy(name);
     try { await fn(); } catch (e) { setError((e as Error).message); } finally { setBusy(null); }
   }
-  const put = (k: TemplateKey, body: { text?: string | null; on?: boolean }) =>
+  const put = (k: TemplateKey, body: { text?: string | null; on?: boolean; chats?: { personal?: boolean; group?: boolean } }) =>
     api<TemplateSettings>('/telegram/templates', { method: 'PUT', body: { key: k, ...body } }).then(setSaved);
   const save = () => run('save', async () => {
     await put(key, { text });
@@ -119,6 +140,10 @@ export default function TelegramTemplates() {
     await put(k, { on });
     toast({ tone: 'success', title: `${TEMPLATE_BY_KEY[k].title}: ${on ? 'yoqildi' : 'oʻchirildi'}` });
   });
+  const route = (k: TemplateKey, chat: 'personal' | 'group', on: boolean) => run(`chat-${chat}`, async () => {
+    await put(k, { chats: { [chat]: on } });
+    toast({ tone: 'success', title: `${TEMPLATE_BY_KEY[k].title}: ${chat === 'group' ? 'guruhga' : 'sizga'} ${on ? 'boradi' : 'bormaydi'}` });
+  });
   const test = () => run('test', async () => {
     await api('/telegram/templates/test', { method: 'POST', body: { key, text } });
     toast({ tone: 'success', title: 'Namuna Telegramga yuborildi' });
@@ -130,8 +155,8 @@ export default function TelegramTemplates() {
     <Card className="xl:col-span-2" padded={false}>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3.5 sm:px-5">
         <div>
-          <h3 className="text-[15px] font-semibold tracking-tight text-ink">Telegram bildirishnomalar</h3>
-          <p className="mt-0.5 text-[13px] text-ink-3">Har bir xabarni yoqing yoki oʻchiring, matnini oʻzingiz yozing.</p>
+          <h3 className="text-[15px] font-semibold tracking-tight text-ink">Xabarlar</h3>
+          <p className="mt-0.5 text-[13px] text-ink-3">Har bir xabarni yoqing yoki oʻchiring, kimga borishini tanlang, matnini oʻzingiz yozing.</p>
         </div>
         <span className="rounded-full border border-line bg-surface-2 px-2.5 py-1 text-xs font-medium text-ink-2">{onCount}/{TEMPLATES.length} yoqilgan</span>
       </div>
@@ -171,7 +196,8 @@ export default function TelegramTemplates() {
                               </div>
                               <div className="mt-0.5 flex items-center gap-1.5 text-ink-3">
                                 {t.photo && <span title="Rasm bilan"><ImageIcon className="size-3.5" /></span>}
-                                {t.groupChat && <span title="Guruhga ham boradi"><Users className="size-3.5" /></span>}
+                                {isOn(t.key) && toMe(t.key) && <span title="Sizga boradi"><User className="size-3.5" /></span>}
+                                {isOn(t.key) && toGroup(t.key) && group.linked && <span title="Guruhga boradi"><Users className="size-3.5" /></span>}
                                 {t.files && <span title="Excel va zaxira fayllari bilan"><FileSpreadsheet className="size-3.5" /></span>}
                                 {settings.texts[t.key] && <span className="text-[11px] font-medium text-success">oʻzgartirilgan</span>}
                               </div>
@@ -229,6 +255,18 @@ export default function TelegramTemplates() {
                   </label>
                 </div>
                 {!isOn(key) && <div className="mb-4"><Alert tone="warn">Bu xabar hozir yuborilmaydi.{def.files ? ' Excel fayllari va zaxira baribir keladi.' : ''}</Alert></div>}
+
+                <div className="mb-5">
+                  <SectionLabel>QAYERGA BORADI</SectionLabel>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <ChatPill on={toMe(key)} icon={<User className="size-4" />} label="Sizning akkauntingiz" sub={personalName ?? 'Shaxsiy chat ulanmagan'}
+                      disabled={busy === 'chat-personal'} onClick={key === 'dailyReport' ? undefined : () => route(key, 'personal', !toMe(key))} />
+                    <ChatPill on={toGroup(key) && group.linked} icon={<Users className="size-4" />} label="Guruh"
+                      sub={key === 'dailyReport' ? 'Hisobot va fayllar guruhga bormaydi' : group.linked ? group.name ?? 'Guruh' : 'Guruh ulanmagan'}
+                      disabled={busy === 'chat-group' || !group.linked} onClick={key === 'dailyReport' || !group.linked ? undefined : () => route(key, 'group', !toGroup(key))} />
+                  </div>
+                  {isOn(key) && !toMe(key) && !(toGroup(key) && group.linked) && <p className="mt-2 text-xs text-warn">Hech qaysi chat tanlanmagan: bu xabar hech kimga bormaydi.</p>}
+                </div>
 
                 <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_330px]">
                   <div className="min-w-0">
