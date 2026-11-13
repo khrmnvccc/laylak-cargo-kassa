@@ -1401,3 +1401,25 @@ test('branches: each keeps its own money and kassa, clients are shared, staff se
   const listed = (await owner.call('GET', '/staff')).body.items.find((u: any) => u.id === id);
   assert.deepEqual(listed.branches, [b2]);
 });
+
+test('owner sets the site name, colour, logo and menu names; everyone (even signed out) reads them', async () => {
+  const anon = new Client();
+  assert.equal((await anon.call('GET', '/brand')).body.brand.name, 'Laylak Cargo');
+  const owner = new Client();
+  await owner.call('POST', '/auth/login', { username: 'admin', password: 'password123' });
+  const w = new Client();
+  await w.call('POST', '/auth/login', { username: 'chilonzor', password: 'worker123' });
+  assert.equal((await w.call('PUT', '/brand', { brand: { name: 'X' } })).status, 403);
+  const saved = await owner.call('PUT', '/brand', { brand: {
+    name: '  Laylak   Express ', tagline: '', color: '#FF0000', corners: 'round', logo: 'data:image/svg+xml;base64,PHN2Zz4=',
+    groups: { Asosiy: 'Bosh', Hisobotlar: 'Hisobotlar', Nimadir: 'x' }, headline: '',
+  } });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.body.brand, {
+    name: 'Laylak Express', tagline: '', color: '#ff0000', logo: null, headline: 'Kunlik kassa va hisobotlar — barcha xodimlar uchun yagona bazada.',
+    corners: 'round', groups: { Asosiy: 'Bosh' },
+  }, 'an SVG logo (could carry script) and unknown sections are dropped');
+  const png = 'data:image/png;base64,iVBORw0KGgo=';
+  assert.equal((await owner.call('PUT', '/brand', { brand: { name: 'Laylak Express', logo: png } })).body.brand.logo, png);
+  assert.equal((await anon.call('GET', '/brand')).body.brand.name, 'Laylak Express');
+});

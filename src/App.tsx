@@ -8,6 +8,7 @@ import { useRoute } from './lib/router';
 import { useTheme } from './lib/theme';
 import { canSee, homePage, isPaused, setPageSettings } from './lib/perms';
 import { useApi } from './lib/live';
+import { setBrand } from './lib/brand';
 import { BranchContext, currentBranch, saveBranch, type Branch } from './lib/branch';
 import type { PageSettings } from './lib/pageConfig';
 import type { Route } from './lib/router';
@@ -118,6 +119,8 @@ export default function App() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+  // The owner's name, colour and logo; the page already shows the last ones kept on this device.
+  useEffect(() => { api<{ brand: unknown }>('/brand').then((r) => setBrand(r.brand)).catch(() => undefined); }, []);
   useEffect(() => {
     const off = onUnauthorized(() => { saveUser(null); clearApiCache(); setBoot({ state: 'anon', needsSetup: false, setupKeyConfigured: true }); });
     return () => { off(); };
