@@ -15,6 +15,39 @@ export interface TelegramConfig {
   groupPaused?: boolean; // the owner stopped the group for a while (e.g. while fixing old records)
   // The owner stopped payment pictures and alerts in their own chat; the evening report and backup still come.
   personalPaused?: boolean;
+  // What the group gets; a missing value means yes. The owner's own chat always gets both kinds.
+  groupPayments?: boolean; // payment pictures
+  groupCancels?: boolean; // cancelled payments and expenses, deleted orders
+}
+
+/** Which kind of message is being sent, so the group can be told to skip one. */
+export type MessageKind = 'payments' | 'cancels';
+
+/** The last message Telegram refused, kept apart from the settings so writing it never races a settings change. */
+export interface TelegramError { chat: 'personal' | 'group'; message: string; at: string }
+
+export async function getTelegramErrors(): Promise<TelegramError[]> {
+  const rows = await query(`SELECT value FROM app_meta WHERE key IN ('telegram_error_personal', 'telegram_error_group')`);
+  return rows.map((r: any) => r.value as TelegramError).sort((a, b) => a.chat.localeCompare(b.chat) * -1);
+}
+
+/** Remembers (or, with null, forgets) why a chat did not get its message; never throws. */
+export async function setTelegramError(chat: 'personal' | 'group', error: unknown | null) {
+  const key = `telegram_error_${chat}`;
+  try {
+    if (error === null) {
+      await query(`DELETE FROM app_meta WHERE key = $1`, [key]);
+      return;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    await query(
+      `INSERT INTO app_meta (key, value) VALUES ($1, $2::jsonb)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [key, JSON.stringify({ chat, message, at: new Date().toISOString() })],
+    );
+  } catch (e) {
+    console.error('Telegram error note failed', e);
+  }
 }
 
 /** Telegram moved a group to a new id (it became a supergroup); `chatId` is the new one. */
@@ -94,7 +127,7 @@ export async function sendDocument(data: Buffer, filename: string, caption: stri
 export async function notify(text: string) {
   const config = await getTelegram();
   if (!config?.chatId) return;
-  await everyChat(config, (chatId, topic) => tg(config.token, 'sendMessage', { chat_id: chatId, ...topic, text, parse_mode: 'HTML', disable_web_page_preview: true }, 10_000))
+  await everyChat(config, 'cancels', (chatId, topic) => tg(config.token, 'sendMessage', { chat_id: chatId, ...topic, text, parse_mode: 'HTML', disable_web_page_preview: true }, 10_000))
     .catch((error) => console.error('Telegram notify failed', error));
 }
 
@@ -102,19 +135,29 @@ export async function notify(text: string) {
  * Runs `send` for the owner's chat and the group, each unless it is paused; resolves when at least one got it.
  * Returns false when both are paused, so nothing was sent.
  */
-async function everyChat(config: TelegramConfig, send: (chatId: number, topic: Record<string, number>) => Promise<unknown>): Promise<boolean> {
-  const chats = [config.personalPaused ? undefined : config.chatId, config.groupPaused ? undefined : config.groupId]
-    .filter((id): id is number => Boolean(id));
+async function everyChat(config: TelegramConfig, kind: MessageKind, send: (chatId: number, topic: Record<string, number>) => Promise<unknown>): Promise<boolean> {
+  const groupWants = kind === 'payments' ? config.groupPayments !== false : config.groupCancels !== false;
+  const chats = [
+    config.personalPaused ? undefined : config.chatId,
+    config.groupPaused || !groupWants ? undefined : config.groupId,
+  ].filter((id): id is number => Boolean(id));
   if (!chats.length) return false;
   const results = await Promise.allSettled(chats.map(async (chatId) => {
-    const topic: Record<string, number> = chatId === config.groupId && config.groupThreadId ? { message_thread_id: config.groupThreadId } : {};
+    const which = chatId === config.groupId ? 'group' : 'personal';
+    const topic: Record<string, number> = which === 'group' && config.groupThreadId ? { message_thread_id: config.groupThreadId } : {};
     try {
-      await send(chatId, topic);
+      try {
+        await send(chatId, topic);
+      } catch (error) {
+        if (!(error instanceof ChatMoved) || which !== 'group') throw error;
+        await saveTelegram({ ...config, groupId: error.chatId });
+        await send(error.chatId, topic);
+      }
     } catch (error) {
-      if (!(error instanceof ChatMoved) || chatId !== config.groupId) throw error;
-      await saveTelegram({ ...config, groupId: error.chatId });
-      await send(error.chatId, topic);
+      await setTelegramError(which, error);
+      throw error;
     }
+    await setTelegramError(which, null);
   }));
   const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
   if (failed.length === results.length) throw failed[0].reason;
@@ -134,7 +177,7 @@ export function photoFromDataUrl(value: unknown): Buffer | null {
 export async function sendPhotos(photos: Buffer[], caption: string): Promise<boolean> {
   const config = await getTelegram();
   if (!config?.chatId || !photos.length) return false;
-  return everyChat(config, (chatId, topic) => {
+  return everyChat(config, 'payments', (chatId, topic) => {
     const form = new FormData();
     form.append('chat_id', String(chatId));
     if (topic.message_thread_id) form.append('message_thread_id', String(topic.message_thread_id));
@@ -168,7 +211,7 @@ export async function reportText(text: string): Promise<'sent' | 'off' | 'failed
   try {
     const config = await getTelegram();
     if (!config?.chatId) return 'off';
-    const sent = await everyChat(config, (chatId, topic) => tg(config.token, 'sendMessage', { chat_id: chatId, ...topic, text, parse_mode: 'HTML', disable_web_page_preview: true }, 8000));
+    const sent = await everyChat(config, 'payments', (chatId, topic) => tg(config.token, 'sendMessage', { chat_id: chatId, ...topic, text, parse_mode: 'HTML', disable_web_page_preview: true }, 8000));
     return sent ? 'sent' : 'off';
   } catch (error) {
     console.error('Telegram message failed', error);

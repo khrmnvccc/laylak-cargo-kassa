@@ -192,7 +192,19 @@ function AuditLog() {
   );
 }
 
-interface TelegramState { botName: string; connected: boolean; chatName: string | null; code: string | null; groupName: string | null; groupPaused?: boolean; personalPaused?: boolean; groupCode: string | null }
+interface TelegramState { botName: string; connected: boolean; chatName: string | null; code: string | null; groupName: string | null; groupPaused?: boolean; personalPaused?: boolean; groupCode: string | null;
+  groupPayments?: boolean; groupCancels?: boolean; errors?: { chat: 'personal' | 'group'; message: string; at: string }[] }
+
+/** Telegram's refusal in plain words, with what to do about it. */
+function telegramErrorHint(message: string) {
+  const m = message.toLowerCase();
+  if (m.includes('blocked')) return 'Bot bloklangan. Telegramda botni ochib, “Blokdan chiqarish” va “Start”ni bosing.';
+  if (m.includes('kicked') || m.includes('not a member')) return 'Bot guruhdan chiqarib yuborilgan. Botni guruhga qayta qoʻshing.';
+  if (m.includes('chat not found')) return 'Chat topilmadi. Guruhni uzib, qayta ulang.';
+  if (m.includes('not enough rights') || m.includes('have no rights')) return 'Botga guruhda yozish huquqi yoʻq. Guruh sozlamalarida ruxsat bering.';
+  if (m.includes('aloqa boʻlmadi')) return 'Telegram bilan aloqa boʻlmadi. Odatda oʻzi tuzaladi.';
+  return null;
+}
 
 /** Owner only: connect a Telegram bot for the evening report and nightly backup, and download a backup now. */
 /** Saves the server's full backup (.json.gz) to the device. */
@@ -306,7 +318,13 @@ function TelegramCard() {
   });
   const download = () => run('backup', downloadBackup);
   const testChat = (target: 'personal' | 'group') => run(`test-${target}`, async () => {
-    await api('/telegram/test', { method: 'POST', body: { target } });
+    try {
+      setOverride(await api<{ telegram: TelegramState | null }>('/telegram/test', { method: 'POST', body: { target } }));
+    } catch (err) {
+      // The failure is now remembered on the server: show it in the card as well.
+      setOverride(await api<{ telegram: TelegramState | null }>('/telegram').catch(() => null));
+      throw err;
+    }
     toast({ tone: 'success', title: 'Sinov xabari yuborildi', description: 'Telegramni tekshiring.' });
   });
 
@@ -342,10 +360,18 @@ function TelegramCard() {
           {tg?.connected && (
             <div className="space-y-3">
               <p className="text-ink-2">{`Xabarlar ${tg.chatName} ga @${tg.botName} orqali keladi.`}</p>
+              {(tg.errors ?? []).map((e) => (
+                <Alert key={e.chat}>
+                  <b>{e.chat === 'group' ? 'Guruhga' : 'Sizga'} oxirgi xabar yetib bormadi</b>
+                  {` (${new Date(e.at).toLocaleString('uz-UZ', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}). `}
+                  {telegramErrorHint(e.message) ?? e.message}
+                  {' '}Tuzatgach, “Sinov xabari”ni bosing: yetib borsa, bu yozuv yoʻqoladi.
+                </Alert>
+              ))}
               <ul className="list-disc space-y-1 pl-5 text-[13px] text-ink-2">
                 <li>Har kuni 19:00 dan keyin: kunlik hisobot, kassa va operatsiyalar Excel fayllari (oxirgi inkassadan beri) va butun bazaning zaxira nusxasi.</li>
                 <li>Har bir toʻlovning rasmi: naqd yoki karta, summa, mijoz va kim kiritgani.</li>
-                <li>Toʻlov yoki rasxod bekor qilinsa, darhol xabar.</li>
+                <li>Toʻlov yoki rasxod bekor qilinsa yoki buyurtma oʻchirilsa, darhol xabar.</li>
               </ul>
               <div className="space-y-2 rounded-lg border border-line px-3 py-2.5">
                 <div className="flex items-center justify-between gap-3">
@@ -376,7 +402,21 @@ function TelegramCard() {
                   <>
                     <p className="text-[13px] text-ink-2">{tg.groupPaused
                       ? 'Guruhga hozir hech narsa yuborilmaydi. Ishni tugatgach, “Qayta yoqish”ni bosing. Shaxsiy chatingiz bunga bogʻliq emas.'
-                      : 'Toʻlov rasmlari va bekor qilingan toʻlovlar bu guruhga ham keladi. Kunlik hisobot va zaxira fayli faqat sizga keladi.'}</p>
+                      : 'Kunlik hisobot va zaxira fayli faqat sizga keladi. Guruhga nima borishini tanlang:'}</p>
+                    {!tg.groupPaused && (
+                      <div className="space-y-1.5">
+                        {([['payments', 'Toʻlov rasmlari', tg.groupPayments !== false], ['cancels', 'Bekor qilingan toʻlov va rasxodlar, oʻchirilgan buyurtmalar', tg.groupCancels !== false]] as const).map(([key, label, on]) => (
+                          <label key={key} className="flex cursor-pointer items-center gap-2.5 text-[13px] text-ink">
+                            <input type="checkbox" checked={on} disabled={busy === 'PUT/telegram/group/kinds'} className="size-4"
+                              onChange={(e) => call('PUT', '/telegram/group/kinds', {
+                                payments: key === 'payments' ? e.target.checked : tg.groupPayments !== false,
+                                cancels: key === 'cancels' ? e.target.checked : tg.groupCancels !== false,
+                              })} />
+                            {label}
+                          </label>
+                        ))}
+                      </div>
+                    )}
                     <div className="flex flex-wrap gap-2">
                       <Button size="sm" variant={tg.groupPaused ? 'primary' : 'secondary'} loading={busy === 'PUT/telegram/group/pause'}
                         onClick={() => call('PUT', '/telegram/group/pause', { paused: !tg.groupPaused })}>
