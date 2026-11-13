@@ -24,13 +24,16 @@ export default function DailyReport({ params }: { params: URLSearchParams }) {
       <PageHeader
         title="Kunlik hisobot"
         subtitle={<><span className="text-ink-2">{weekday(date)}</span>, {formatDate(date)}</>}
-        actions={<>
+        collapse
+        filters={<>
           <div className="flex items-center gap-1 rounded-lg border border-line bg-surface p-0.5 shadow-soft">
             <IconButton label="Oldingi kun" className="size-8" onClick={() => setDate(addDays(date, -1))}><ChevronLeft className="size-4" /></IconButton>
             <Input type="date" value={date} max={today} onChange={(e) => e.target.value && setDate(e.target.value)} className="h-8 w-[150px] border-0 shadow-none" aria-label="Sana" />
             <IconButton label="Keyingi kun" className="size-8 disabled:opacity-40" disabled={date >= today} onClick={() => setDate(addDays(date, 1))}><ChevronRight className="size-4" /></IconButton>
           </div>
           {date !== today && <Button onClick={() => setDate(today)}>Bugun</Button>}
+        </>}
+        actions={<>
           <PrintButton run={() => printDailyReport(date, user.full_name)} />
         </>}
       />
