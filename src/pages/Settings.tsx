@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Download, Monitor, Moon, Send, Sun, Trash2 } from 'lucide-react';
+import { TEMPLATE_BY_KEY, type TemplateKey } from '../lib/tgTemplates';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { clearApiCache, useApi } from '../lib/live';
@@ -18,7 +19,7 @@ const ACTIONS: Record<string, string> = {
   setup: 'Tizim sozlandi', login: 'Tizimga kirdi', payment_create: 'Toʻlov kiritdi', payment_void: 'Toʻlovni bekor qildi', telegram_failed: 'Telegramga yuborilmadi',
   staff_create: 'Xodim qoʻshdi', staff_update: 'Xodimni oʻzgartirdi', client_update: 'Mijozni oʻzgartirdi', password_change: 'Parolini oʻzgartirdi',
   client_import: 'Mijozlar roʻyxatini yukladi', expense_create: 'Rasxod yozdi', expense_void: 'Rasxodni bekor qildi', balance_adjust: 'Qoldiqni tuzatdi',
-  telegram_set: 'Telegram botni kiritdi', telegram_connect: 'Telegramni uladi', telegram_remove: 'Telegramni uzdi', telegram_group: 'Telegram guruhini uladi', telegram_group_remove: 'Telegram guruhini uzdi', telegram_group_pause: 'Guruhga yuborishni toʻxtatdi', telegram_group_resume: 'Guruhga yuborishni qayta yoqdi', backup_download: 'Zaxirani yuklab oldi', payment_import: 'Toʻlovlarni Exceldan yukladi', expense_import: 'Kassa daftarini yukladi', attendance_edit: 'Davomatni tuzatdi', office_set: 'Ishxona joyini belgiladi', office_clear: 'Ishxona joyini olib tashladi', order_create: 'Stiker yaratdi', order_import: 'Buyurtmalar roʻyxatini yukladi', receipt_confirm: 'Chekdan toʻlov kiritdi', telegram_template_on: 'Telegram xabarini yoqdi', telegram_template_off: 'Telegram xabarini oʻchirdi', telegram_template: 'Telegram xabar matnini oʻzgartirdi', telegram_group_kinds: 'Guruhga boradigan xabarlarni tanladi', telegram_template_chats: 'Xabar qayerga borishini oʻzgartirdi', pages_set: 'Oynalar sozlamasini oʻzgartirdi', telegram_personal_pause: 'Shaxsiy chatga yuborishni toʻxtatdi', telegram_personal_resume: 'Shaxsiy chatga yuborishni qayta yoqdi', data_reset: 'Barcha maʼlumotlarni tozaladi',
+  telegram_set: 'Telegram botni kiritdi', telegram_connect: 'Telegramni uladi', telegram_remove: 'Telegramni uzdi', telegram_group: 'Telegram guruhini uladi', telegram_group_remove: 'Telegram guruhini uzdi', telegram_group_pause: 'Guruhga yuborishni toʻxtatdi', telegram_group_resume: 'Guruhga yuborishni qayta yoqdi', backup_download: 'Zaxirani yuklab oldi', payment_import: 'Toʻlovlarni Exceldan yukladi', expense_import: 'Kassa daftarini yukladi', attendance_edit: 'Davomatni tuzatdi', office_set: 'Ishxona joyini belgiladi', office_clear: 'Ishxona joyini olib tashladi', order_create: 'Stiker yaratdi', order_import: 'Buyurtmalar roʻyxatini yukladi', receipt_confirm: 'Chekdan toʻlov kiritdi', telegram_template_on: 'Telegram xabarini yoqdi', telegram_template_off: 'Telegram xabarini oʻchirdi', telegram_template: 'Telegram xabar matnini oʻzgartirdi', telegram_group_kinds: 'Guruhga boradigan xabarlarni tanladi', telegram_template_chats: 'Xabar qayerga borishini oʻzgartirdi', pages_set: 'Oynalar sozlamasini oʻzgartirdi', telegram_person_link: 'Oʻz Telegramini uladi', telegram_person_unlink: 'Telegramni uzdi', telegram_personal_pause: 'Shaxsiy chatga yuborishni toʻxtatdi', telegram_personal_resume: 'Shaxsiy chatga yuborishni qayta yoqdi', data_reset: 'Barcha maʼlumotlarni tozaladi',
   order_issue: 'Tovarni berdi', order_unissue: 'Tovarni omborga qaytardi', order_delete: 'Stikerni oʻchirdi', order_prepaid: 'Buyurtmani oldin toʻlangan deb belgiladi', order_unprepaid: 'Oldin toʻlangan belgisini olib tashladi',
 };
 
@@ -31,6 +32,7 @@ export default function Settings() {
         <Profile />
         <Password />
         <Appearance />
+        {user.role !== 'owner' && <MyTelegram />}
         {isBoss(user) && <SystemInfo />}
         {user.role === 'owner' && <PagesCard />}
         {user.role === 'owner' && <BackupCard />}
@@ -379,6 +381,61 @@ function PagesCard() {
         </div>
       )}
       {error && <div className="p-4"><Alert>{error}</Alert></div>}
+    </Card>
+  );
+}
+
+interface MyTelegramState { botName: string; linked: boolean; chatName: string | null; code: string | null; messages: TemplateKey[] }
+
+/** Anyone links their own Telegram to the kassa bot; the owner decides which messages reach them. */
+function MyTelegram() {
+  const toast = useToast();
+  const { data, error: loadError } = useApi<{ telegram: MyTelegramState | null }>('/telegram/me');
+  const [override, setOverride] = useState<{ telegram: MyTelegramState | null } | null>(null);
+  const tg = (override ?? data)?.telegram;
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const call = async (name: string, method: string, path: string) => {
+    setBusy(name);
+    setError(null);
+    try {
+      const res = await api<{ telegram: MyTelegramState | null }>(path, { method });
+      setOverride(res);
+      if (name === 'check') toast({ tone: 'success', title: 'Telegram ulandi' });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <Card className="self-start">
+      <CardHeader title="Telegram" subtitle="Kassa xabarlari sizning Telegramingizga"
+        action={tg?.linked ? <Badge tone="success"><span className="size-1.5 rounded-full bg-success" />Ulangan</Badge> : undefined} />
+      {loadError && !data ? <ErrorState message={loadError} /> : !(override ?? data) ? <div className="skeleton h-20" /> : !tg ? (
+        <p className="text-sm text-ink-2">Kassa boti hali ulanmagan. Uni Ega ulaydi.</p>
+      ) : tg.linked ? (
+        <div className="space-y-3 text-sm">
+          <p className="text-ink-2">{`Xabarlar ${tg.chatName ?? 'Telegramingiz'} ga @${tg.botName} orqali keladi.`}</p>
+          <div className="rounded-lg border border-line px-3 py-2.5">
+            <div className="text-xs font-medium text-ink-3">Sizga keladigan xabarlar (Ega belgilaydi)</div>
+            {tg.messages.length
+              ? <ul className="mt-1 list-disc pl-5 text-ink">{tg.messages.map((k) => <li key={k}>{TEMPLATE_BY_KEY[k].title}</li>)}</ul>
+              : <p className="mt-1 text-ink-2">Hozircha hech qaysi. Ega belgilagach kela boshlaydi.</p>}
+          </div>
+          <Button size="sm" variant="ghost" loading={busy === 'unlink'} onClick={() => call('unlink', 'DELETE', '/telegram/me')}>Uzish</Button>
+        </div>
+      ) : (
+        <div className="space-y-3 text-sm">
+          <p className="text-ink-2">Quyidagi tugma Telegramni ochadi: u yerda <b>Start</b> bosing, keyin “Tekshirish”ni bosing.</p>
+          <div className="flex flex-wrap gap-2">
+            <a href={`https://t.me/${tg.botName}?start=${tg.code}`} target="_blank" rel="noopener noreferrer"><Button icon={<Send className="size-4" />}>@{tg.botName} ni ochish</Button></a>
+            <Button variant="primary" loading={busy === 'check'} onClick={() => call('check', 'POST', '/telegram/me/check')}>Tekshirish</Button>
+          </div>
+          <p className="text-xs text-ink-3">{`Tugma ishlamasa, botga ${tg.code} deb yozing.`}</p>
+        </div>
+      )}
+      {error && <div className="mt-3"><Alert>{error}</Alert></div>}
     </Card>
   );
 }

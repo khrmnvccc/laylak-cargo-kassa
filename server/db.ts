@@ -390,7 +390,18 @@ UPDATE app_users SET permissions = array_cat(permissions, ARRAY['clients.view'])
  WHERE permissions IS NOT NULL AND NOT 'clients.view' = ANY(permissions);
 `;
 
-const SCHEMA_VERSION = 14;
+// Each person's own Telegram chat with the kassa bot; which messages reach them is up to the owner.
+const SCHEMA_V15_SQL = `
+CREATE TABLE IF NOT EXISTS telegram_people (
+  user_id UUID PRIMARY KEY REFERENCES app_users(id) ON DELETE CASCADE,
+  chat_id BIGINT NOT NULL,
+  chat_name TEXT,
+  linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE telegram_people ENABLE ROW LEVEL SECURITY;
+`;
+
+const SCHEMA_VERSION = 15;
 
 export function ensureSchema(): Promise<void> {
   if (!globalForPool.__kassaSchema) {
@@ -432,6 +443,7 @@ async function migrate() {
       if (current < 12) await client.query(SCHEMA_V12_SQL);
       if (current < 13) await client.query(SCHEMA_V13_SQL);
       if (current < 14) await client.query(SCHEMA_V14_SQL);
+      if (current < 15) await client.query(SCHEMA_V15_SQL);
       await client.query(
         `INSERT INTO app_meta (key, value) VALUES ('schema_version', $1::jsonb)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,

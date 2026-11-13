@@ -1,5 +1,5 @@
 import { HttpError, query } from './db.js';
-import { MAX_TEMPLATE_LENGTH, TEMPLATE_BY_KEY, renderTemplate, type TemplateChats, type TemplateKey, type TemplateSettings } from '../src/lib/tgTemplates.js';
+import { MAX_TEMPLATE_LENGTH, TEMPLATE_BY_KEY, renderTemplate, STAFF_TEMPLATES, type TemplateChats, type TemplateKey, type TemplateSettings } from '../src/lib/tgTemplates.js';
 
 // The owner's Telegram bot. The token is typed in once on the Sozlamalar page and kept only in the
 // database (app_meta 'telegram'); it is never sent back to the browser or put in a backup.
@@ -121,7 +121,7 @@ export async function sendMessage(text: string, timeoutMs?: number, logAs = 'oth
 // ---------- the sent list: the last few hundred messages, so the owner can see what went where ----------
 
 /** Writes one line of the sent list; never throws and never slows a send much (it runs in the background). */
-export async function logSend(template: string, chat: 'personal' | 'group', text: string, error: unknown) {
+export async function logSend(template: string, chat: string, text: string, error: unknown) {
   try {
     await query(
       `INSERT INTO telegram_log (template, chat, ok, text, error) VALUES ($1, $2, $3, $4, $5)`,
@@ -160,19 +160,30 @@ export async function notify(text: string | null, template: TemplateKey) {
  * Returns false when both are paused, so nothing was sent.
  */
 async function everyChat(config: TelegramConfig, kind: MessageKind, log: { template: string; text: string }, send: (chatId: number, topic: Record<string, number>) => Promise<unknown>): Promise<boolean> {
-  // Each message can be sent to the owner's chat, the group, or both (set on the Xabarlar page).
+  // Each message can be sent to the owner's chat, the group, or both (set on the Xabarlar page),
+  // and to staff members who linked their own Telegram, if the owner picked them for it.
   const settings = await getTemplateSettings().catch((): TemplateSettings => ({ texts: {}, off: [] }));
   const where = settings.chats?.[log.template as TemplateKey];
   const groupWants = where?.group ?? (kind === 'payments' ? config.groupPayments !== false : config.groupCancels !== false);
   const personalWants = where?.personal !== false;
-  const chats = [
-    config.personalPaused || !personalWants ? undefined : config.chatId,
-    config.groupPaused || !groupWants ? undefined : config.groupId,
-  ].filter((id): id is number => Boolean(id));
-  if (!chats.length) return false;
-  const results = await Promise.allSettled(chats.map(async (chatId) => {
-    const which = chatId === config.groupId ? 'group' : 'personal';
+  const targets: Array<{ chatId: number; which: 'personal' | 'group' | 'staff'; name?: string }> = [];
+  if (config.chatId && !config.personalPaused && personalWants) targets.push({ chatId: config.chatId, which: 'personal' });
+  if (config.groupId && !config.groupPaused && groupWants) targets.push({ chatId: config.groupId, which: 'group' });
+  if (where?.staff?.length && STAFF_TEMPLATES.includes(log.template as TemplateKey)) {
+    const people = await query<{ chat_id: string; full_name: string }>(
+      `SELECT p.chat_id, u.full_name FROM telegram_people p JOIN app_users u ON u.id = p.user_id
+        WHERE u.is_active AND p.user_id = ANY($1::uuid[])`,
+      [where.staff],
+    ).catch(() => []);
+    for (const p of people) {
+      const chatId = Number(p.chat_id);
+      if (!targets.some((t) => t.chatId === chatId)) targets.push({ chatId, which: 'staff', name: p.full_name });
+    }
+  }
+  if (!targets.length) return false;
+  const results = await Promise.allSettled(targets.map(async ({ chatId, which, name }) => {
     const topic: Record<string, number> = which === 'group' && config.groupThreadId ? { message_thread_id: config.groupThreadId } : {};
+    const logChat = which === 'staff' ? `staff:${name ?? ''}` : which;
     try {
       try {
         await send(chatId, topic);
@@ -182,10 +193,10 @@ async function everyChat(config: TelegramConfig, kind: MessageKind, log: { templ
         await send(error.chatId, topic);
       }
     } catch (error) {
-      await Promise.all([setTelegramError(which, error), logSend(log.template, which, log.text, error)]);
+      await Promise.all([which === 'staff' ? null : setTelegramError(which, error), logSend(log.template, logChat, log.text, error)]);
       throw error;
     }
-    await Promise.all([setTelegramError(which, null), logSend(log.template, which, log.text, null)]);
+    await Promise.all([which === 'staff' ? null : setTelegramError(which, null), logSend(log.template, logChat, log.text, null)]);
   }));
   const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
   if (failed.length === results.length) throw failed[0].reason;
@@ -274,7 +285,11 @@ export async function saveTemplate(key: TemplateKey, change: { text?: string | n
   }
   if (change.on !== undefined) off = change.on ? off.filter((k) => k !== key) : [...new Set([...off, key])];
   const chats = { ...current.chats };
-  if (change.chats) chats[key] = { ...chats[key], ...change.chats };
+  if (change.chats) {
+    const next: TemplateChats = { ...chats[key], ...change.chats };
+    if (next.staff && !next.staff.length) delete next.staff;
+    chats[key] = next;
+  }
   const next: TemplateSettings = { texts, off, chats };
   templateCache = null;
   await query(
