@@ -71,6 +71,7 @@ export default function Balance() {
       <PageHeader
         title="Kassa balansi"
         subtitle={both ? '1-kassa (naqd) va 2-kassa (karta): qancha pul borligi, kunlik rasxodlar' : `${accounts[0]?.label ?? 'Kassa'}: qancha pul borligi, kunlik rasxodlar`}
+        collapse
         actions={<>
           <Button icon={<Upload className="size-4" />} onClick={() => setModal('import')}>Daftarni yuklash</Button>
           <Button icon={<FileSpreadsheet className="size-4" />} onClick={() => setModal('month')}>Kassa Excel</Button>

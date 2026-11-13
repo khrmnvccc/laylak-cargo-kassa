@@ -71,6 +71,7 @@ export default function Operations({ params }: { params: URLSearchParams }) {
       <PageHeader
         title="Operatsiyalar"
         subtitle="Barcha kirimlar tarixi"
+        collapse
         actions={<>
           {can(user, 'payments.import') && <Button icon={<Upload className="size-4" />} onClick={() => setImporting(true)}>Hisobotni yuklash</Button>}
           <Button icon={<Download className="size-4" />} loading={exporting} onClick={exportXlsx} disabled={!data?.count}>Excel</Button>

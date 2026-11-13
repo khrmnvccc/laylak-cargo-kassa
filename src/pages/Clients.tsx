@@ -254,6 +254,7 @@ function ClientView({ code }: { code: string }) {
           <PageHeader
             title={`Mijoz ${code.toUpperCase()}`}
             subtitle={data ? [data.client.full_name || 'Ismi kiritilmagan', data.client.phone].filter(Boolean).join(' · ') : ' '}
+            collapse
             actions={data ? <>
               <Button icon={<Tag className="size-4" />} onClick={() => printClientLabel({ code: data.client.code, name: data.client.full_name, phone: data.client.phone })}>Yorliq (76×130)</Button>
               <PrintButton run={() => printClientStatement(data, user.full_name)} />
