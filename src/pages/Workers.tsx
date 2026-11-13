@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useApi, useLive } from '../lib/live';
 import { groupDigits, money, rangeLabel, relativeDay } from '../lib/format';
+import { useBranches, type Branch } from '../lib/branch';
 import { ADMIN_DEFAULT, NEEDS_KASSA, PERM_GROUPS, PRESETS, can, roleLabel, type Perm } from '../lib/perms';
 import type { Role, Staff } from '../lib/types';
 import { DateRangePicker, presetRange, type Range } from '../components/DateRange';
@@ -114,6 +115,37 @@ function Kpi({ label, value, className }: { label: string; value: string; classN
   );
 }
 
+/** Which branches a person sees: every one, or only the ticked ones. */
+function BranchPicker({ all, allowed, value, onChange }: { all: Branch[]; allowed: number[] | null; value: number[]; onChange: (v: number[]) => void }) {
+  const every = value.length === 0;
+  const list = all.filter((b) => !allowed || allowed.includes(b.id));
+  const toggle = (id: number) => {
+    const base = every ? list.map((b) => b.id) : value;
+    const next = base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
+    if (!next.length) return;
+    onChange(next.length === all.length ? [] : next.sort((a, b) => a - b));
+  };
+  return (
+    <section className="overflow-hidden rounded-xl border border-line">
+      <div className="flex items-center justify-between gap-3 bg-surface-2/70 px-3 py-2">
+        <div className="text-[13px] font-semibold text-ink">Filiallar</div>
+        {!allowed && !every && <button type="button" onClick={() => onChange([])} className="text-xs font-medium text-primary hover:underline">Hammasini berish</button>}
+      </div>
+      <div className="divide-y divide-line">
+        {list.map((b) => (
+          <label key={b.id} className="flex cursor-pointer items-center gap-3 px-3 py-2.5 hover:bg-surface-2/60">
+            <input type="checkbox" checked={every || value.includes(b.id)} onChange={() => toggle(b.id)} className="size-4 shrink-0 accent-[var(--ink)]" />
+            <span className="text-sm text-ink">{b.name}</span>
+          </label>
+        ))}
+      </div>
+      <p className="border-t border-line px-3 py-2 text-xs text-ink-3">
+        {every ? 'Hamma filialni koʻradi: tepada filialni tanlab ishlaydi.' : value.length === 1 ? 'Faqat shu filialni koʻradi va unga yozadi.' : 'Belgilangan filiallarni koʻradi.'}
+      </p>
+    </section>
+  );
+}
+
 function StaffModal({ staff, onClose }: { staff: Staff | null; onClose: () => void }) {
   const { user } = useAuth();
   const { bump } = useLive();
@@ -123,6 +155,9 @@ function StaffModal({ staff, onClose }: { staff: Staff | null; onClose: () => vo
   const [username, setUsername] = useState(staff?.username || '');
   const [role, setRole] = useState<Role>(staff?.role || 'worker');
   const [perms, setPerms] = useState<Perm[]>(staff ? staff.permissions : PRESETS.kassir);
+  const branchState = useBranches();
+  // Someone limited to some branches gives a new person those by default; [] means every branch.
+  const [branches, setBranches] = useState<number[]>(staff?.branches ?? (user.role !== 'owner' && user.branches?.length ? user.branches : []));
   const isOwner = user.role === 'owner';
   type Kind = 'ishchi' | 'kassir' | 'admin' | 'ega';
   const kind: Kind = role === 'owner' ? 'ega' : role === 'admin' ? 'admin' : perms.includes('payments.create') ? 'kassir' : 'ishchi';
@@ -160,7 +195,7 @@ function StaffModal({ staff, onClose }: { staff: Staff | null; onClose: () => vo
     setBusy(true);
     try {
       if (isNew) {
-        await api('/staff', { method: 'POST', body: { fullName, username, role, password, permissions: perms } });
+        await api('/staff', { method: 'POST', body: { fullName, username, role, password, permissions: perms, branches } });
         toast({ tone: 'success', title: 'Xodim qoʻshildi', description: `${fullName} · login: ${username.trim().toLowerCase()}` });
       } else {
         const body: Record<string, unknown> = {};
@@ -169,6 +204,7 @@ function StaffModal({ staff, onClose }: { staff: Staff | null; onClose: () => vo
         if (active !== staff.is_active) body.isActive = active;
         if (role !== 'owner' && (role !== staff.role || [...perms].sort().join() !== [...staff.permissions].sort().join())) body.permissions = perms;
         if (password) body.password = password;
+        if (role !== 'owner' && [...branches].sort().join() !== [...(staff.branches ?? [])].sort().join()) body.branches = branches;
         if (!Object.keys(body).length) return onClose();
         await api(`/staff/${staff.id}`, { method: 'PATCH', body });
         toast({ tone: 'success', title: 'Oʻzgarishlar saqlandi', description: password ? 'Parol yangilandi, xodim qayta kirishi kerak' : undefined });
@@ -248,6 +284,9 @@ function StaffModal({ staff, onClose }: { staff: Staff | null; onClose: () => vo
             </div>
             <p className="mt-1.5 text-xs text-ink-3">Kelish-ketishni belgilash hammaga ochiq. Oʻzgarish xodimda darhol kuchga kiradi.</p>
           </div>
+        )}
+        {role !== 'owner' && branchState.all.length > 1 && (
+          <BranchPicker all={branchState.all} allowed={user.role === 'owner' || !user.branches?.length ? null : user.branches} value={branches} onChange={setBranches} />
         )}
         {!isNew && !isSelf && (
           <label className="flex items-center justify-between gap-3 rounded-lg border border-line px-3 py-2.5">

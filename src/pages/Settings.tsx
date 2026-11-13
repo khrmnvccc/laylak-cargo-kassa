@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
-import { Download, Monitor, Moon, Send, Sun, Trash2 } from 'lucide-react';
+import { Building2, Download, Monitor, Moon, Plus, Send, Sun, Trash2 } from 'lucide-react';
+import { useBranches } from '../lib/branch';
 import { TEMPLATE_BY_KEY, type TemplateKey } from '../lib/tgTemplates';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -20,6 +21,7 @@ const ACTIONS: Record<string, string> = {
   staff_create: 'Xodim qoʻshdi', staff_update: 'Xodimni oʻzgartirdi', client_update: 'Mijozni oʻzgartirdi', password_change: 'Parolini oʻzgartirdi',
   client_import: 'Mijozlar roʻyxatini yukladi', expense_create: 'Rasxod yozdi', expense_void: 'Rasxodni bekor qildi', balance_adjust: 'Qoldiqni tuzatdi',
   telegram_set: 'Telegram botni kiritdi', telegram_connect: 'Telegramni uladi', telegram_remove: 'Telegramni uzdi', telegram_group: 'Telegram guruhini uladi', telegram_group_remove: 'Telegram guruhini uzdi', telegram_group_pause: 'Guruhga yuborishni toʻxtatdi', telegram_group_resume: 'Guruhga yuborishni qayta yoqdi', backup_download: 'Zaxirani yuklab oldi', payment_import: 'Toʻlovlarni Exceldan yukladi', expense_import: 'Kassa daftarini yukladi', attendance_edit: 'Davomatni tuzatdi', office_set: 'Ishxona joyini belgiladi', office_clear: 'Ishxona joyini olib tashladi', order_create: 'Stiker yaratdi', order_import: 'Buyurtmalar roʻyxatini yukladi', receipt_confirm: 'Chekdan toʻlov kiritdi', telegram_template_on: 'Telegram xabarini yoqdi', telegram_template_off: 'Telegram xabarini oʻchirdi', telegram_template: 'Telegram xabar matnini oʻzgartirdi', telegram_group_kinds: 'Guruhga boradigan xabarlarni tanladi', telegram_template_chats: 'Xabar qayerga borishini oʻzgartirdi', pages_set: 'Oynalar sozlamasini oʻzgartirdi', telegram_person_link: 'Oʻz Telegramini uladi', telegram_person_unlink: 'Telegramni uzdi', telegram_personal_pause: 'Shaxsiy chatga yuborishni toʻxtatdi', telegram_personal_resume: 'Shaxsiy chatga yuborishni qayta yoqdi', data_reset: 'Barcha maʼlumotlarni tozaladi',
+  branch_create: 'Yangi filial ochdi', branch_rename: 'Filial nomini oʻzgartirdi',
   order_issue: 'Tovarni berdi', order_unissue: 'Tovarni omborga qaytardi', order_delete: 'Stikerni oʻchirdi', order_prepaid: 'Buyurtmani oldin toʻlangan deb belgiladi', order_unprepaid: 'Oldin toʻlangan belgisini olib tashladi',
 };
 
@@ -34,6 +36,7 @@ export default function Settings() {
         <Appearance />
         {user.role !== 'owner' && <MyTelegram />}
         {isBoss(user) && <SystemInfo />}
+        {user.role === 'owner' && <BranchesCard />}
         {user.role === 'owner' && <PagesCard />}
         {user.role === 'owner' && <BackupCard />}
         {user.role === 'owner' && <ResetCard />}
@@ -282,6 +285,68 @@ function BackupCard() {
       <CardHeader title="Zaxira" subtitle="Faqat Ega koʻradi" />
       <p className="text-sm text-ink-2">Barcha toʻlov, mijoz, rasxod va davomat bitta faylda. Parollar kirmaydi. Har kecha Telegramga ham keladi.</p>
       <div className="mt-4"><Button icon={<Download className="size-4" />} loading={busy} onClick={download}>Yuklab olish</Button></div>
+      {error && <div className="mt-3"><Alert>{error}</Alert></div>}
+    </Card>
+  );
+}
+
+/** Owner only: open a new branch or rename one. Each keeps its own payments, kassa, expenses and orders. */
+function BranchesCard() {
+  const { all } = useBranches();
+  const { bump } = useLive();
+  const toast = useToast();
+  const [names, setNames] = useState<Record<number, string>>({});
+  const [fresh, setFresh] = useState('');
+  const [busy, setBusy] = useState<number | 'new' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run(key: number | 'new', fn: () => Promise<unknown>, done: string) {
+    setBusy(key);
+    setError(null);
+    try {
+      await fn();
+      bump();
+      toast({ tone: 'success', title: done });
+      return true;
+    } catch (e) {
+      setError((e as Error).message);
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  }
+  const add = async (e: FormEvent) => {
+    e.preventDefault();
+    if (await run('new', () => api('/branches', { method: 'POST', body: { name: fresh } }), `“${fresh.trim()}” filiali ochildi`)) setFresh('');
+  };
+  const rename = (id: number) => run(id, () => api(`/branches/${id}`, { method: 'PATCH', body: { name: names[id] } }), 'Nomi saqlandi')
+    .then((ok) => ok && setNames(({ [id]: _, ...rest }) => rest));
+
+  return (
+    <Card className="self-start">
+      <CardHeader title="Filiallar" subtitle="Har filialning toʻlovlari, kassasi, rasxodi va buyurtmalari alohida. Mijozlar roʻyxati umumiy." />
+      <div className="divide-y divide-line rounded-xl border border-line">
+        {all.map((b) => {
+          const value = names[b.id] ?? b.name;
+          const changed = value.trim() !== b.name;
+          return (
+            <div key={b.id} className="flex items-center gap-2.5 px-3 py-2">
+              <Building2 className="size-4 shrink-0 text-ink-3" />
+              <Input aria-label="Filial nomi" value={value} maxLength={40} onChange={(e) => setNames((n) => ({ ...n, [b.id]: e.target.value }))} className="h-9 flex-1" />
+              {changed && <Button size="sm" variant="primary" loading={busy === b.id} onClick={() => rename(b.id)}>Saqlash</Button>}
+            </div>
+          );
+        })}
+      </div>
+      <form onSubmit={add} className="mt-3 flex gap-2">
+        <Input aria-label="Yangi filial nomi" value={fresh} maxLength={40} onChange={(e) => setFresh(e.target.value)} placeholder="Yangi filial nomi, masalan Chilonzor" className="h-9 flex-1" />
+        <Button size="sm" type="submit" icon={<Plus className="size-4" />} loading={busy === 'new'} disabled={fresh.trim().length < 2}>Ochish</Button>
+      </form>
+      <p className="mt-3 text-xs text-ink-3">
+        {all.length > 1
+          ? 'Tepada filialni tanlab ishlaysiz. Xodimga qaysi filiallarni koʻrishini Ishchilar sahifasida belgilang.'
+          : 'Ikkinchi filial ochilganda tepada filial tanlash paydo boʻladi. Hozirgi barcha maʼlumotlar birinchi filialda qoladi.'}
+      </p>
       {error && <div className="mt-3"><Alert>{error}</Alert></div>}
     </Card>
   );

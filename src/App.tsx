@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 import { api, ApiError, onUnauthorized } from './lib/api';
 import { AuthContext } from './lib/auth';
@@ -8,6 +8,7 @@ import { useRoute } from './lib/router';
 import { useTheme } from './lib/theme';
 import { canSee, homePage, isPaused, setPageSettings } from './lib/perms';
 import { useApi } from './lib/live';
+import { BranchContext, currentBranch, saveBranch, type Branch } from './lib/branch';
 import type { PageSettings } from './lib/pageConfig';
 import type { Route } from './lib/router';
 import type { User } from './lib/types';
@@ -84,6 +85,8 @@ function PageFallback() {
 
 export default function App() {
   useTheme();
+  const [branch, setBranch] = useState(currentBranch);
+  const pickBranch = useCallback((id: number) => { saveBranch(id); setBranch(currentBranch()); }, []);
   const [boot, setBoot] = useState<Boot>(() => {
     const user = savedUser();
     return user?.id ? { state: 'ready', user } : { state: 'loading' };
@@ -149,18 +152,32 @@ export default function App() {
   }
 
   const user = boot.user;
-  loadApiCache(user.id);
+  // Each branch keeps its own saved answers, so switching shows that branch's last numbers at once.
+  loadApiCache(`${user.id}:${branch}`);
 
   return (
     <AuthContext.Provider value={{ user, setUser: (u) => { saveUser(u); setBoot({ state: 'ready', user: u }); }, logout }}>
       <ToastProvider>
-        <LiveProvider key={user.id}>
-          <Pages user={user} route={route} onLogout={logout} />
+        <LiveProvider key={`${user.id}:${branch}`}>
+          <Branches current={branch} onPick={pickBranch}>
+            <Pages user={user} route={route} onLogout={logout} />
+          </Branches>
           <InstallPrompt />
         </LiveProvider>
       </ToastProvider>
     </AuthContext.Provider>
   );
+}
+
+/** The branches there are and the ones this person sees; a pick that is no longer allowed falls back to all. */
+function Branches({ current, onPick, children }: { current: number; onPick: (id: number) => void; children: ReactNode }) {
+  const { data } = useApi<{ items: Branch[]; mine: number[] }>('/branches');
+  const all = data?.items ?? [];
+  const mine = all.filter((b) => data?.mine.includes(b.id));
+  useEffect(() => {
+    if (data && current && !data.mine.includes(current)) onPick(0);
+  }, [data, current, onPick]);
+  return <BranchContext.Provider value={{ all, mine, current, pick: onPick }}>{children}</BranchContext.Provider>;
 }
 
 /** The menu and the open page, drawn with the owner's page settings (who sees what, what is paused). */
