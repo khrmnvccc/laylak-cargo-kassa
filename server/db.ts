@@ -364,7 +364,21 @@ ALTER TABLE expenses DROP CONSTRAINT IF EXISTS expenses_category_check;
 ALTER TABLE expenses ADD CONSTRAINT expenses_category_check CHECK (category IN ('tovar', 'paket', 'yetkazish', 'yoqilgi', 'ijara', 'oylik', 'kommunal', 'inkassa', 'tovar_olib_kelish', 'togamga', 'arofat', 'boshqa'));
 `;
 
-const SCHEMA_VERSION = 12;
+// v13: the Telegram sent list on the Sozlamalar page (what went to whom, and whether it arrived).
+const SCHEMA_V13_SQL = `
+CREATE TABLE IF NOT EXISTS telegram_log (
+  id BIGSERIAL PRIMARY KEY,
+  at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  template TEXT NOT NULL,
+  chat TEXT NOT NULL,
+  ok BOOLEAN NOT NULL,
+  text TEXT NOT NULL,
+  error TEXT
+);
+ALTER TABLE telegram_log ENABLE ROW LEVEL SECURITY;
+`;
+
+const SCHEMA_VERSION = 13;
 
 export function ensureSchema(): Promise<void> {
   if (!globalForPool.__kassaSchema) {
@@ -404,6 +418,7 @@ async function migrate() {
       if (current < 10) await client.query(SCHEMA_V10_SQL);
       if (current < 11) await client.query(SCHEMA_V11_SQL);
       if (current < 12) await client.query(SCHEMA_V12_SQL);
+      if (current < 13) await client.query(SCHEMA_V13_SQL);
       await client.query(
         `INSERT INTO app_meta (key, value) VALUES ('schema_version', $1::jsonb)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,

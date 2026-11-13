@@ -8,12 +8,13 @@ import { useTheme, type ThemePref } from '../lib/theme';
 import type { User } from '../lib/types';
 import { Alert, Badge, Button, Card, CardHeader, ErrorState, Field, Input, Modal, PageHeader, Segmented, SkeletonRows, useToast } from '../components/ui';
 import { isBoss, roleLabel } from '../lib/perms';
+import TelegramTemplates from '../components/TelegramTemplates';
 
 const ACTIONS: Record<string, string> = {
   setup: 'Tizim sozlandi', login: 'Tizimga kirdi', payment_create: 'Toʻlov kiritdi', payment_void: 'Toʻlovni bekor qildi', telegram_failed: 'Telegramga yuborilmadi',
   staff_create: 'Xodim qoʻshdi', staff_update: 'Xodimni oʻzgartirdi', client_update: 'Mijozni oʻzgartirdi', password_change: 'Parolini oʻzgartirdi',
   client_import: 'Mijozlar roʻyxatini yukladi', expense_create: 'Rasxod yozdi', expense_void: 'Rasxodni bekor qildi', balance_adjust: 'Qoldiqni tuzatdi',
-  telegram_set: 'Telegram botni kiritdi', telegram_connect: 'Telegramni uladi', telegram_remove: 'Telegramni uzdi', telegram_group: 'Telegram guruhini uladi', telegram_group_remove: 'Telegram guruhini uzdi', telegram_group_pause: 'Guruhga yuborishni toʻxtatdi', telegram_group_resume: 'Guruhga yuborishni qayta yoqdi', backup_download: 'Zaxirani yuklab oldi', data_reset: 'Barcha maʼlumotlarni tozaladi',
+  telegram_set: 'Telegram botni kiritdi', telegram_connect: 'Telegramni uladi', telegram_remove: 'Telegramni uzdi', telegram_group: 'Telegram guruhini uladi', telegram_group_remove: 'Telegram guruhini uzdi', telegram_group_pause: 'Guruhga yuborishni toʻxtatdi', telegram_group_resume: 'Guruhga yuborishni qayta yoqdi', backup_download: 'Zaxirani yuklab oldi', payment_import: 'Toʻlovlarni Exceldan yukladi', expense_import: 'Kassa daftarini yukladi', attendance_edit: 'Davomatni tuzatdi', office_set: 'Ishxona joyini belgiladi', office_clear: 'Ishxona joyini olib tashladi', order_create: 'Stiker yaratdi', order_import: 'Buyurtmalar roʻyxatini yukladi', receipt_confirm: 'Chekdan toʻlov kiritdi', telegram_template_on: 'Telegram xabarini yoqdi', telegram_template_off: 'Telegram xabarini oʻchirdi', telegram_template: 'Telegram xabar matnini oʻzgartirdi', telegram_group_kinds: 'Guruhga boradigan xabarlarni tanladi', telegram_personal_pause: 'Shaxsiy chatga yuborishni toʻxtatdi', telegram_personal_resume: 'Shaxsiy chatga yuborishni qayta yoqdi', data_reset: 'Barcha maʼlumotlarni tozaladi',
   order_issue: 'Tovarni berdi', order_unissue: 'Tovarni omborga qaytardi', order_delete: 'Stikerni oʻchirdi', order_prepaid: 'Buyurtmani oldin toʻlangan deb belgiladi', order_unprepaid: 'Oldin toʻlangan belgisini olib tashladi',
 };
 
@@ -29,6 +30,7 @@ export default function Settings() {
         {isBoss(user) && <SystemInfo />}
         {user.role === 'owner' && <TelegramCard />}
         {user.role === 'owner' && <ResetCard />}
+        {user.role === 'owner' && <TelegramTemplates />}
       </div>
       {isBoss(user) && <AuditLog />}
     </>
@@ -132,7 +134,6 @@ function Appearance() {
 
 function SystemInfo() {
   const { data, error, loading, reload } = useApi<{ meta: Record<string, any>; counts: Record<string, number> }>('/system');
-  const legacy = data?.meta.legacy_import_v1;
   return (
     <Card>
       <CardHeader title="Tizim holati" subtitle="Umumiy server maʼlumotlar bazasi (PostgreSQL)" action={<Badge tone="success"><span className="size-1.5 rounded-full bg-success" />Ulangan</Badge>} />
@@ -146,19 +147,6 @@ function SystemInfo() {
               </div>
             ))}
           </div>
-          {legacy && (
-            <div className="rounded-lg border border-line px-3 py-2.5 text-[13px] text-ink-2">
-              <div className="font-medium text-ink">Eski maʼlumotlar koʻchirilishi</div>
-              {legacy.sourceTableFound ? (
-                <p className="mt-1">
-                  {dateTime(legacy.at)} da {legacy.owners} ta eski akkauntdan {legacy.records} ta yozuv zaxiraga olindi va {legacy.paymentsCreated} ta toʻlov umumiy bazaga koʻchirildi.
-                  {legacy.skippedSamples ? ` ${legacy.skippedSamples} ta demo yozuv chiqarib tashlandi.` : ''}
-                  {legacy.skippedDeleted ? ` ${legacy.skippedDeleted} ta oʻchirilgan yozuv koʻchirilmadi.` : ''} Eski jadval oʻzgarishsiz saqlanadi.
-                </p>
-              ) : <p className="mt-1">Eski jadval topilmadi, koʻchiriladigan maʼlumot yoʻq.</p>}
-            </div>
-          )}
-          <p className="text-xs text-ink-3">Toʻlovlarni oʻchirib boʻlmaydi, faqat admin sabab koʻrsatib bekor qila oladi. Bu cheklov maʼlumotlar bazasining oʻzida ham oʻrnatilgan. Barcha summalar soʻmda, sanalar Toshkent vaqti boʻyicha.</p>
         </div>
       )}
     </Card>
@@ -246,7 +234,7 @@ function ResetCard() {
   };
 
   return (
-    <Card>
+    <Card className="self-start">
       <CardHeader title="Maʼlumotlarni tozalash" subtitle="Faqat Ega koʻradi" />
       <p className="text-sm text-ink-2">
         Kassani noldan boshlash: barcha kirim, chiqim, buyurtma va davomat oʻchadi. Ishchilar, ularning parollari va sozlamalar qoladi.
@@ -368,11 +356,6 @@ function TelegramCard() {
                   {' '}Tuzatgach, “Sinov xabari”ni bosing: yetib borsa, bu yozuv yoʻqoladi.
                 </Alert>
               ))}
-              <ul className="list-disc space-y-1 pl-5 text-[13px] text-ink-2">
-                <li>Har kuni 19:00 dan keyin: kunlik hisobot, kassa va operatsiyalar Excel fayllari (oxirgi inkassadan beri) va butun bazaning zaxira nusxasi.</li>
-                <li>Har bir toʻlovning rasmi: naqd yoki karta, summa, mijoz va kim kiritgani.</li>
-                <li>Toʻlov yoki rasxod bekor qilinsa yoki buyurtma oʻchirilsa, darhol xabar.</li>
-              </ul>
               <div className="space-y-2 rounded-lg border border-line px-3 py-2.5">
                 <div className="flex items-center justify-between gap-3">
                   <div className="font-medium text-ink">Shaxsiy chat</div>

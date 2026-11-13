@@ -648,6 +648,42 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     assert.equal(sent.length, 2, 'owner and group, once each');
     assert.match(sent[0].body.text, /2 ta buyurtma oʻchirildi[\s\S]*6 000 soʻm[\s\S]*TGD-100001/);
 
+    // Message texts: the owner's words are used, empty lines drop out, and the default can be put back.
+    assert.equal((await w.call('PUT', '/telegram/templates', { key: 'paymentVoid', text: 'x' })).status, 403);
+    assert.equal((await owner.call('PUT', '/telegram/templates', { key: 'nimadir', text: 'x' })).status, 400);
+    assert.equal((await owner.call('PUT', '/telegram/templates', { key: 'paymentVoid', text: 'x'.repeat(901) })).status, 400);
+    const custom = await owner.call('PUT', '/telegram/templates', { key: 'paymentVoid', text: '❌ *Bekor* {{mijoz}} {{summa}}\nIzoh: {{yoq}}\n<{{sabab}}>' });
+    assert.equal(custom.status, 200);
+    assert.ok(custom.body.texts.paymentVoid);
+    assert.deepEqual(custom.body.off, []);
+    const tpl = await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'TPL-1', amount: 3000, method: 'cash' });
+    await backgroundSettled();
+    sent.length = 0;
+    await owner.call('POST', `/payments/${tpl.body.payment.id}/void`, { reason: 'a&b' });
+    await backgroundSettled();
+    assert.equal(sent[0].body.text, '❌ <b>Bekor</b> TPL-1 3 000 soʻm\n&lt;a&amp;b&gt;');
+    sent.length = 0;
+    assert.equal((await owner.call('POST', '/telegram/templates/test', { key: 'payment', text: '' })).status, 200);
+    assert.match(sent[0].body.text, /Namuna[\s\S]*<b>Naqd · 125 000 soʻm<\/b>/);
+    assert.deepEqual((await owner.call('PUT', '/telegram/templates', { key: 'paymentVoid', text: null })).body.texts, {});
+    assert.deepEqual((await owner.call('GET', '/telegram/templates')).body, { texts: {}, off: [] });
+
+    // A message switched off is not sent at all; the payment itself is still saved.
+    assert.deepEqual((await owner.call('PUT', '/telegram/templates', { key: 'payment', on: false })).body.off, ['payment']);
+    sent.length = 0;
+    const quiet = await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'TPL-2', amount: 4000, method: 'card' });
+    assert.equal(quiet.status, 201);
+    await backgroundSettled();
+    assert.equal(sent.length, 0, 'payment message switched off');
+    assert.deepEqual((await owner.call('PUT', '/telegram/templates', { key: 'payment', on: true })).body.off, []);
+
+    // The sent list shows what went where, newest first.
+    const sentList = (await owner.call('GET', '/telegram/log', undefined, { limit: '5' })).body;
+    assert.ok(sentList.total > 0);
+    assert.equal(sentList.items[0].template, 'test');
+    assert.ok(sentList.items.some((m: any) => m.template === 'paymentVoid' && m.ok));
+    assert.equal((await w.call('GET', '/telegram/log')).status, 403);
+
     // Backup: every table, without passwords or the token.
     const backup = await owner.call('GET', '/backup');
     assert.equal(backup.status, 200);
