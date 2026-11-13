@@ -21,7 +21,7 @@ import {
   forgetSessions,
 } from './auth.js';
 import { PERMISSIONS, WORKER_DEFAULT, isPerm, kassaSources, permsOf, upgrade, type Perm } from './perms.js';
-import { ChatMoved, getTelegram, getTelegramErrors, messageText, notify, saveTemplateText, getTemplateTexts, setTelegramError, photoFromDataUrl, reportPhotos, reportText, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
+import { ChatMoved, getTelegram, logSend, getTelegramErrors, messageText, notify, saveTemplate, getTemplateSettings, setTelegramError, photoFromDataUrl, reportPhotos, reportText, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
 import { receiptKey } from './receipts.js';
 import { background } from './background.js';
 import { gzipSync } from 'node:zlib';
@@ -348,10 +348,10 @@ route('POST', '/payments', 'payments.create', async (ctx) => {
     );
     return full.rows[0];
   });
-  const telegram = await reportLater(ctx.user, payment.id, async () => reportPhotos(photos as Buffer[], await paymentCaption({
+  const telegram = await reportLater(ctx.user, payment.id, async () => sendIfOn(await paymentCaption({
     method, amount, by: ctx.user!.full_name, at: payment.paid_at, note,
     lines: [`${clientCode}${clientName ? ` · ${clientName}` : ''}`],
-  })));
+  }), photos as Buffer[]));
   return { status: 201, body: { payment, telegram } };
 });
 
@@ -367,6 +367,12 @@ async function reportLater(user: AuthUser | null, entityId: string | null, send:
 }
 
 /** Telegram caption for a payment the kassa just saved: type and sum first, then who and what. */
+/** Sends the payment message (with its pictures, if any) unless the owner switched it off. */
+function sendIfOn(caption: string | null, photos: Buffer[] | null) {
+  if (caption === null) return Promise.resolve('off' as const);
+  return photos ? reportPhotos(photos, caption) : reportText(caption);
+}
+
 function paymentCaption(p: { method: string; amount: number; by: string; at: string | Date; note?: string; lines: string[]; details?: string[]; head?: string }) {
   const when = new Date(new Date(p.at).getTime() + 5 * 3600_000).toISOString();
   return messageText('payment', {
@@ -652,11 +658,11 @@ route('POST', '/orders/:id/pay', 'payments.create', async (ctx) => {
     [o.transport, o.places ? `${o.places} ta` : '', o.weight ? `${o.weight} kg` : ''].filter(Boolean).join(' · '),
     `Qabul qilingan: ${o.received_at.slice(8, 10)}.${o.received_at.slice(5, 7)}.${o.received_at.slice(0, 4)}`,
   ].filter(Boolean);
-  const telegram = await reportLater(ctx.user, result.payment.id, async () => reportText(await paymentCaption({
+  const telegram = await reportLater(ctx.user, result.payment.id, async () => sendIfOn(await paymentCaption({
     method, amount: Number(o.amount), by: ctx.user!.full_name, at: result.payment.paid_at,
     head: `📦 Stiker ${o.scan_code}`,
     lines: [`${o.client_code}${o.client_name ? ` · ${o.client_name}` : ''}`], details,
-  })));
+  }), null));
   return { ...result, telegram };
 });
 
@@ -732,7 +738,7 @@ route('POST', '/orders/delete', 'payments.void', async (ctx) => {
     for (const r of rows) await audit(db, ctx.user, 'order_delete', 'order', r.id, { scanCode: r.scan_code, amount: Number(r.amount) });
     return rows;
   });
-  if (rows.length) background(orderDeleteText(rows, ctx.user!.full_name).then(notify));
+  if (rows.length) background(orderDeleteText(rows, ctx.user!.full_name).then((text) => notify(text, 'orderDelete')));
   return { deleted: rows.length, kept: ids.length - rows.length };
 });
 
@@ -770,7 +776,7 @@ route('DELETE', '/orders/:id', 'payments.void', async (ctx) => {
     await audit(db, ctx.user, 'order_delete', 'order', ctx.params.id, { scanCode: rows[0].scan_code, amount: Number(rows[0].amount) });
     return rows[0];
   });
-  background(orderDeleteText([order], ctx.user!.full_name).then(notify));
+  background(orderDeleteText([order], ctx.user!.full_name).then((text) => notify(text, 'orderDelete')));
   return { ok: true };
 });
 
@@ -877,12 +883,12 @@ route('POST', '/receipts/confirm', 'payments.create', async (ctx) => {
     );
     return full.rows;
   });
-  const telegram = await reportLater(ctx.user, saved[0]?.id ?? null, async () => reportPhotos(photos, await paymentCaption({
+  const telegram = await reportLater(ctx.user, saved[0]?.id ?? null, async () => sendIfOn(await paymentCaption({
     method, amount: receipt.amount, by: ctx.user!.full_name, at: saved[0]?.paid_at || new Date(),
     head: [head, receipt.sender && `· ${receipt.sender}`].filter(Boolean).join(' '),
     lines: orders.map((o: { clientCode: string; clientName: string; orderNo: string; transport: string; amount: number }) =>
       `• ${o.clientCode}${o.clientName ? ` ${o.clientName}` : ''}${o.orderNo ? ` №${o.orderNo}` : ''}${o.transport ? ` ${o.transport}` : ''} — ${som(o.amount)}`),
-  })));
+  }), photos));
   return { status: 201, body: { payments: saved, telegram } };
 });
 
@@ -1029,7 +1035,7 @@ route('POST', '/payments/:id/void', 'payments.void', async (ctx) => {
   });
   background(messageText('paymentVoid', {
     mijoz: payment.client_code, summa: som(payment.amount), turi: METHOD_LABEL[payment.method] || payment.method, kim: ctx.user!.full_name, sabab: reason,
-  }).then(notify));
+  }).then((text) => notify(text, 'paymentVoid')));
   return { payment };
 });
 
@@ -1654,7 +1660,7 @@ route('POST', '/expenses/:id/void', 'kassa', async (ctx) => {
   background(messageText('expenseVoid', {
     turkum: EXPENSE_LABELS[expense.category] ?? expense.category, summa: som(expense.amount),
     kassa: expense.source === 'card' ? '2-kassa (karta)' : '1-kassa (naqd)', kim: ctx.user!.full_name, sabab: reason,
-  }).then(notify));
+  }).then((text) => notify(text, 'expenseVoid')));
   return { expense };
 });
 
@@ -1841,7 +1847,7 @@ const som = (n: number | string) => `${String(Math.round(Number(n))).replace(/\B
 const dayLabel = (date: string) => `${Number(date.slice(8))}-${MONTHS[Number(date.slice(5, 7)) - 1]}, ${date.slice(0, 4)}`;
 const tashkentHour = () => new Date(Date.now() + 5 * 3600_000).getUTCHours();
 
-async function dailyReportText(date: string): Promise<string> {
+async function dailyReportText(date: string): Promise<string | null> {
   const start = `($1::date)::timestamp AT TIME ZONE '${TZ}'`;
   const end = `($1::date + 1)::timestamp AT TIME ZONE '${TZ}'`;
   const [totals, voided, expenses, balance] = await Promise.all([
@@ -1853,14 +1859,14 @@ async function dailyReportText(date: string): Promise<string> {
     query(`SELECT source, COALESCE(SUM(income - expense + adjustment), 0)::bigint AS closing
              FROM (${LEDGER_SQL}) l WHERE at < ${end} GROUP BY source`, [date]),
   ]);
-  const lines = [`📊 <b>Laylak Cargo · ${dayLabel(date)}</b>`, ''];
-  lines.push(`💰 Jami: <b>${som(totals.total)}</b> (${totals.count} ta toʻlov, ${totals.clients} mijoz)`);
-  for (const m of ['cash', 'card', 'yandex', 'pochta']) if (Number(totals[m])) lines.push(`   ${METHOD_LABEL[m]}: ${som(totals[m])}`);
-  if (Number(expenses[0].total)) lines.push(`💸 Rasxod: ${som(expenses[0].total)}`);
-  if (voided[0].n) lines.push(`⚠️ Bekor qilingan: ${voided[0].n} ta, ${som(voided[0].total)}`);
   const bal = Object.fromEntries(balance.map((b: any) => [b.source, b.closing]));
-  if (balance.length) lines.push(`🏦 Kun oxiridagi qoldiq: naqd ${som(bal.cash || 0)}, karta ${som(bal.card || 0)}`);
-  return lines.join('\n');
+  return messageText('dailyReport', {
+    sana: dayLabel(date), jami: som(totals.total), soni: String(totals.count), mijozlar: String(totals.clients),
+    turlar: ['cash', 'card', 'yandex', 'pochta'].filter((m) => Number(totals[m])).map((m) => `   ${METHOD_LABEL[m]}: ${som(totals[m])}`).join('\n'),
+    rasxod: Number(expenses[0].total) ? som(expenses[0].total) : '',
+    bekor: voided[0].n ? `${voided[0].n} ta, ${som(voided[0].total)}` : '',
+    qoldiq_naqd: balance.length ? som(bal.cash || 0) : '', qoldiq_karta: balance.length ? som(bal.card || 0) : '',
+  });
 }
 
 /** Every table except sign-in sessions; passwords and the bot token are left out. */
@@ -1917,8 +1923,10 @@ async function reportWorkbooks(from: string, to: string) {
 }
 
 async function sendDailyReport(date: string) {
+  if (!(await getTelegram())?.chatId) throw new HttpError(400, 'Telegram ulanmagan');
+  // Switched off: no summary text, but the Excel files and the backup still come.
   const text = await dailyReportText(date);
-  if (!(await sendMessage(text))) throw new HttpError(400, 'Telegram ulanmagan');
+  if (text) await sendMessage(text, undefined, 'dailyReport');
   const from = await kassaPeriodStart(date);
   const span = from === date ? dayLabel(date) : `${dayLabel(from)} – ${dayLabel(date)}`;
   try {
@@ -1953,15 +1961,27 @@ async function telegramView(config: Awaited<ReturnType<typeof getTelegram>>) {
 route('GET', '/telegram', 'owner', async () => telegramView(await getTelegram()));
 
 // Message texts: the owner's own words for each Telegram message (defaults live in src/lib/tgTemplates.ts).
-route('GET', '/telegram/templates', 'owner', async () => ({ texts: await getTemplateTexts() }));
+route('GET', '/telegram/templates', 'owner', async () => getTemplateSettings());
 
 route('PUT', '/telegram/templates', 'owner', async (ctx) => {
   const key = String(ctx.body?.key || '') as TemplateKey;
   if (!TEMPLATE_BY_KEY[key]) throw new HttpError(400, 'Bunday xabar yoʻq');
-  const text = ctx.body?.text == null ? null : String(ctx.body.text);
-  const texts = await saveTemplateText(key, text);
-  await audit(null, ctx.user, 'telegram_template', 'telegram', null, { key, reset: !texts[key] });
-  return { texts };
+  const change: { text?: string | null; on?: boolean } = {};
+  if ('text' in (ctx.body || {})) change.text = ctx.body.text == null ? null : String(ctx.body.text);
+  if (typeof ctx.body?.on === 'boolean') change.on = ctx.body.on;
+  const settings = await saveTemplate(key, change);
+  await audit(null, ctx.user, change.on === undefined ? 'telegram_template' : change.on ? 'telegram_template_on' : 'telegram_template_off', 'telegram', null, { key });
+  return settings;
+});
+
+// The sent list: the newest messages first, with where they went and whether they arrived.
+route('GET', '/telegram/log', 'owner', async (ctx) => {
+  const limit = Math.min(Math.max(Number(ctx.query.limit) || 40, 1), 200);
+  const [items, total] = await Promise.all([
+    query(`SELECT id, at, template, chat, ok, text, error FROM telegram_log ORDER BY id DESC LIMIT $1`, [limit]),
+    query(`SELECT COUNT(*)::int AS n FROM telegram_log`),
+  ]);
+  return { items, total: total[0].n };
 });
 
 // A sample of one message sent to the owner's own chat, exactly as it would arrive.
@@ -1972,7 +1992,7 @@ route('POST', '/telegram/templates/test', 'owner', async (ctx) => {
   if (!TEMPLATE_BY_KEY[key]) throw new HttpError(400, 'Bunday xabar yoʻq');
   const text = ctx.body?.text == null ? '' : String(ctx.body.text).slice(0, MAX_TEMPLATE_LENGTH);
   const html = renderTemplate(text.trim() || TEMPLATE_BY_KEY[key].text, sampleValues(key));
-  await tg(config.token, 'sendMessage', { chat_id: config.chatId, text: `🧪 Namuna\n\n${html}`, parse_mode: 'HTML', disable_web_page_preview: true }, 10_000);
+  await sendMessage(`🧪 Namuna\n\n${html}`, 10_000, 'test');
   return { ok: true };
 });
 
@@ -2087,10 +2107,10 @@ route('POST', '/telegram/test', 'owner', async (ctx) => {
       await tg(config.token, 'sendMessage', { chat_id: error.chatId, ...topic, text }, 10_000);
     }
   } catch (error) {
-    await setTelegramError(target, error);
+    await Promise.all([setTelegramError(target, error), logSend('test', target, text, error)]);
     throw error;
   }
-  await setTelegramError(target, null);
+  await Promise.all([setTelegramError(target, null), logSend('test', target, text, null)]);
   return telegramView(await getTelegram());
 });
 

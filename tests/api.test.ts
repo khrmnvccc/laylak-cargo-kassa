@@ -655,6 +655,7 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     const custom = await owner.call('PUT', '/telegram/templates', { key: 'paymentVoid', text: '❌ *Bekor* {{mijoz}} {{summa}}\nIzoh: {{yoq}}\n<{{sabab}}>' });
     assert.equal(custom.status, 200);
     assert.ok(custom.body.texts.paymentVoid);
+    assert.deepEqual(custom.body.off, []);
     const tpl = await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'TPL-1', amount: 3000, method: 'cash' });
     await backgroundSettled();
     sent.length = 0;
@@ -665,7 +666,23 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     assert.equal((await owner.call('POST', '/telegram/templates/test', { key: 'payment', text: '' })).status, 200);
     assert.match(sent[0].body.text, /Namuna[\s\S]*<b>Naqd · 125 000 soʻm<\/b>/);
     assert.deepEqual((await owner.call('PUT', '/telegram/templates', { key: 'paymentVoid', text: null })).body.texts, {});
-    assert.deepEqual((await owner.call('GET', '/telegram/templates')).body.texts, {});
+    assert.deepEqual((await owner.call('GET', '/telegram/templates')).body, { texts: {}, off: [] });
+
+    // A message switched off is not sent at all; the payment itself is still saved.
+    assert.deepEqual((await owner.call('PUT', '/telegram/templates', { key: 'payment', on: false })).body.off, ['payment']);
+    sent.length = 0;
+    const quiet = await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'TPL-2', amount: 4000, method: 'card' });
+    assert.equal(quiet.status, 201);
+    await backgroundSettled();
+    assert.equal(sent.length, 0, 'payment message switched off');
+    assert.deepEqual((await owner.call('PUT', '/telegram/templates', { key: 'payment', on: true })).body.off, []);
+
+    // The sent list shows what went where, newest first.
+    const sentList = (await owner.call('GET', '/telegram/log', undefined, { limit: 5 })).body;
+    assert.ok(sentList.total > 0);
+    assert.equal(sentList.items[0].template, 'test');
+    assert.ok(sentList.items.some((m: any) => m.template === 'paymentVoid' && m.ok));
+    assert.equal((await w.call('GET', '/telegram/log')).status, 403);
 
     // Backup: every table, without passwords or the token.
     const backup = await owner.call('GET', '/backup');
