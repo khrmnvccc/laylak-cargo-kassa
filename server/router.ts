@@ -23,6 +23,7 @@ import {
 import { PERMISSIONS, WORKER_DEFAULT, isPerm, kassaSources, permsOf, upgrade, type Perm } from './perms.js';
 import { ChatMoved, getTelegram, logSend, getTelegramErrors, messageText, notify, saveTemplate, getTemplateSettings, setTelegramError, photoFromDataUrl, reportPhotos, reportText, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
 import { receiptKey } from './receipts.js';
+import { COLUMNS as BROADCAST_COLUMNS, claim as claimBroadcast, deliver as deliverBroadcast, deliverDue, parseBroadcast, recipients as broadcastRecipients, sendOne as sendBroadcastTo } from './broadcast.js';
 import { background } from './background.js';
 import { gzipSync } from 'node:zlib';
 import { createHash, randomInt } from 'node:crypto';
@@ -90,6 +91,8 @@ export async function handleApi(req: ApiRequest): Promise<ApiResponse> {
     if (r.access === 'admin' && user?.role !== 'owner' && user?.role !== 'admin') return { status: 403, body: { error: 'Bu amal faqat admin uchun' } };
     if (isPerm(r.access) && !user?.permissions.includes(r.access)) return { status: 403, body: { error: 'Sizda bu amal uchun ruxsat yoʻq' } };
     if (r.access === 'kassa' && !kassaSources(user!.permissions).length) return { status: 403, body: { error: 'Sizga kassa ochilmagan' } };
+    // Scheduled broadcasts go out on the next request after their time (checked at most once a minute).
+    if (user) background(deliverDue());
     // A change may touch someone's role, rights or sessions: look sessions up afresh after it.
     if (req.method !== 'GET') forgetSessions();
     const result = await r.handler({ ...req, params, token, secure, user });
@@ -1849,6 +1852,88 @@ route('PUT', '/office', 'staff.manage', async (ctx) => {
   return { office };
 });
 
+// ---------- Ommaviy xabarlar: one message to staff who linked their Telegram ----------
+
+const broadcastId = (id: string) => { if (!/^\d{1,15}$/.test(id)) throw new HttpError(404, 'Xabar topilmadi'); return id; };
+async function getBroadcast(id: string) {
+  const rows = await query(`SELECT ${BROADCAST_COLUMNS} FROM broadcasts WHERE id = $1`, [broadcastId(id)]);
+  if (!rows[0]) throw new HttpError(404, 'Xabar topilmadi');
+  return rows[0];
+}
+
+route('GET', '/broadcasts', 'messages.manage', async () => {
+  const [items, people] = await Promise.all([
+    query(`SELECT ${BROADCAST_COLUMNS} FROM broadcasts ORDER BY COALESCE(sent_at, send_at, created_at) DESC, id DESC LIMIT 100`),
+    broadcastRecipients({ all: true }),
+  ]);
+  return { items, linked: people.length };
+});
+
+route('POST', '/broadcasts', 'messages.manage', async (ctx) => {
+  const b = parseBroadcast(ctx.body);
+  const rows = await query(
+    `INSERT INTO broadcasts (title, text, buttons, audience, silent, send_at, created_by, created_by_name)
+     VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, $8) RETURNING ${BROADCAST_COLUMNS}`,
+    [b.title, b.text, JSON.stringify(b.buttons), JSON.stringify(b.audience), b.silent, b.sendAt, ctx.user!.id, ctx.user!.full_name],
+  );
+  return { status: 201, body: { broadcast: rows[0] } };
+});
+
+// Only a draft or a scheduled message can still change; changing a scheduled one makes it a draft again.
+route('PUT', '/broadcasts/:id', 'messages.manage', async (ctx) => {
+  const b = parseBroadcast(ctx.body);
+  const rows = await query(
+    `UPDATE broadcasts SET title = $2, text = $3, buttons = $4::jsonb, audience = $5::jsonb, silent = $6, send_at = $7, status = 'draft', updated_at = NOW()
+      WHERE id = $1 AND status IN ('draft', 'scheduled') RETURNING ${BROADCAST_COLUMNS}`,
+    [broadcastId(ctx.params.id), b.title, b.text, JSON.stringify(b.buttons), JSON.stringify(b.audience), b.silent, b.sendAt],
+  );
+  if (!rows[0]) throw new HttpError(409, 'Bu xabar allaqachon yuborilgan');
+  return { broadcast: rows[0] };
+});
+
+route('DELETE', '/broadcasts/:id', 'messages.manage', async (ctx) => {
+  const rows = await query(`DELETE FROM broadcasts WHERE id = $1 AND status IN ('draft', 'scheduled', 'sent', 'failed') RETURNING id`, [broadcastId(ctx.params.id)]);
+  if (!rows[0]) throw new HttpError(409, 'Xabar hozir yuborilmoqda');
+  return { ok: true };
+});
+
+// A test to the person's own chat: the owner's, or their own linked Telegram.
+route('POST', '/broadcasts/:id/test', 'messages.manage', async (ctx) => {
+  const b = await getBroadcast(ctx.params.id);
+  if (!b.text.trim()) throw new HttpError(400, 'Avval matn yozing');
+  const config = await getTelegram();
+  if (!config?.chatId) throw new HttpError(400, 'Telegram bot ulanmagan');
+  let chatId: number | null = ctx.user!.role === 'owner' ? config.chatId : null;
+  if (!chatId) {
+    const mine = await query(`SELECT chat_id FROM telegram_people WHERE user_id = $1`, [ctx.user!.id]);
+    chatId = mine[0] ? Number(mine[0].chat_id) : null;
+  }
+  if (!chatId) throw new HttpError(400, 'Sinov uchun avval Sozlamalar → Telegram boʻlimida oʻz Telegramingizni ulang');
+  const html = await sendBroadcastTo(b, chatId, '🧪 Sinov\n\n');
+  await logSend('test', ctx.user!.role === 'owner' ? 'personal' : `staff:${ctx.user!.full_name}`, html, null);
+  return { ok: true };
+});
+
+// Send now, or at the set time. Sending now runs in the background; the list shows the result.
+route('POST', '/broadcasts/:id/send', 'messages.manage', async (ctx) => {
+  const b = await getBroadcast(ctx.params.id);
+  if (!['draft', 'scheduled'].includes(b.status)) throw new HttpError(409, 'Bu xabar allaqachon yuborilgan');
+  if (!b.text.trim()) throw new HttpError(400, 'Avval matn yozing');
+  const config = await getTelegram();
+  if (!config?.chatId) throw new HttpError(400, 'Telegram bot ulanmagan');
+  const people = await broadcastRecipients(b.audience);
+  if (!people.length) throw new HttpError(400, 'Telegramini ulagan xodim yoʻq: xabar hech kimga bormaydi');
+  const later = b.send_at && Date.parse(b.send_at) > Date.now() + 60_000;
+  if (later) {
+    await query(`UPDATE broadcasts SET status = 'scheduled', updated_at = NOW() WHERE id = $1 AND status IN ('draft', 'scheduled')`, [b.id]);
+  } else {
+    if (!(await claimBroadcast(b.id, ['draft', 'scheduled']))) throw new HttpError(409, 'Bu xabar allaqachon yuborilmoqda');
+    background(deliverBroadcast(b.id));
+  }
+  await audit(null, ctx.user, later ? 'broadcast_schedule' : 'broadcast_send', 'broadcast', null, { id: b.id, people: people.length });
+  return { broadcast: await getBroadcast(b.id), people: people.length };
+});
+
 // ---------- pages (oynalar): the owner pauses a page, decides who sees it, renames it in the menu ----------
 
 route('GET', '/pages', 'user', async () => {
@@ -2251,6 +2336,7 @@ route('GET', '/backup', 'owner', async (ctx) => {
 route('GET', '/cron/daily', 'public', async (ctx) => {
   const secret = process.env.CRON_SECRET;
   if (secret && ctx.headers.authorization !== `Bearer ${secret}`) return { status: 401, body: { error: 'Ruxsat yoʻq' } };
+  await deliverDue(true).catch((error) => console.error('Broadcast delivery failed', error));
   if (tashkentHour() < 19) return { sent: false, reason: 'early' };
   const date = todayTashkent();
   const claimed = await query(

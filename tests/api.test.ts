@@ -741,6 +741,36 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     assert.deepEqual(sent.map((x) => Number(x.body.chat_id)).sort(), [-1001, 555, 777]);
     const staffLog = (await owner.call('GET', '/telegram/log', undefined, { limit: '5' })).body.items;
     assert.ok(staffLog.some((m: any) => m.chat === 'staff:Sardor Aliyev' || m.chat.startsWith('staff:')));
+    // Ommaviy xabarlar: a draft, a test to the owner, then to every linked worker; a scheduled one waits for its time.
+    assert.equal((await w.call('GET', '/broadcasts')).status, 403);
+    assert.equal((await owner.call('POST', '/broadcasts', { text: 'x', buttons: [{ text: 'Sayt', url: 'javascript:alert(1)' }] })).status, 400);
+    const draft = await owner.call('POST', '/broadcasts', { title: 'Shanba', text: '*Diqqat*: shanba <ish> kuni', buttons: [{ text: 'Sayt', url: 'https://laylak.top' }] });
+    assert.equal(draft.status, 201, JSON.stringify(draft.body));
+    const bid = draft.body.broadcast.id;
+    sent.length = 0;
+    assert.equal((await owner.call('POST', `/broadcasts/${bid}/test`)).status, 200);
+    assert.deepEqual([Number(sent[0].body.chat_id), sent[0].body.text], [777, '🧪 Sinov\n\n<b>Diqqat</b>: shanba &lt;ish&gt; kuni']);
+    assert.deepEqual(sent[0].body.reply_markup.inline_keyboard, [[{ text: 'Sayt', url: 'https://laylak.top' }]]);
+    sent.length = 0;
+    const out = await owner.call('POST', `/broadcasts/${bid}/send`);
+    assert.equal(out.body.people, 1);
+    await backgroundSettled();
+    assert.deepEqual(sent.map((x) => Number(x.body.chat_id)), [555]);
+    const listed = (await owner.call('GET', '/broadcasts')).body.items.find((b: any) => b.id === bid);
+    assert.deepEqual([listed.status, listed.delivered, listed.failed], ['sent', 1, 0]);
+    assert.equal((await owner.call('POST', `/broadcasts/${bid}/send`)).status, 409, 'never twice');
+    assert.equal((await owner.call('PUT', `/broadcasts/${bid}`, { text: 'boshqa' })).status, 409);
+    const later = (await owner.call('POST', '/broadcasts', { text: 'Ertaga', sendAt: new Date(Date.now() + 3600_000).toISOString(), audience: { all: false, users: [people[0].id] } })).body.broadcast;
+    sent.length = 0;
+    assert.equal((await owner.call('POST', `/broadcasts/${later.id}/send`)).body.broadcast.status, 'scheduled');
+    await backgroundSettled();
+    assert.equal(sent.length, 0, 'waits for its time');
+    await getPool().query(`UPDATE broadcasts SET send_at = NOW() - interval '1 minute' WHERE id = $1`, [later.id]);
+    const { deliverDue } = await import('../server/broadcast.js');
+    await deliverDue(true);
+    assert.deepEqual(sent.map((x) => Number(x.body.chat_id)), [555]);
+    assert.equal((await owner.call('GET', '/broadcasts')).body.items.find((b: any) => b.id === later.id).status, 'sent');
+
     assert.equal((await owner.call('DELETE', `/telegram/people/${people[0].id}`)).status, 200);
     sent.length = 0;
     await owner.call('POST', `/payments/${(await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'RT-4', amount: 1000, method: 'cash' })).body.payment.id}/void`, { reason: 'sinov uchun' });

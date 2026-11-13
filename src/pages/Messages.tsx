@@ -5,27 +5,50 @@ import { useAuth } from '../lib/auth';
 import { useApi } from '../lib/live';
 import { Alert, Badge, Button, Card, CardHeader, ErrorState, Field, Input, PageHeader, useToast } from '../components/ui';
 import TelegramTemplates, { type LinkedPerson } from '../components/TelegramTemplates';
+import Broadcasts from '../components/Broadcasts';
 import { useLive } from '../lib/live';
 
 // Xabarlar: everything the kassa sends to Telegram. Who it goes to (the owner's own account, the group),
 // whether each message is sent at all, and in which words. The owner, or someone the owner allowed.
 
-export default function Messages() {
+type Tab = 'notify' | 'broadcast' | 'connect';
+const TABS: Array<{ value: Tab; label: string }> = [
+  { value: 'notify', label: 'Bildirishnomalar' },
+  { value: 'broadcast', label: 'Ommaviy xabarlar' },
+  { value: 'connect', label: 'Ulanish' },
+];
+
+export default function Messages({ params }: { params?: URLSearchParams }) {
   const { data, error } = useApi<{ telegram: TelegramState | null }>('/telegram');
   const [override, setOverride] = useState<{ telegram: TelegramState | null } | null>(null);
   const tg = (override ?? data)?.telegram ?? null;
   const ready = Boolean(override || data);
   const people = useApi<{ items: LinkedPerson[]; notLinked: number }>(tg?.connected ? '/telegram/people' : null);
+  const asked = params?.get('tab') as Tab | null;
+  const [tab, setTab] = useState<Tab>(asked && TABS.some((t) => t.value === asked) ? asked : 'notify');
+  // Until the bot is linked, only the connection makes sense.
+  const shown: Tab = ready && !tg?.connected ? 'connect' : tab;
   return (
     <>
-      <PageHeader title="Xabarlar" subtitle="Telegram: akkauntingizga va guruhga boradigan xabarlar" />
+      <PageHeader title="Xabarlar" subtitle="Telegram: akkauntingizga, guruhga va xodimlarga boradigan xabarlar" />
+      {tg?.connected && (
+        <div className="mb-4 flex gap-1 overflow-x-auto rounded-xl bg-surface-2 p-1 scrollbar-thin sm:w-fit">
+          {TABS.map((t) => (
+            <button key={t.value} type="button" onClick={() => setTab(t.value)}
+              className={`h-9 shrink-0 rounded-lg px-4 text-[13px] font-semibold transition-colors ${shown === t.value ? 'bg-surface text-ink shadow-soft' : 'text-ink-2 hover:text-ink'}`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="grid gap-4">
-        <TelegramCard tg={tg} ready={ready} loadError={error} setOverride={setOverride} />
-        {tg?.connected && <PeopleCard items={people.data?.items} notLinked={people.data?.notLinked ?? 0} />}
-        {tg?.connected && (
+        {shown === 'connect' && <TelegramCard tg={tg} ready={ready} loadError={error} setOverride={setOverride} />}
+        {shown === 'connect' && tg?.connected && <PeopleCard items={people.data?.items} notLinked={people.data?.notLinked ?? 0} />}
+        {shown === 'notify' && tg?.connected && (
           <TelegramTemplates personalName={tg.chatName} people={people.data?.items ?? []}
             group={{ linked: Boolean(tg.groupName), name: tg.groupName, payments: tg.groupPayments !== false, cancels: tg.groupCancels !== false }} />
         )}
+        {shown === 'broadcast' && tg?.connected && <Broadcasts people={people.data?.items ?? []} />}
       </div>
     </>
   );

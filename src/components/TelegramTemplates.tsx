@@ -29,7 +29,7 @@ export function Toggle({ on, onChange, disabled, label }: { on: boolean; onChang
 }
 
 /** One message as Telegram shows it: bot avatar, white bubble, time. */
-function Bubble({ html, photo, files, at }: { html: string; photo?: boolean; files?: boolean; at?: string }) {
+export function Bubble({ html, photo, files, at }: { html: string; photo?: boolean; files?: boolean; at?: string }) {
   return (
     <div className="flex items-end gap-2">
       <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[#2aabee] text-white shadow-sm"><Send className="size-4 -translate-x-px" /></div>
