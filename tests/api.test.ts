@@ -678,7 +678,7 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     assert.deepEqual((await owner.call('PUT', '/telegram/templates', { key: 'payment', on: true })).body.off, []);
 
     // The sent list shows what went where, newest first.
-    const sentList = (await owner.call('GET', '/telegram/log', undefined, { limit: 5 })).body;
+    const sentList = (await owner.call('GET', '/telegram/log', undefined, { limit: '5' })).body;
     assert.ok(sentList.total > 0);
     assert.equal(sentList.items[0].template, 'test');
     assert.ok(sentList.items.some((m: any) => m.template === 'paymentVoid' && m.ok));
