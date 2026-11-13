@@ -192,7 +192,7 @@ function AuditLog() {
   );
 }
 
-interface TelegramState { botName: string; connected: boolean; chatName: string | null; code: string | null; groupName: string | null; groupPaused?: boolean; groupCode: string | null }
+interface TelegramState { botName: string; connected: boolean; chatName: string | null; code: string | null; groupName: string | null; groupPaused?: boolean; personalPaused?: boolean; groupCode: string | null }
 
 /** Owner only: connect a Telegram bot for the evening report and nightly backup, and download a backup now. */
 /** Saves the server's full backup (.json.gz) to the device. */
@@ -305,6 +305,10 @@ function TelegramCard() {
     toast({ tone: 'success', title: 'Hisobot va zaxira Telegramga yuborildi' });
   });
   const download = () => run('backup', downloadBackup);
+  const testChat = (target: 'personal' | 'group') => run(`test-${target}`, async () => {
+    await api('/telegram/test', { method: 'POST', body: { target } });
+    toast({ tone: 'success', title: 'Sinov xabari yuborildi', description: 'Telegramni tekshiring.' });
+  });
 
   return (
     <Card>
@@ -345,6 +349,24 @@ function TelegramCard() {
               </ul>
               <div className="space-y-2 rounded-lg border border-line px-3 py-2.5">
                 <div className="flex items-center justify-between gap-3">
+                  <div className="font-medium text-ink">Shaxsiy chat</div>
+                  {tg.personalPaused
+                    ? <Badge tone="warn">{tg.chatName} · toʻxtatilgan</Badge>
+                    : <Badge tone="success"><span className="size-1.5 rounded-full bg-success" />{tg.chatName}</Badge>}
+                </div>
+                <p className="text-[13px] text-ink-2">{tg.personalPaused
+                  ? 'Toʻlov rasmlari va bekor qilingan toʻlovlar sizga hozir kelmaydi. Kunlik hisobot va zaxira fayli baribir keladi.'
+                  : 'Toʻlov rasmlari va bekor qilingan toʻlovlar sizga keladi. Guruhdan alohida toʻxtatish mumkin.'}</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant={tg.personalPaused ? 'primary' : 'secondary'} loading={busy === 'PUT/telegram/personal/pause'}
+                    onClick={() => call('PUT', '/telegram/personal/pause', { paused: !tg.personalPaused })}>
+                    {tg.personalPaused ? 'Qayta yoqish' : 'Vaqtincha toʻxtatish'}
+                  </Button>
+                  <Button variant="ghost" size="sm" loading={busy === 'test-personal'} onClick={() => testChat('personal')}>Sinov xabari</Button>
+                </div>
+              </div>
+              <div className="space-y-2 rounded-lg border border-line px-3 py-2.5">
+                <div className="flex items-center justify-between gap-3">
                   <div className="font-medium text-ink">Guruh</div>
                   {tg.groupName && (tg.groupPaused
                     ? <Badge tone="warn">{tg.groupName} · toʻxtatilgan</Badge>
@@ -353,13 +375,14 @@ function TelegramCard() {
                 {tg.groupName ? (
                   <>
                     <p className="text-[13px] text-ink-2">{tg.groupPaused
-                      ? 'Guruhga hozir hech narsa yuborilmaydi. Toʻlov rasmlari va bekor qilingan toʻlovlar faqat sizga keladi. Ishni tugatgach, “Qayta yoqish”ni bosing.'
+                      ? 'Guruhga hozir hech narsa yuborilmaydi. Ishni tugatgach, “Qayta yoqish”ni bosing. Shaxsiy chatingiz bunga bogʻliq emas.'
                       : 'Toʻlov rasmlari va bekor qilingan toʻlovlar bu guruhga ham keladi. Kunlik hisobot va zaxira fayli faqat sizga keladi.'}</p>
                     <div className="flex flex-wrap gap-2">
                       <Button size="sm" variant={tg.groupPaused ? 'primary' : 'secondary'} loading={busy === 'PUT/telegram/group/pause'}
                         onClick={() => call('PUT', '/telegram/group/pause', { paused: !tg.groupPaused })}>
                         {tg.groupPaused ? 'Qayta yoqish' : 'Vaqtincha toʻxtatish'}
                       </Button>
+                      <Button variant="ghost" size="sm" loading={busy === 'test-group'} onClick={() => testChat('group')}>Sinov xabari</Button>
                       <Button variant="ghost" size="sm" loading={busy === 'DELETE/telegram/group'} onClick={() => call('DELETE', '/telegram/group')}>Guruhni uzish</Button>
                     </div>
                   </>

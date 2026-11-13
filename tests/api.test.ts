@@ -577,6 +577,26 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     await backgroundSettled();
     assert.deepEqual(sent.filter((x) => x.method === 'sendPhoto').map((x) => Number(x.body.chat_id)).sort(), [-1001, 777], 'group again');
 
+    // Pausing the owner's own chat: payments go only to the group; with both paused nothing is sent.
+    assert.equal((await w.call('PUT', '/telegram/personal/pause', { paused: true })).status, 403);
+    assert.equal((await owner.call('PUT', '/telegram/personal/pause', { paused: true })).body.telegram.personalPaused, true);
+    sent.length = 0;
+    await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'TG-4', amount: 1000, method: 'cash' });
+    await backgroundSettled();
+    assert.deepEqual(sent.filter((x) => x.method === 'sendPhoto').map((x) => Number(x.body.chat_id)), [-1001], 'group only');
+    await owner.call('PUT', '/telegram/group/pause', { paused: true });
+    sent.length = 0;
+    await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'TG-5', amount: 1000, method: 'cash' });
+    await backgroundSettled();
+    assert.equal(sent.filter((x) => x.method === 'sendPhoto').length, 0, 'both paused');
+    // A test message reaches a paused chat too, so the owner can check it.
+    sent.length = 0;
+    assert.equal((await owner.call('POST', '/telegram/test', { target: 'personal' })).status, 200);
+    assert.equal((await owner.call('POST', '/telegram/test', { target: 'group' })).status, 200);
+    assert.deepEqual(sent.map((x) => Number(x.body.chat_id)), [777, -1001]);
+    await owner.call('PUT', '/telegram/group/pause', { paused: false });
+    assert.equal((await owner.call('PUT', '/telegram/personal/pause', { paused: false })).body.telegram.personalPaused, false);
+
     // Telegram down: the payment is still saved at once, and the miss is written to the audit log.
     failSends = true;
     const offline = await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'TG-4', amount: 1000, method: 'cash' });

@@ -1927,7 +1927,7 @@ function telegramView(config: Awaited<ReturnType<typeof getTelegram>>) {
   if (!config) return { telegram: null };
   return { telegram: {
     botName: config.botName, connected: Boolean(config.chatId), chatName: config.chatName || null, code: config.chatId ? null : config.code,
-    groupName: config.groupId ? config.groupName || 'Guruh' : null, groupPaused: Boolean(config.groupId && config.groupPaused), groupCode: config.chatId && !config.groupId ? groupCode(config.token) : null,
+    groupName: config.groupId ? config.groupName || 'Guruh' : null, groupPaused: Boolean(config.groupId && config.groupPaused), personalPaused: Boolean(config.personalPaused), groupCode: config.chatId && !config.groupId ? groupCode(config.token) : null,
   } };
 }
 
@@ -2003,6 +2003,36 @@ route('PUT', '/telegram/group/pause', 'owner', async (ctx) => {
   await saveTelegram(next);
   await audit(null, ctx.user, paused ? 'telegram_group_pause' : 'telegram_group_resume', 'telegram', null, { group: config.groupName });
   return telegramView(next);
+});
+
+// Stop or resume payment pictures and alerts in the owner's own chat; the group is not affected, and the
+// evening report and backup still come.
+route('PUT', '/telegram/personal/pause', 'owner', async (ctx) => {
+  const config = await getTelegram();
+  if (!config?.chatId) throw new HttpError(400, 'Telegram ulanmagan');
+  const paused = ctx.body?.paused === true;
+  const next = { ...config, personalPaused: paused };
+  await saveTelegram(next);
+  await audit(null, ctx.user, paused ? 'telegram_personal_pause' : 'telegram_personal_resume', 'telegram', null, { chat: config.chatName });
+  return telegramView(next);
+});
+
+// A test message to one chat, so the owner sees at once whether it arrives and, if not, what Telegram said.
+route('POST', '/telegram/test', 'owner', async (ctx) => {
+  const config = await getTelegram();
+  const target = ctx.body?.target === 'group' ? 'group' : 'personal';
+  const chatId = target === 'group' ? config?.groupId : config?.chatId;
+  if (!config || !chatId) throw new HttpError(400, target === 'group' ? 'Guruh ulanmagan' : 'Telegram ulanmagan');
+  const topic = target === 'group' && config.groupThreadId ? { message_thread_id: config.groupThreadId } : {};
+  const text = '🔔 Laylak Cargo kassa: sinov xabari. Bu yerga xabarlar yetib kelyapti.';
+  try {
+    await tg(config.token, 'sendMessage', { chat_id: chatId, ...topic, text }, 10_000);
+  } catch (error) {
+    if (!(error instanceof ChatMoved) || target !== 'group') throw error;
+    await saveTelegram({ ...config, groupId: error.chatId });
+    await tg(config.token, 'sendMessage', { chat_id: error.chatId, ...topic, text }, 10_000);
+  }
+  return { ok: true };
 });
 
 route('DELETE', '/telegram/group', 'owner', async (ctx) => {

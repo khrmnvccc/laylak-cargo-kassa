@@ -12,7 +12,9 @@ export interface TelegramConfig {
   groupId?: number;
   groupName?: string;
   groupThreadId?: number; // a topic in a group with topics
-  groupPaused?: boolean; // the owner stopped the group for a while (e.g. while fixing old records); they still get everything
+  groupPaused?: boolean; // the owner stopped the group for a while (e.g. while fixing old records)
+  // The owner stopped payment pictures and alerts in their own chat; the evening report and backup still come.
+  personalPaused?: boolean;
 }
 
 /** Telegram moved a group to a new id (it became a supergroup); `chatId` is the new one. */
@@ -96,9 +98,14 @@ export async function notify(text: string) {
     .catch((error) => console.error('Telegram notify failed', error));
 }
 
-/** Runs `send` for the owner's chat and the group; resolves when at least one got it. */
-async function everyChat(config: TelegramConfig, send: (chatId: number, topic: Record<string, number>) => Promise<unknown>) {
-  const chats = [config.chatId, config.groupPaused ? undefined : config.groupId].filter((id): id is number => Boolean(id));
+/**
+ * Runs `send` for the owner's chat and the group, each unless it is paused; resolves when at least one got it.
+ * Returns false when both are paused, so nothing was sent.
+ */
+async function everyChat(config: TelegramConfig, send: (chatId: number, topic: Record<string, number>) => Promise<unknown>): Promise<boolean> {
+  const chats = [config.personalPaused ? undefined : config.chatId, config.groupPaused ? undefined : config.groupId]
+    .filter((id): id is number => Boolean(id));
+  if (!chats.length) return false;
   const results = await Promise.allSettled(chats.map(async (chatId) => {
     const topic: Record<string, number> = chatId === config.groupId && config.groupThreadId ? { message_thread_id: config.groupThreadId } : {};
     try {
@@ -112,6 +119,7 @@ async function everyChat(config: TelegramConfig, send: (chatId: number, topic: R
   const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
   if (failed.length === results.length) throw failed[0].reason;
   for (const f of failed) console.error('Telegram send failed', f.reason);
+  return true;
 }
 
 /** "data:image/jpeg;base64,…" from the browser -> bytes; null when it is not a small picture. */
@@ -126,7 +134,7 @@ export function photoFromDataUrl(value: unknown): Buffer | null {
 export async function sendPhotos(photos: Buffer[], caption: string): Promise<boolean> {
   const config = await getTelegram();
   if (!config?.chatId || !photos.length) return false;
-  await everyChat(config, (chatId, topic) => {
+  return everyChat(config, (chatId, topic) => {
     const form = new FormData();
     form.append('chat_id', String(chatId));
     if (topic.message_thread_id) form.append('message_thread_id', String(topic.message_thread_id));
@@ -143,7 +151,6 @@ export async function sendPhotos(photos: Buffer[], caption: string): Promise<boo
     photos.slice(0, 10).forEach((p, i) => form.append(`p${i}`, new Blob([new Uint8Array(p)], { type: 'image/jpeg' }), `tolov-${i + 1}.jpg`));
     return tg(config.token, 'sendMediaGroup', form, 20_000);
   });
-  return true;
 }
 
 /** Like sendPhotos, but never throws: says whether the admin got it. */
@@ -161,8 +168,8 @@ export async function reportText(text: string): Promise<'sent' | 'off' | 'failed
   try {
     const config = await getTelegram();
     if (!config?.chatId) return 'off';
-    await everyChat(config, (chatId, topic) => tg(config.token, 'sendMessage', { chat_id: chatId, ...topic, text, parse_mode: 'HTML', disable_web_page_preview: true }, 8000));
-    return 'sent';
+    const sent = await everyChat(config, (chatId, topic) => tg(config.token, 'sendMessage', { chat_id: chatId, ...topic, text, parse_mode: 'HTML', disable_web_page_preview: true }, 8000));
+    return sent ? 'sent' : 'off';
   } catch (error) {
     console.error('Telegram message failed', error);
     return 'failed';
