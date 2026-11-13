@@ -16,7 +16,27 @@ export interface BrandSettings {
   corners: 'soft' | 'sharp' | 'round';
   /** Menu section names, when renamed. */
   groups: Partial<Record<MenuGroup, string>>;
+  /** Moving background: stars, snow and so on; 'none' keeps it still. */
+  effect: EffectName;
+  /** How many of them: few, normal or many. */
+  effectAmount: 'low' | 'mid' | 'high';
+  /** Every page, or only the sign-in page. */
+  effectWhere: 'all' | 'login';
+  /** Over the page (like the sample video) or only behind the cards. */
+  effectLayer: 'front' | 'back';
 }
+
+export const EFFECTS = [
+  { value: 'none', label: 'Yoʻq' },
+  { value: 'stars', label: 'Yulduzlar' },
+  { value: 'snow', label: 'Qor' },
+  { value: 'sparks', label: 'Uchqunlar' },
+  { value: 'bubbles', label: 'Pufakchalar' },
+  { value: 'confetti', label: 'Konfetti' },
+  { value: 'petals', label: 'Gul barglari' },
+  { value: 'glow', label: 'Nur' },
+] as const;
+export type EffectName = (typeof EFFECTS)[number]['value'];
 
 export const MENU_GROUPS = ['Asosiy', 'Hisobotlar', 'Boshqaruv'] as const;
 export type MenuGroup = (typeof MENU_GROUPS)[number];
@@ -29,6 +49,10 @@ export const DEFAULT_BRAND: BrandSettings = {
   headline: 'Kunlik kassa va hisobotlar — barcha xodimlar uchun yagona bazada.',
   corners: 'soft',
   groups: {},
+  effect: 'none',
+  effectAmount: 'mid',
+  effectWhere: 'all',
+  effectLayer: 'front',
 };
 
 export const COLOR_PRESETS: Array<{ value: string; label: string }> = [
@@ -65,6 +89,10 @@ export function cleanBrand(raw: unknown): BrandSettings {
     headline: clip(r.headline, BRAND_LIMITS.headline) || DEFAULT_BRAND.headline,
     corners: r.corners === 'sharp' || r.corners === 'round' ? r.corners : 'soft',
     groups,
+    effect: EFFECTS.some((e) => e.value === r.effect) ? r.effect : 'none',
+    effectAmount: r.effectAmount === 'low' || r.effectAmount === 'high' ? r.effectAmount : 'mid',
+    effectWhere: r.effectWhere === 'login' ? 'login' : 'all',
+    effectLayer: r.effectLayer === 'back' ? 'back' : 'front',
   };
 }
 

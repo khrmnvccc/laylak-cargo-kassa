@@ -15,6 +15,8 @@ function read(): BrandSettings {
 }
 
 let current = read();
+/** What the page shows right now: the saved look, or the one being tried in the settings. */
+let shown = current;
 const listeners = new Set<() => void>();
 
 const CORNERS: Record<BrandSettings['corners'], [string, string, string, string]> = {
@@ -58,6 +60,7 @@ export function setBrand(raw: unknown) {
   const next = cleanBrand(raw);
   if (JSON.stringify(next) === JSON.stringify(current)) return;
   current = next;
+  shown = next;
   apply(next);
   try { localStorage.setItem(KEY, JSON.stringify(next)); } catch { /* storage full or blocked */ }
   listeners.forEach((fn) => fn());
@@ -65,12 +68,18 @@ export function setBrand(raw: unknown) {
 
 /** A look being tried in the settings, before it is saved; null goes back to the saved one. */
 export function previewBrand(b: BrandSettings | null) {
-  apply(b ?? current);
+  const next = b ?? current;
+  apply(next);
+  if (next === shown) return;
+  shown = next;
+  listeners.forEach((fn) => fn());
 }
 
 const subscribe = (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; };
 export const useBrand = () => useSyncExternalStore(subscribe, () => current);
 export const brandNow = () => current;
+/** The look on screen, including one being tried before it is saved. */
+export const useShownBrand = () => useSyncExternalStore(subscribe, () => shown);
 
 /** A menu section's name, as the owner renamed it. */
 export const groupLabel = (b: BrandSettings, g: string) => b.groups[g as MenuGroup] || g;

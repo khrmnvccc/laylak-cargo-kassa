@@ -1413,13 +1413,16 @@ test('owner sets the site name, colour, logo and menu names; everyone (even sign
   const saved = await owner.call('PUT', '/brand', { brand: {
     name: '  Laylak   Express ', tagline: '', color: '#FF0000', corners: 'round', logo: 'data:image/svg+xml;base64,PHN2Zz4=',
     groups: { Asosiy: 'Bosh', Hisobotlar: 'Hisobotlar', Nimadir: 'x' }, headline: '',
+    effect: 'snow', effectAmount: 'high', effectWhere: 'login', effectLayer: 'sideways',
   } });
   assert.equal(saved.status, 200);
   assert.deepEqual(saved.body.brand, {
     name: 'Laylak Express', tagline: '', color: '#ff0000', logo: null, headline: 'Kunlik kassa va hisobotlar — barcha xodimlar uchun yagona bazada.',
     corners: 'round', groups: { Asosiy: 'Bosh' },
+    effect: 'snow', effectAmount: 'high', effectWhere: 'login', effectLayer: 'front',
   }, 'an SVG logo (could carry script) and unknown sections are dropped');
   const png = 'data:image/png;base64,iVBORw0KGgo=';
   assert.equal((await owner.call('PUT', '/brand', { brand: { name: 'Laylak Express', logo: png } })).body.brand.logo, png);
   assert.equal((await anon.call('GET', '/brand')).body.brand.name, 'Laylak Express');
+  assert.equal((await owner.call('PUT', '/brand', { brand: { effect: 'fireworks<script>' } })).body.brand.effect, 'none', 'an unknown moving background is turned off');
 });
