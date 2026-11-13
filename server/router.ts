@@ -21,12 +21,13 @@ import {
   forgetSessions,
 } from './auth.js';
 import { PERMISSIONS, WORKER_DEFAULT, isPerm, kassaSources, permsOf, upgrade, type Perm } from './perms.js';
-import { ChatMoved, escapeHtml, getTelegram, getTelegramErrors, notify, setTelegramError, photoFromDataUrl, reportPhotos, reportText, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
+import { ChatMoved, getTelegram, getTelegramErrors, messageText, notify, saveTemplateText, getTemplateTexts, setTelegramError, photoFromDataUrl, reportPhotos, reportText, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
 import { receiptKey } from './receipts.js';
 import { background } from './background.js';
 import { gzipSync } from 'node:zlib';
 import { createHash, randomInt } from 'node:crypto';
 import { EXPENSE_LABELS } from '../src/lib/excelSheets.js';
+import { MAX_TEMPLATE_LENGTH, TEMPLATE_BY_KEY, renderTemplate, sampleValues, type TemplateKey } from '../src/lib/tgTemplates.js';
 import { kassaXlsx, otchyotXlsx } from '../src/lib/kassaBooks.js';
 import type { BalanceMonth, Payment } from '../src/lib/types.js';
 import { orderKey } from '../src/lib/orderImport.js';
@@ -347,7 +348,7 @@ route('POST', '/payments', 'payments.create', async (ctx) => {
     );
     return full.rows[0];
   });
-  const telegram = await reportLater(ctx.user, payment.id, () => reportPhotos(photos as Buffer[], paymentCaption({
+  const telegram = await reportLater(ctx.user, payment.id, async () => reportPhotos(photos as Buffer[], await paymentCaption({
     method, amount, by: ctx.user!.full_name, at: payment.paid_at, note,
     lines: [`${clientCode}${clientName ? ` · ${clientName}` : ''}`],
   })));
@@ -366,16 +367,13 @@ async function reportLater(user: AuthUser | null, entityId: string | null, send:
 }
 
 /** Telegram caption for a payment the kassa just saved: type and sum first, then who and what. */
-function paymentCaption(p: { method: string; amount: number; by: string; at: string | Date; note?: string; lines: string[]; head?: string }) {
-  const icon = p.method === 'cash' ? '💵' : '💳';
+function paymentCaption(p: { method: string; amount: number; by: string; at: string | Date; note?: string; lines: string[]; details?: string[]; head?: string }) {
   const when = new Date(new Date(p.at).getTime() + 5 * 3600_000).toISOString();
-  return [
-    `${icon} <b>${METHOD_LABEL[p.method] || p.method} · ${som(p.amount)}</b>`,
-    p.head ? escapeHtml(p.head) : '',
-    ...p.lines.map((l) => escapeHtml(l)),
-    `👤 ${escapeHtml(p.by)} · ${when.slice(8, 10)}.${when.slice(5, 7)}.${when.slice(0, 4)} ${when.slice(11, 16)}`,
-    p.note ? `📝 ${escapeHtml(p.note)}` : '',
-  ].filter(Boolean).join('\n');
+  return messageText('payment', {
+    belgi: p.method === 'cash' ? '💵' : '💳', turi: METHOD_LABEL[p.method] || p.method, summa: som(p.amount),
+    sarlavha: p.head, mijoz: p.lines.join('\n'), tafsilot: (p.details || []).join('\n'), kim: p.by,
+    vaqt: `${when.slice(8, 10)}.${when.slice(5, 7)}.${when.slice(0, 4)} ${when.slice(11, 16)}`, izoh: p.note,
+  });
 }
 
 // ---------- orders with a sticker: scan in the kassa, see what is owed, take the payment ----------
@@ -654,10 +652,10 @@ route('POST', '/orders/:id/pay', 'payments.create', async (ctx) => {
     [o.transport, o.places ? `${o.places} ta` : '', o.weight ? `${o.weight} kg` : ''].filter(Boolean).join(' · '),
     `Qabul qilingan: ${o.received_at.slice(8, 10)}.${o.received_at.slice(5, 7)}.${o.received_at.slice(0, 4)}`,
   ].filter(Boolean);
-  const telegram = await reportLater(ctx.user, result.payment.id, () => reportText(paymentCaption({
+  const telegram = await reportLater(ctx.user, result.payment.id, async () => reportText(await paymentCaption({
     method, amount: Number(o.amount), by: ctx.user!.full_name, at: result.payment.paid_at,
     head: `📦 Stiker ${o.scan_code}`,
-    lines: [`${o.client_code}${o.client_name ? ` · ${o.client_name}` : ''}`, ...details],
+    lines: [`${o.client_code}${o.client_name ? ` · ${o.client_name}` : ''}`], details,
   })));
   return { ...result, telegram };
 });
@@ -734,16 +732,16 @@ route('POST', '/orders/delete', 'payments.void', async (ctx) => {
     for (const r of rows) await audit(db, ctx.user, 'order_delete', 'order', r.id, { scanCode: r.scan_code, amount: Number(r.amount) });
     return rows;
   });
-  if (rows.length) background(notify(orderDeleteText(rows, ctx.user!.full_name)));
+  if (rows.length) background(orderDeleteText(rows, ctx.user!.full_name).then(notify));
   return { deleted: rows.length, kept: ids.length - rows.length };
 });
 
 /** Telegram alert for orders taken off the list: how many, the total, and the first few of them. */
 function orderDeleteText(rows: { scan_code: string; client_code: string; amount: string | number }[], who: string) {
   const total = rows.reduce((sum, r) => sum + Number(r.amount || 0), 0);
-  const lines = rows.slice(0, 10).map((r) => `• ${escapeHtml(r.client_code || '—')} · ${escapeHtml(r.scan_code || '')} · ${som(r.amount || 0)}`);
+  const lines = rows.slice(0, 10).map((r) => `• ${r.client_code || '—'} · ${r.scan_code || ''} · ${som(r.amount || 0)}`);
   if (rows.length > 10) lines.push(`… yana ${rows.length - 10} ta`);
-  return [`🗑 <b>${rows.length === 1 ? 'Buyurtma' : `${rows.length} ta buyurtma`} oʻchirildi</b> · ${som(total)}`, ...lines, `Kim: ${escapeHtml(who)}`].join('\n');
+  return messageText('orderDelete', { soni: rows.length === 1 ? 'Buyurtma' : `${rows.length} ta buyurtma`, summa: som(total), royxat: lines.join('\n'), kim: who });
 }
 
 // Orders entered twice: the same client and order number, or with no number the same client, sum and day.
@@ -772,7 +770,7 @@ route('DELETE', '/orders/:id', 'payments.void', async (ctx) => {
     await audit(db, ctx.user, 'order_delete', 'order', ctx.params.id, { scanCode: rows[0].scan_code, amount: Number(rows[0].amount) });
     return rows[0];
   });
-  background(notify(orderDeleteText([order], ctx.user!.full_name)));
+  background(orderDeleteText([order], ctx.user!.full_name).then(notify));
   return { ok: true };
 });
 
@@ -879,7 +877,7 @@ route('POST', '/receipts/confirm', 'payments.create', async (ctx) => {
     );
     return full.rows;
   });
-  const telegram = await reportLater(ctx.user, saved[0]?.id ?? null, () => reportPhotos(photos, paymentCaption({
+  const telegram = await reportLater(ctx.user, saved[0]?.id ?? null, async () => reportPhotos(photos, await paymentCaption({
     method, amount: receipt.amount, by: ctx.user!.full_name, at: saved[0]?.paid_at || new Date(),
     head: [head, receipt.sender && `· ${receipt.sender}`].filter(Boolean).join(' '),
     lines: orders.map((o: { clientCode: string; clientName: string; orderNo: string; transport: string; amount: number }) =>
@@ -1029,8 +1027,9 @@ route('POST', '/payments/:id/void', 'payments.void', async (ctx) => {
     await audit(db, ctx.user, 'payment_void', 'payment', ctx.params.id, { ...updated.rows[0], reason });
     return updated.rows[0];
   });
-  background(notify(`⚠️ <b>Toʻlov bekor qilindi</b>\n${escapeHtml(payment.client_code)} · ${som(payment.amount)} · ${METHOD_LABEL[payment.method] || payment.method}\n`
-    + `Kim: ${escapeHtml(ctx.user!.full_name)}\nSabab: ${escapeHtml(reason)}`));
+  background(messageText('paymentVoid', {
+    mijoz: payment.client_code, summa: som(payment.amount), turi: METHOD_LABEL[payment.method] || payment.method, kim: ctx.user!.full_name, sabab: reason,
+  }).then(notify));
   return { payment };
 });
 
@@ -1652,8 +1651,10 @@ route('POST', '/expenses/:id/void', 'kassa', async (ctx) => {
     await audit(db, ctx.user, 'expense_void', 'expense', ctx.params.id, { ...updated.rows[0], reason });
     return updated.rows[0];
   });
-  background(notify(`⚠️ <b>Rasxod bekor qilindi</b>\n${escapeHtml(EXPENSE_LABELS[expense.category] ?? expense.category)} · ${som(expense.amount)} · ${expense.source === 'card' ? '2-kassa (karta)' : '1-kassa (naqd)'}\n`
-    + `Kim: ${escapeHtml(ctx.user!.full_name)}\nSabab: ${escapeHtml(reason)}`));
+  background(messageText('expenseVoid', {
+    turkum: EXPENSE_LABELS[expense.category] ?? expense.category, summa: som(expense.amount),
+    kassa: expense.source === 'card' ? '2-kassa (karta)' : '1-kassa (naqd)', kim: ctx.user!.full_name, sabab: reason,
+  }).then(notify));
   return { expense };
 });
 
@@ -1950,6 +1951,30 @@ async function telegramView(config: Awaited<ReturnType<typeof getTelegram>>) {
 }
 
 route('GET', '/telegram', 'owner', async () => telegramView(await getTelegram()));
+
+// Message texts: the owner's own words for each Telegram message (defaults live in src/lib/tgTemplates.ts).
+route('GET', '/telegram/templates', 'owner', async () => ({ texts: await getTemplateTexts() }));
+
+route('PUT', '/telegram/templates', 'owner', async (ctx) => {
+  const key = String(ctx.body?.key || '') as TemplateKey;
+  if (!TEMPLATE_BY_KEY[key]) throw new HttpError(400, 'Bunday xabar yoʻq');
+  const text = ctx.body?.text == null ? null : String(ctx.body.text);
+  const texts = await saveTemplateText(key, text);
+  await audit(null, ctx.user, 'telegram_template', 'telegram', null, { key, reset: !texts[key] });
+  return { texts };
+});
+
+// A sample of one message sent to the owner's own chat, exactly as it would arrive.
+route('POST', '/telegram/templates/test', 'owner', async (ctx) => {
+  const config = await getTelegram();
+  if (!config?.chatId) throw new HttpError(400, 'Telegram ulanmagan');
+  const key = String(ctx.body?.key || '') as TemplateKey;
+  if (!TEMPLATE_BY_KEY[key]) throw new HttpError(400, 'Bunday xabar yoʻq');
+  const text = ctx.body?.text == null ? '' : String(ctx.body.text).slice(0, MAX_TEMPLATE_LENGTH);
+  const html = renderTemplate(text.trim() || TEMPLATE_BY_KEY[key].text, sampleValues(key));
+  await tg(config.token, 'sendMessage', { chat_id: config.chatId, text: `🧪 Namuna\n\n${html}`, parse_mode: 'HTML', disable_web_page_preview: true }, 10_000);
+  return { ok: true };
+});
 
 // What the group gets: payment pictures, cancel alerts, or both. The owner's own chat still gets everything.
 route('PUT', '/telegram/group/kinds', 'owner', async (ctx) => {

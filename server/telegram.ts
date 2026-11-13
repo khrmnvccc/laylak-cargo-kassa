@@ -1,4 +1,5 @@
 import { HttpError, query } from './db.js';
+import { MAX_TEMPLATE_LENGTH, TEMPLATE_BY_KEY, renderTemplate, type TemplateKey } from '../src/lib/tgTemplates.js';
 
 // The owner's Telegram bot. The token is typed in once on the Sozlamalar page and kept only in the
 // database (app_meta 'telegram'); it is never sent back to the browser or put in a backup.
@@ -217,4 +218,38 @@ export async function reportText(text: string): Promise<'sent' | 'off' | 'failed
     console.error('Telegram message failed', error);
     return 'failed';
   }
+}
+
+// ---------- message texts the owner changed (app_meta 'telegram_templates') ----------
+
+let templateCache: { value: Partial<Record<TemplateKey, string>>; until: number } | null = null;
+
+export async function getTemplateTexts(): Promise<Partial<Record<TemplateKey, string>>> {
+  if (templateCache && templateCache.until > Date.now()) return templateCache.value;
+  const rows = await query(`SELECT value FROM app_meta WHERE key = 'telegram_templates'`);
+  const value = (rows[0]?.value as Partial<Record<TemplateKey, string>>) || {};
+  templateCache = { value, until: Date.now() + 30_000 };
+  return value;
+}
+
+/** Saves one text; null or the default puts the default back. */
+export async function saveTemplateText(key: TemplateKey, text: string | null) {
+  const current = { ...(await getTemplateTexts()) };
+  const clean = text?.replace(/\r\n/g, '\n').trim() || null;
+  if (clean && clean.length > MAX_TEMPLATE_LENGTH) throw new HttpError(400, `Matn juda uzun (${MAX_TEMPLATE_LENGTH} belgigacha)`);
+  if (!clean || clean === TEMPLATE_BY_KEY[key].text) delete current[key];
+  else current[key] = clean;
+  templateCache = null;
+  await query(
+    `INSERT INTO app_meta (key, value) VALUES ('telegram_templates', $1::jsonb)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [JSON.stringify(current)],
+  );
+  return current;
+}
+
+/** The message for `key` in the owner's words (or the default), with the values filled in. */
+export async function messageText(key: TemplateKey, values: Record<string, string | undefined | null>) {
+  const texts = await getTemplateTexts().catch(() => ({} as Partial<Record<TemplateKey, string>>));
+  return renderTemplate(texts[key] || TEMPLATE_BY_KEY[key].text, values);
 }
