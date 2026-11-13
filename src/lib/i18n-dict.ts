@@ -1146,4 +1146,7 @@ export const ENTRIES: Array<[string, string, string]> = [
   ['Sahifa ustida', 'Поверх страницы', '在页面上方'],
   ['Faqat orqa fonda', 'Только на фоне', '仅在背景'],
   ['Oddiy (harakatsiz)', 'Обычный (без анимации)', '普通（无动画）'],
+  ['Kassa boʻsh', 'Касса пуста', '钱箱为空'],
+  ['Naqd {0}%', 'Наличные {0}%', '现金 {0}%'],
+  ['Karta {0}%', 'Карта {0}%', '银行卡 {0}%'],
 ];
