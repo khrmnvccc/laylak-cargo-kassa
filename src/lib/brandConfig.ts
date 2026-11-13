@@ -27,7 +27,7 @@ export interface BrandSettings {
 }
 
 export const EFFECTS = [
-  { value: 'none', label: 'Yoʻq' },
+  { value: 'none', label: 'Oddiy (harakatsiz)' },
   { value: 'stars', label: 'Yulduzlar' },
   { value: 'snow', label: 'Qor' },
   { value: 'sparks', label: 'Uchqunlar' },

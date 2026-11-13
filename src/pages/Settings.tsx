@@ -315,7 +315,7 @@ function readLogo(file: File): Promise<string> {
   });
 }
 
-const EFFECT_ICONS: Record<EffectName, string> = { none: '⏸', stars: '✨', snow: '❄️', sparks: '🔥', bubbles: '🫧', confetti: '🎉', petals: '🌸', glow: '🌈' };
+const EFFECT_ICONS: Record<EffectName, string> = { none: '▫️', stars: '✨', snow: '❄️', sparks: '🔥', bubbles: '🫧', confetti: '🎉', petals: '🌸', glow: '🌈' };
 
 /** Owner only: the site's name, main colour, logo, corners, moving background, sign-in text and menu section names. */
 function BrandCard() {

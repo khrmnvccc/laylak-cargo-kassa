@@ -1145,4 +1145,5 @@ export const ENTRIES: Array<[string, string, string]> = [
   ['Faqat kirish sahifasida', 'Только на странице входа', '仅登录页'],
   ['Sahifa ustida', 'Поверх страницы', '在页面上方'],
   ['Faqat orqa fonda', 'Только на фоне', '仅在背景'],
+  ['Oddiy (harakatsiz)', 'Обычный (без анимации)', '普通（无动画）'],
 ];
