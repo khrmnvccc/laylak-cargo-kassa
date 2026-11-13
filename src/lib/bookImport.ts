@@ -59,6 +59,9 @@ const CATEGORY_RULES: Array<[RegExp, string]> = [
   [/svet|gaz|internet|telefon|kommunal|suv/i, 'kommunal'],
   [/inkassa|topshir/i, 'inkassa'],
 ];
+/** "250000 muxlisa opchaga avans" → "250000 Avans (Muxlisa opcha)", as the kassa writes advances. */
+const tidyNote = (line: string) => line.replace(/^(\d[\d\s]*\s)?(\S+) (opcha|aka|opa|uka)ga avans$/i,
+  (_m, sum = '', name: string, who: string) => `${sum}Avans (${name[0].toUpperCase()}${name.slice(1).toLowerCase()} ${who.toLowerCase()})`);
 export const guessCategory = (note: string) => CATEGORY_RULES.find(([re]) => re.test(note))?.[1] ?? 'boshqa';
 
 /**
@@ -87,11 +90,17 @@ export function parseKassaBook(rows: Cell[][], source: 'cash' | 'card', month?: 
     const note = String(r[5] ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
     days.push({ date, income, expense });
     if (expense <= 0) continue;
-    const parts = note.map((l) => ({ line: l, amount: Number(l.match(/^\d[\d\s]*/)?.[0].replace(/\s/g, '') || 0) }));
+    // A line without its own sum ("22.10 2ta") continues the line above it.
+    const parts: Array<{ line: string; amount: number }> = [];
+    for (const l of note) {
+      const amount = Number(l.match(/^\d{4,}(?:\s\d{3})*(?=\s|$)/)?.[0].replace(/\s/g, '') || 0);
+      if (!amount && parts.length) parts[parts.length - 1].line += `\n${l}`;
+      else parts.push({ line: tidyNote(l), amount });
+    }
     if (parts.length > 1 && parts.every((p) => p.amount > 0) && parts.reduce((s, p) => s + p.amount, 0) === expense) {
       for (const p of parts) out.push({ date, kind: 'expense', source, category: guessCategory(p.line), amount: p.amount, note: p.line });
     } else {
-      const text = note.join('\n') || `${expense} rasxod`;
+      const text = parts.map((p) => p.line).join('\n') || `${expense} rasxod`;
       out.push({ date, kind: 'expense', source, category: guessCategory(text), amount: expense, note: text });
     }
   }
