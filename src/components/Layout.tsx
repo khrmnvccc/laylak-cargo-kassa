@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import {
-  BarChart3, Bell, Clock, Landmark, CalendarDays, LayoutDashboard, ListOrdered, LogOut, Menu, Moon, Package, Plus, Settings, Sun, UserSearch, Users, Wallet, X,
+  BarChart3, Bell, Building2, Clock, Landmark, CalendarDays, LayoutDashboard, ListOrdered, LogOut, Menu, Moon, Package, Plus, Settings, Sun, UserSearch, Users, Wallet, X,
 } from 'lucide-react';
 import { href, type Page } from '../lib/router';
 import { useLive } from '../lib/live';
@@ -9,6 +9,7 @@ import { formatDate, todayTashkent, weekday } from '../lib/format';
 import type { User } from '../lib/types';
 import { LANG, LANGS, setLang } from '../lib/i18n';
 import { can, canSee, isPaused, pageLabel, roleLabel } from '../lib/perms';
+import { needsPick, useBranches } from '../lib/branch';
 import { AttendanceButton } from './AttendanceButton';
 import { StorkMark } from './Brand';
 import { StickerPay } from './StickerPay';
@@ -75,6 +76,34 @@ function SyncIndicator() {
     </span>
   );
 }
+
+/** Which branch the pages show. Only there when this person sees more than one branch. */
+function BranchSwitch({ className }: { className?: string }) {
+  const state = useBranches();
+  if (state.all.length < 2 || !state.mine.length) return null;
+  if (state.mine.length === 1) {
+    return (
+      <span className={cx('h-9 min-w-0 items-center gap-1.5 rounded-lg border border-line px-2.5 text-sm font-medium text-ink-2', className)} title="Sizning filialingiz">
+        <Building2 className="size-4 shrink-0 text-ink-3" /><span className="truncate">{state.mine[0].name}</span>
+      </span>
+    );
+  }
+  const value = state.mine.some((b) => b.id === state.current) ? state.current : 0;
+  return (
+    <label className={cx('relative h-9 min-w-0 items-center gap-1.5 rounded-lg border border-line bg-surface pl-2.5 pr-2 text-sm font-medium text-ink hover:bg-surface-2', className)}>
+      <Building2 className="size-4 shrink-0 text-ink-3" />
+      <span className="flex-1 truncate">{value ? state.mine.find((b) => b.id === value)!.name : 'Barcha filiallar'}</span>
+      <svg viewBox="0 0 20 20" className="size-4 shrink-0 text-ink-3" fill="currentColor" aria-hidden><path d="M5.5 7.5 10 12l4.5-4.5" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      <select aria-label="Filial" value={value} onChange={(e) => state.pick(Number(e.target.value))} className="absolute inset-0 cursor-pointer opacity-0">
+        <option value={0}>Barcha filiallar</option>
+        {state.mine.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+      </select>
+    </label>
+  );
+}
+
+// Pages where something new is written: with "all branches" picked the server would not know where it goes.
+const WRITE_PAGES: Page[] = ['kassa', 'orders', 'balance'];
 
 function NavLinks({ page, user, onNavigate }: { page: Page; user: User; onNavigate?: () => void }) {
   return (
@@ -151,6 +180,7 @@ export function Layout({ page, user, onLogout, children }: { page: Page; user: U
   const [drawer, setDrawer] = useState(false);
   const theme = useTheme();
   const today = todayTashkent();
+  const branches = useBranches();
 
   useEffect(() => setDrawer(false), [page]);
   useEffect(() => {
@@ -204,6 +234,7 @@ export function Layout({ page, user, onLogout, children }: { page: Page; user: U
                 <span className="text-ink-2">{weekday(today)}</span>, {formatDate(today)}
               </div>
             </div>
+            <BranchSwitch className="hidden sm:inline-flex" />
             <AttendanceButton />
             <SyncIndicator />
             <IconButton label={theme.isDark ? 'Yorugʻ rejim' : 'Qorongʻi rejim'} onClick={theme.toggle}>
@@ -215,9 +246,19 @@ export function Layout({ page, user, onLogout, children }: { page: Page; user: U
               </a>
             )}
           </div>
+          {/* On a phone the header is full, so the branch gets its own row under it. */}
+          <div className="px-4 pb-2 empty:hidden sm:hidden"><BranchSwitch className="flex w-full" /></div>
         </header>
 
-        <main className="mx-auto max-w-[1400px] px-4 pb-28 pt-5 sm:px-6 sm:pt-7 lg:px-8 lg:pb-12">{children}</main>
+        <main className="mx-auto max-w-[1400px] px-4 pb-28 pt-5 sm:px-6 sm:pt-7 lg:px-8 lg:pb-12">
+          {WRITE_PAGES.includes(page) && needsPick(branches) && (
+            <div className="no-print mb-4 flex items-center gap-2 rounded-xl border border-warn/30 bg-warn-soft px-3.5 py-2.5 text-sm text-warn">
+              <Building2 className="size-4 shrink-0" />
+              Hozir barcha filiallar birga koʻrsatilmoqda. Yangi yozuv kiritish uchun tepada filialni tanlang.
+            </div>
+          )}
+          {children}
+        </main>
       </div>
 
       {/* Mobile bottom navigation */}

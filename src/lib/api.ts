@@ -1,4 +1,5 @@
 import { syncClock } from './format';
+import { currentBranch } from './branch';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public fields?: Record<string, string>) {
@@ -22,7 +23,10 @@ export async function api<T = any>(path: string, options: { method?: string; bod
   try {
     response = await fetch(url, {
       method: options.method || 'GET',
-      headers: options.body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      headers: {
+        ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...(currentBranch() ? { 'X-Branch': String(currentBranch()) } : {}),
+      },
       body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
       credentials: 'same-origin',
       cache: 'no-store',

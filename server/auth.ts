@@ -16,6 +16,8 @@ export interface AuthUser {
   full_name: string;
   role: Role;
   permissions: Perm[];
+  /** The branches (filiallar) this person works in; null = every branch. The owner always has every branch. */
+  branches: number[] | null;
 }
 
 export async function hashPassword(password: string): Promise<string> {
@@ -80,15 +82,15 @@ export async function getSessionUser(token: string | undefined): Promise<AuthUse
   const hash = hashToken(token);
   const hit = sessionCache.get(hash);
   if (hit && hit.until > Date.now()) return hit.user;
-  const rows = await query<Omit<AuthUser, 'permissions'> & { stored: string[] | null }>(
-    `SELECT u.id, u.username, u.full_name, u.role, u.permissions AS stored
+  const rows = await query<Omit<AuthUser, 'permissions' | 'branches'> & { stored: string[] | null; branches: number[] | null }>(
+    `SELECT u.id, u.username, u.full_name, u.role, u.permissions AS stored, u.branches
        FROM app_sessions s JOIN app_users u ON u.id = s.user_id
       WHERE s.token_hash = $1 AND s.expires_at > NOW() AND u.is_active`,
     [hash],
   );
   if (!rows[0]) { sessionCache.delete(hash); return null; }
   const { stored, ...row } = rows[0];
-  const user = { ...row, permissions: permsOf(row.role, stored) };
+  const user = { ...row, permissions: permsOf(row.role, stored), branches: row.role === 'owner' ? null : (row as any).branches ?? null };
   if (sessionCache.size > 500) sessionCache.clear();
   sessionCache.set(hash, { user, until: Date.now() + SESSION_TTL_MS });
   return user;

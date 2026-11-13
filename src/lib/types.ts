@@ -9,6 +9,8 @@ export interface User {
   full_name: string;
   role: Role;
   permissions: Perm[];
+  /** Branches this person sees; null = all. */
+  branches?: number[] | null;
 }
 
 export interface Payment {
@@ -81,6 +83,7 @@ export interface Staff extends Totals {
   full_name: string;
   role: Role;
   permissions: Perm[];
+  branches?: number[] | null;
   is_active: boolean;
   created_at: string;
   last_login_at: string | null;

@@ -53,6 +53,10 @@ interface Ctx extends ApiRequest {
   token?: string;
   secure: boolean;
   user: AuthUser | null;
+  /** The branches this request reads: the one picked at the top of the page, or all the person may see. */
+  view: number[];
+  /** The one branch a new record goes to; asks to pick one when the person sees several and picked "all". */
+  branch: () => number;
 }
 
 type Handler = (ctx: Ctx) => Promise<ApiResponse | unknown>;
@@ -95,7 +99,14 @@ export async function handleApi(req: ApiRequest): Promise<ApiResponse> {
     if (user) background(deliverDue());
     // A change may touch someone's role, rights or sessions: look sessions up afresh after it.
     if (req.method !== 'GET') forgetSessions();
-    const result = await r.handler({ ...req, params, token, secure, user });
+    const allowed = user ? await branchesFor(user) : [];
+    const picked = Number(req.headers['x-branch']);
+    const view = allowed.includes(picked) ? [picked] : allowed;
+    const branch = () => {
+      if (view.length === 1) return view[0];
+      throw new HttpError(400, 'Yozish uchun tepada filialni tanlang');
+    };
+    const result = await r.handler({ ...req, params, token, secure, user, view, branch });
     if (req.method !== 'GET') forgetSessions();
     if (result && typeof result === 'object' && 'status' in result && 'body' in result) return result as ApiResponse;
     return { status: 200, body: result };
@@ -151,6 +162,25 @@ const RANGE_SQL = (fromIdx: number, toIdx: number) =>
   `p.paid_at >= ($${fromIdx}::date)::timestamp AT TIME ZONE '${TZ}'
    AND p.paid_at < ($${toIdx}::date + 1)::timestamp AT TIME ZONE '${TZ}'`;
 
+// ---------- filiallar (branches) ----------
+
+let branchCache: { value: Array<{ id: number; name: string }>; until: number } | null = null;
+async function allBranches() {
+  if (branchCache && branchCache.until > Date.now()) return branchCache.value;
+  const rows = await query<{ id: number; name: string }>(`SELECT id::int, name FROM branches ORDER BY id`).catch(() => [{ id: 1, name: 'Asosiy filial' }]);
+  branchCache = { value: rows.length ? rows : [{ id: 1, name: 'Asosiy filial' }], until: Date.now() + 30_000 };
+  return branchCache.value;
+}
+/** The branches a person may see: every one for the owner and for anyone not limited to some. */
+async function branchesFor(user: AuthUser) {
+  const all = (await allBranches()).map((b) => b.id);
+  if (user.role === 'owner' || !user.branches?.length) return all;
+  const mine = all.filter((id) => user.branches!.includes(id));
+  return mine.length ? mine : all.slice(0, 1);
+}
+/** `col = ANY($n)`: rows of the branches being looked at. */
+const inBranch = (col: string, idx: number) => `${col} = ANY($${idx}::smallint[])`;
+
 function str(value: unknown, max: number): string {
   return typeof value === 'string' ? value.trim().slice(0, max) : '';
 }
@@ -165,9 +195,9 @@ async function audit(db: { query: pg.PoolClient['query'] } | null, user: AuthUse
 
 const PAYMENT_COLUMNS = `p.id, p.client_code, COALESCE(p.client_name, c.full_name) AS client_name, p.amount, p.method, p.note,
   p.paid_at, p.created_by, p.created_by_name, p.created_at, p.voided_at, p.voided_by_name, p.void_reason,
-  (p.legacy_id IS NOT NULL) AS is_legacy, c.phone AS client_phone, p.trips`;
+  (p.legacy_id IS NOT NULL) AS is_legacy, c.phone AS client_phone, p.trips, p.branch_id::int AS branch_id`;
 
-async function totalsFor(from: string, to: string) {
+async function totalsFor(from: string, to: string, view: number[]) {
   const rows = await query(
     `SELECT COALESCE(SUM(p.amount), 0)::bigint AS total,
             COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'cash'), 0)::bigint AS cash,
@@ -177,8 +207,8 @@ async function totalsFor(from: string, to: string) {
             COUNT(*)::bigint AS count,
             COUNT(DISTINCT p.client_code)::bigint AS clients
        FROM payments p
-      WHERE p.voided_at IS NULL AND ${RANGE_SQL(1, 2)}`,
-    [from, to],
+      WHERE p.voided_at IS NULL AND ${RANGE_SQL(1, 2)} AND ${inBranch('p.branch_id', 3)}`,
+    [from, to, view],
   );
   return rows[0];
 }
@@ -215,7 +245,7 @@ route('POST', '/setup', 'public', async (ctx) => {
       [username, fullName, passwordHash],
     );
     await audit(db, inserted.rows[0], 'setup', 'user', inserted.rows[0].id);
-    return { ...inserted.rows[0], permissions: permsOf('owner', null) } as AuthUser;
+    return { ...inserted.rows[0], permissions: permsOf('owner', null), branches: null } as AuthUser;
   });
   const session = await createSession(user.id, ctx.headers['user-agent']);
   return { status: 200, body: { user }, cookies: [sessionCookie(session.token, session.maxAge, ctx.secure)] };
@@ -228,7 +258,7 @@ route('POST', '/auth/login', 'public', async (ctx) => {
   const lockKey = `user:${username}`;
   await assertNotLocked(lockKey);
   const rows = await query(
-    `SELECT id, username, full_name, role, permissions, password_hash, is_active FROM app_users WHERE username = $1`,
+    `SELECT id, username, full_name, role, permissions, branches, password_hash, is_active FROM app_users WHERE username = $1`,
     [username],
   );
   const row = rows[0];
@@ -240,7 +270,7 @@ route('POST', '/auth/login', 'public', async (ctx) => {
   if (!row.is_active) throw new HttpError(403, 'Akkaunt o‘chirilgan. Admin bilan bog‘laning');
   await clearLoginFailures(lockKey);
   await query(`UPDATE app_users SET last_login_at = NOW() WHERE id = $1`, [row.id]);
-  const user: AuthUser = { id: row.id, username: row.username, full_name: row.full_name, role: row.role, permissions: permsOf(row.role, row.permissions) };
+  const user: AuthUser = { id: row.id, username: row.username, full_name: row.full_name, role: row.role, permissions: permsOf(row.role, row.permissions), branches: row.role === 'owner' ? null : row.branches ?? null };
   await audit(null, user, 'login', 'user', user.id);
   const session = await createSession(user.id, ctx.headers['user-agent']);
   return { status: 200, body: { user }, cookies: [sessionCookie(session.token, session.maxAge, ctx.secure)] };
@@ -330,6 +360,7 @@ route('POST', '/payments', 'payments.create', async (ctx) => {
     return { status: 400, body: { error: 'Ma’lumotlarni tekshiring', fields: errors } };
   }
 
+  const branchId = ctx.branch();
   const payment = await transaction(async (db) => {
     await db.query(
       `INSERT INTO clients (code, full_name) VALUES ($1, NULLIF($2, ''))
@@ -340,10 +371,10 @@ route('POST', '/payments', 'payments.create', async (ctx) => {
       [clientCode, clientName],
     );
     const inserted = await db.query(
-      `INSERT INTO payments (client_code, client_name, amount, method, note, paid_at, created_by, created_by_name, trips)
-       VALUES ($1, NULLIF($2, ''), $3, $4, NULLIF($5, ''), COALESCE($6::timestamptz, NOW()), $7, $8, $9)
+      `INSERT INTO payments (client_code, client_name, amount, method, note, paid_at, created_by, created_by_name, trips, branch_id)
+       VALUES ($1, NULLIF($2, ''), $3, $4, NULLIF($5, ''), COALESCE($6::timestamptz, NOW()), $7, $8, $9, $10)
        RETURNING id`,
-      [clientCode, clientName, amount, method, note, paidAt, ctx.user!.id, ctx.user!.full_name, trips],
+      [clientCode, clientName, amount, method, note, paidAt, ctx.user!.id, ctx.user!.full_name, trips, branchId],
     );
     await audit(db, ctx.user, 'payment_create', 'payment', inserted.rows[0].id, { clientCode, amount, method });
     const full = await db.query(
@@ -353,7 +384,7 @@ route('POST', '/payments', 'payments.create', async (ctx) => {
     return full.rows[0];
   });
   const telegram = await reportLater(ctx.user, payment.id, async () => sendIfOn(await paymentCaption({
-    method, amount, by: ctx.user!.full_name, at: payment.paid_at, note,
+    method, amount, by: ctx.user!.full_name, at: payment.paid_at, note, branch: payment.branch_id,
     lines: [`${clientCode}${clientName ? ` · ${clientName}` : ''}`],
   }), photos as Buffer[]));
   return { status: 201, body: { payment, telegram } };
@@ -377,8 +408,12 @@ function sendIfOn(caption: string | null, photos: Buffer[] | null) {
   return photos ? reportPhotos(photos, caption) : reportText(caption);
 }
 
-function paymentCaption(p: { method: string; amount: number; by: string; at: string | Date; note?: string; lines: string[]; details?: string[]; head?: string }) {
+async function paymentCaption(p: { method: string; amount: number; by: string; at: string | Date; note?: string; lines: string[]; details?: string[]; head?: string; branch?: number }) {
   const when = new Date(new Date(p.at).getTime() + 5 * 3600_000).toISOString();
+  // With more than one branch the message says which one the money came to.
+  const branches = await allBranches();
+  const branch = branches.length > 1 ? branches.find((b) => b.id === p.branch)?.name : undefined;
+  if (branch) p = { ...p, by: `${p.by} · ${branch}` };
   return messageText('payment', {
     belgi: p.method === 'cash' ? '💵' : '💳', turi: METHOD_LABEL[p.method] || p.method, summa: som(p.amount),
     sarlavha: p.head, mijoz: p.lines.join('\n'), tafsilot: (p.details || []).join('\n'), kim: p.by,
@@ -406,11 +441,11 @@ const SCAN_RE = /^77\d{8}$/;
 
 route('GET', '/orders', 'orders.manage', async (ctx) => {
   const q = str(ctx.query.q, 60).toUpperCase();
-  const where = ['o.deleted_at IS NULL'];
-  const args: unknown[] = [];
+  const where = ['o.deleted_at IS NULL', inBranch('o.branch_id', 1)];
+  const args: unknown[] = [ctx.view];
   if (q) {
     args.push(`%${q}%`);
-    where.push(`(o.scan_code LIKE $1 OR upper(o.client_code) LIKE $1 OR upper(COALESCE(o.client_name, c.full_name, '')) LIKE $1 OR upper(COALESCE(o.order_no, '')) LIKE $1)`);
+    where.push(`(o.scan_code LIKE $2 OR upper(o.client_code) LIKE $2 OR upper(COALESCE(o.client_name, c.full_name, '')) LIKE $2 OR upper(COALESCE(o.order_no, '')) LIKE $2)`);
   }
   if (ctx.query.status === 'unpaid') where.push(UNPAID_SQL);
   if (ctx.query.status === 'paid') where.push(`NOT ${UNPAID_SQL}`);
@@ -424,14 +459,14 @@ route('GET', '/orders', 'orders.manage', async (ctx) => {
 });
 
 // Counts only, for the dashboard's rotating cards: what is still in stock, what is unpaid, what came in today.
-route('GET', '/orders/stats', 'orders.manage', async () => {
+route('GET', '/orders/stats', 'orders.manage', async (ctx) => {
   const rows = await query(
     `SELECT COUNT(*) FILTER (WHERE o.issued_at IS NULL)::int AS stock,
             COUNT(*) FILTER (WHERE ${UNPAID_SQL})::int AS unpaid,
             COALESCE(SUM(o.amount) FILTER (WHERE ${UNPAID_SQL}), 0)::bigint AS unpaid_amount,
             COUNT(*) FILTER (WHERE o.received_at = $1::date)::int AS today
-       FROM ${ORDER_FROM} WHERE o.deleted_at IS NULL`,
-    [todayTashkent()],
+       FROM ${ORDER_FROM} WHERE o.deleted_at IS NULL AND ${inBranch('o.branch_id', 2)}`,
+    [todayTashkent(), ctx.view],
   );
   const r = rows[0];
   return { stock: r.stock, unpaid: r.unpaid, unpaidAmount: Number(r.unpaid_amount), today: r.today };
@@ -463,7 +498,7 @@ function readOrder(b: any, defaultDate: string): { order: NewOrder; errors: Reco
   return { order: o, errors };
 }
 
-async function insertOrder(db: pg.PoolClient, user: AuthUser, o: NewOrder) {
+async function insertOrder(db: pg.PoolClient, user: AuthUser, o: NewOrder, branchId: number) {
   // Fill in the client's name and phone only where the kassa does not know them yet.
   await db.query(
     `INSERT INTO clients (code, full_name, phone) VALUES ($1, NULLIF($2, ''), NULLIF($3, ''))
@@ -471,16 +506,16 @@ async function insertOrder(db: pg.PoolClient, user: AuthUser, o: NewOrder) {
     [o.clientCode, o.clientName, o.phone],
   );
   const inserted = await db.query(
-    `INSERT INTO orders (scan_code, client_code, client_name, phone, order_no, transport, places, weight, amount, received_at, note, created_by, created_by_name)
-     VALUES ('77' || lpad(nextval('orders_scan_seq')::text, 8, '0'), $1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, $7, $8, $9, NULLIF($10, ''), $11, $12)
+    `INSERT INTO orders (scan_code, client_code, client_name, phone, order_no, transport, places, weight, amount, received_at, note, created_by, created_by_name, branch_id)
+     VALUES ('77' || lpad(nextval('orders_scan_seq')::text, 8, '0'), $1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, $7, $8, $9, NULLIF($10, ''), $11, $12, $13)
      RETURNING id`,
-    [o.clientCode, o.clientName, o.phone, o.orderNo, o.transport, o.places, o.weight, o.amount, o.receivedAt, o.note, user.id, user.full_name],
+    [o.clientCode, o.clientName, o.phone, o.orderNo, o.transport, o.places, o.weight, o.amount, o.receivedAt, o.note, user.id, user.full_name, branchId],
   );
   return inserted.rows[0].id as string;
 }
 
 /** Many orders in two statements (not two per order), so a long list loads without the kassa hanging. */
-async function insertOrders(db: pg.PoolClient, user: AuthUser, list: NewOrder[]): Promise<string[]> {
+async function insertOrders(db: pg.PoolClient, user: AuthUser, list: NewOrder[], branchId: number): Promise<string[]> {
   if (!list.length) return [];
   // One row per client: like one-by-one inserts, the first name and phone given win, and known ones stay.
   const clients = new Map<string, { name: string; phone: string }>();
@@ -498,14 +533,14 @@ async function insertOrders(db: pg.PoolClient, user: AuthUser, list: NewOrder[])
   // Sticker numbers follow the list's order.
   const inserted = await db.query(
     `INSERT INTO orders (scan_code, client_code, client_name, phone, order_no, transport, places, weight, amount, received_at, note, created_by, created_by_name,
-                         prepaid_at, prepaid_by_name)
+                         prepaid_at, prepaid_by_name, branch_id)
      SELECT '77' || lpad(nextval('orders_scan_seq')::text, 8, '0'), code, NULLIF(name, ''), NULLIF(phone, ''), NULLIF(no, ''), NULLIF(tr, ''),
-            places, weight, amount, received, NULLIF(note, ''), $11, $12, CASE WHEN pre THEN NOW() END, CASE WHEN pre THEN $12 END
+            places, weight, amount, received, NULLIF(note, ''), $11, $12, CASE WHEN pre THEN NOW() END, CASE WHEN pre THEN $12 END, $14
        FROM (SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::int[], $7::numeric[], $8::bigint[], $9::date[], $10::text[], $13::boolean[])
                WITH ORDINALITY AS t(code, name, phone, no, tr, places, weight, amount, received, note, pre, i) ORDER BY i) AS rows
      RETURNING id`,
     [col('clientCode'), col('clientName'), col('phone'), col('orderNo'), col('transport'), col('places'), col('weight'), col('amount'),
-      col('receivedAt'), col('note'), user.id, user.full_name, list.map((o) => Boolean(o.prepaid))],
+      col('receivedAt'), col('note'), user.id, user.full_name, list.map((o) => Boolean(o.prepaid)), branchId],
   );
   return inserted.rows.map((r: any) => r.id as string);
 }
@@ -513,6 +548,7 @@ async function insertOrders(db: pg.PoolClient, user: AuthUser, list: NewOrder[])
 route('POST', '/orders', 'orders.manage', async (ctx) => {
   const { order: o, errors } = readOrder(ctx.body || {}, todayTashkent());
   if (Object.keys(errors).length) return { status: 400, body: { error: 'Ma’lumotlarni tekshiring', fields: errors } };
+  const branchId = ctx.branch();
   const order = await transaction(async (db) => {
     const key = orderKey(o.clientCode, o.orderNo);
     if (key) {
@@ -520,7 +556,7 @@ route('POST', '/orders', 'orders.manage', async (ctx) => {
       const dup = (await db.query(`SELECT o.scan_code FROM orders o WHERE o.deleted_at IS NULL AND ${ORDER_KEY_SQL} = $1 LIMIT 1`, [key])).rows[0];
       if (dup) throw new HttpError(409, `Bu buyurtma kassada bor (stiker ${dup.scan_code})`);
     }
-    const id = await insertOrder(db, ctx.user!, o);
+    const id = await insertOrder(db, ctx.user!, o, branchId);
     await audit(db, ctx.user, 'order_create', 'order', id, { clientCode: o.clientCode, amount: o.amount, orderNo: o.orderNo });
     return (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = $1`, [id])).rows[0];
   });
@@ -573,7 +609,7 @@ route('POST', '/orders/import', 'orders.manage', async (ctx) => {
     };
     // The window works out its totals itself as rows are ticked, from which orders the kassa already has.
     if (b.dryRun) return { dryRun: true, ...summary, existing: found.map((r: any) => ({ key: r.k, unpaid: Boolean(r.unpaid) })) };
-    const ids = await insertOrders(db, ctx.user!, fresh);
+    const ids = await insertOrders(db, ctx.user!, fresh, ctx.branch());
     if (toMark.length) {
       await db.query(`UPDATE orders SET prepaid_at = NOW(), prepaid_by_name = $2, updated_at = NOW() WHERE id = ANY($1) AND prepaid_at IS NULL`, [toMark, ctx.user!.full_name]);
     }
@@ -612,14 +648,14 @@ function shortName(name: string | null): string | null {
 route('GET', '/orders/scan/:code', 'orders.manage', async (ctx) => {
   const code = ctx.params.code.replace(/\D/g, '');
   if (!SCAN_RE.test(code)) throw new HttpError(404, 'Bu kod kassa stikeri emas');
-  const rows = await query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.scan_code = $1 AND o.deleted_at IS NULL`, [code]);
+  const rows = await query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.scan_code = $1 AND o.deleted_at IS NULL AND ${inBranch('o.branch_id', 2)}`, [code, ctx.view]);
   if (!rows.length) throw new HttpError(404, 'Bunday stiker topilmadi');
   const order = rows[0];
   const others = await query(
     `SELECT o.scan_code, o.order_no, o.amount FROM ${ORDER_FROM}
-      WHERE o.client_code = $1 AND o.id <> $2 AND o.deleted_at IS NULL AND ${UNPAID_SQL}
+      WHERE o.client_code = $1 AND o.id <> $2 AND o.deleted_at IS NULL AND ${UNPAID_SQL} AND ${inBranch('o.branch_id', 3)}
       ORDER BY o.created_at LIMIT 20`,
-    [order.client_code, order.id],
+    [order.client_code, order.id, ctx.view],
   );
   return { order, unpaid: others };
 });
@@ -629,7 +665,7 @@ route('POST', '/orders/:id/pay', 'payments.create', async (ctx) => {
   if (!METHODS.includes(method)) throw new HttpError(400, 'To‘lov turini tanlang');
   if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Buyurtma topilmadi');
   const result = await transaction(async (db) => {
-    const found = await db.query(`SELECT * FROM orders WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [ctx.params.id]);
+    const found = await db.query(`SELECT * FROM orders WHERE id = $1 AND deleted_at IS NULL AND ${inBranch('branch_id', 2)} FOR UPDATE`, [ctx.params.id, ctx.view]);
     const order = found.rows[0];
     if (!order) throw new HttpError(404, 'Buyurtma topilmadi');
     if (order.prepaid_at) throw new HttpError(409, `Bu buyurtma kassaga kelmasdan oldin toʻlangan${order.prepaid_by_name ? ` (${order.prepaid_by_name} belgilagan)` : ''}`);
@@ -641,9 +677,9 @@ route('POST', '/orders/:id/pay', 'payments.create', async (ctx) => {
     }
     const note = `Buyurtma ${order.order_no ? `№${order.order_no}` : order.scan_code} · stiker ${order.scan_code}`;
     const inserted = await db.query(
-      `INSERT INTO payments (client_code, client_name, amount, method, note, created_by, created_by_name)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-      [order.client_code, order.client_name, order.amount, method, note, ctx.user!.id, ctx.user!.full_name],
+      `INSERT INTO payments (client_code, client_name, amount, method, note, created_by, created_by_name, branch_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      [order.client_code, order.client_name, order.amount, method, note, ctx.user!.id, ctx.user!.full_name, order.branch_id],
     );
     const paymentId = inserted.rows[0].id;
     // Paid at the kassa by scanning its sticker means the parcel is being handed over.
@@ -663,7 +699,7 @@ route('POST', '/orders/:id/pay', 'payments.create', async (ctx) => {
     `Qabul qilingan: ${o.received_at.slice(8, 10)}.${o.received_at.slice(5, 7)}.${o.received_at.slice(0, 4)}`,
   ].filter(Boolean);
   const telegram = await reportLater(ctx.user, result.payment.id, async () => sendIfOn(await paymentCaption({
-    method, amount: Number(o.amount), by: ctx.user!.full_name, at: result.payment.paid_at,
+    method, amount: Number(o.amount), by: ctx.user!.full_name, at: result.payment.paid_at, branch: result.payment.branch_id,
     head: `📦 Stiker ${o.scan_code}`,
     lines: [`${o.client_code}${o.client_name ? ` · ${o.client_name}` : ''}`], details,
   }), null));
@@ -676,7 +712,7 @@ route('POST', '/orders/:id/prepaid', 'payments.void', async (ctx) => {
   if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Buyurtma topilmadi');
   const prepaid = ctx.body?.prepaid !== false;
   const order = await transaction(async (db) => {
-    const rows = (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = $1 AND o.deleted_at IS NULL FOR UPDATE OF o`, [ctx.params.id])).rows;
+    const rows = (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = $1 AND o.deleted_at IS NULL AND ${inBranch('o.branch_id', 2)} FOR UPDATE OF o`, [ctx.params.id, ctx.view])).rows;
     if (!rows.length) throw new HttpError(404, 'Buyurtma topilmadi');
     if (rows[0].payment_id) throw new HttpError(409, 'Bu buyurtma kassada toʻlangan: avval toʻlovni bekor qiling');
     await db.query(
@@ -699,8 +735,8 @@ route('POST', '/orders/:id/issue', 'orders.manage', async (ctx) => {
     const updated = await db.query(
       `UPDATE orders SET issued_at = CASE WHEN $2 THEN COALESCE(issued_at, NOW()) END,
               issued_by_name = CASE WHEN $2 THEN COALESCE(issued_by_name, $3) END, updated_at = NOW()
-        WHERE id = $1 AND deleted_at IS NULL RETURNING scan_code`,
-      [ctx.params.id, issued, ctx.user!.full_name],
+        WHERE id = $1 AND deleted_at IS NULL AND ${inBranch('branch_id', 4)} RETURNING scan_code`,
+      [ctx.params.id, issued, ctx.user!.full_name, ctx.view],
     );
     if (!updated.rows.length) throw new HttpError(404, 'Buyurtma topilmadi');
     await audit(db, ctx.user, issued ? 'order_issue' : 'order_unissue', 'order', ctx.params.id, { scanCode: updated.rows[0].scan_code });
@@ -717,8 +753,8 @@ route('POST', '/orders/issue', 'orders.manage', async (ctx) => {
   const issued = await transaction(async (db) => {
     const rows = (await db.query(
       `UPDATE orders SET issued_at = NOW(), issued_by_name = $2, updated_at = NOW()
-        WHERE id = ANY($1) AND deleted_at IS NULL AND issued_at IS NULL RETURNING id, scan_code`,
-      [ids, ctx.user!.full_name],
+        WHERE id = ANY($1) AND deleted_at IS NULL AND issued_at IS NULL AND ${inBranch('branch_id', 3)} RETURNING id, scan_code`,
+      [ids, ctx.user!.full_name, ctx.view],
     )).rows;
     for (const r of rows) await audit(db, ctx.user, 'order_issue', 'order', r.id, { scanCode: r.scan_code });
     return rows.length;
@@ -734,10 +770,10 @@ route('POST', '/orders/delete', 'orders.delete', async (ctx) => {
   const rows = await transaction(async (db) => {
     const rows = (await db.query(
       `UPDATE orders o SET deleted_at = NOW(), updated_at = NOW()
-        WHERE o.id = ANY($1) AND o.deleted_at IS NULL
+        WHERE o.id = ANY($1) AND o.deleted_at IS NULL AND ${inBranch('o.branch_id', 2)}
           AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.id = o.payment_id AND p.voided_at IS NULL)
         RETURNING o.id, o.scan_code, o.client_code, o.amount`,
-      [ids],
+      [ids, ctx.view],
     )).rows;
     for (const r of rows) await audit(db, ctx.user, 'order_delete', 'order', r.id, { scanCode: r.scan_code, amount: Number(r.amount) });
     return rows;
@@ -756,14 +792,15 @@ function orderDeleteText(rows: { scan_code: string; client_code: string; amount:
 
 // Orders entered twice: the same client and order number, or with no number the same client, sum and day.
 // Each group lists its copies oldest first; the oldest is the one to keep.
-route('GET', '/orders/duplicates', 'orders.delete', async () => {
+route('GET', '/orders/duplicates', 'orders.delete', async (ctx) => {
   const rows = await query(
     `SELECT * FROM (
        SELECT ${ORDER_COLUMNS},
               COALESCE(${ORDER_KEY_SQL}, o.client_code || '|' || o.amount || '|' || o.received_at) AS dup_key,
               COUNT(*) OVER (PARTITION BY COALESCE(${ORDER_KEY_SQL}, o.client_code || '|' || o.amount || '|' || o.received_at)) AS copies
-         FROM ${ORDER_FROM} WHERE o.deleted_at IS NULL) d
+         FROM ${ORDER_FROM} WHERE o.deleted_at IS NULL AND ${inBranch('o.branch_id', 1)}) d
       WHERE copies > 1 ORDER BY dup_key, created_at`,
+    [ctx.view],
   );
   const groups = new Map<string, any[]>();
   for (const { dup_key, copies, ...o } of rows as any[]) groups.set(dup_key, [...(groups.get(dup_key) || []), o]);
@@ -773,7 +810,7 @@ route('GET', '/orders/duplicates', 'orders.delete', async () => {
 route('DELETE', '/orders/:id', 'orders.delete', async (ctx) => {
   if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Buyurtma topilmadi');
   const order = await transaction(async (db) => {
-    const rows = (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = $1 AND o.deleted_at IS NULL FOR UPDATE OF o`, [ctx.params.id])).rows;
+    const rows = (await db.query(`SELECT ${ORDER_COLUMNS} FROM ${ORDER_FROM} WHERE o.id = $1 AND o.deleted_at IS NULL AND ${inBranch('o.branch_id', 2)} FOR UPDATE OF o`, [ctx.params.id, ctx.view])).rows;
     if (!rows.length) throw new HttpError(404, 'Buyurtma topilmadi');
     if (rows[0].payment_id) throw new HttpError(409, 'Toʻlangan buyurtmani oʻchirib boʻlmaydi. Avval toʻlovni bekor qiling');
     await db.query(`UPDATE orders SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1`, [ctx.params.id]);
@@ -847,6 +884,7 @@ route('POST', '/receipts/confirm', 'payments.create', async (ctx) => {
   const t = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(receipt.paidAt) ? Date.parse(`${receipt.paidAt}:00+05:00`) : NaN;
   if (Number.isFinite(t) && t <= Date.now() + 5 * 60_000 && ctx.user!.permissions.includes('payments.backdate')) paidAt = new Date(t).toISOString();
 
+  const branchId = ctx.branch();
   const byClient = new Map<string, typeof orders>();
   for (const o of orders) byClient.set(o.clientCode, [...(byClient.get(o.clientCode) || []), o]);
   const head = `Chek${receipt.bank ? ` ${receipt.bank}` : ''}${receipt.transactionId ? ` №${receipt.transactionId}` : ''}`;
@@ -868,17 +906,17 @@ route('POST', '/receipts/confirm', 'payments.create', async (ctx) => {
         [clientCode, clientName],
       );
       const inserted = await db.query(
-        `INSERT INTO payments (client_code, client_name, amount, method, note, paid_at, created_by, created_by_name)
-         VALUES ($1, NULLIF($2, ''), $3, $4, $5, COALESCE($6::timestamptz, NOW()), $7, $8) RETURNING id`,
-        [clientCode, clientName, amount, method, note, paidAt, ctx.user!.id, ctx.user!.full_name],
+        `INSERT INTO payments (client_code, client_name, amount, method, note, paid_at, created_by, created_by_name, branch_id)
+         VALUES ($1, NULLIF($2, ''), $3, $4, $5, COALESCE($6::timestamptz, NOW()), $7, $8, $9) RETURNING id`,
+        [clientCode, clientName, amount, method, note, paidAt, ctx.user!.id, ctx.user!.full_name, branchId],
       );
       ids.push(inserted.rows[0].id);
     }
     const row = await db.query(
-      `INSERT INTO receipts (key, bank, transaction_id, amount, receipt_paid_at, sender, details, payment_ids, created_by, created_by_name)
-       VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), $4, $5, NULLIF($6, ''), $7::jsonb, $8, $9, $10) RETURNING id`,
+      `INSERT INTO receipts (key, bank, transaction_id, amount, receipt_paid_at, sender, details, payment_ids, created_by, created_by_name, branch_id)
+       VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), $4, $5, NULLIF($6, ''), $7::jsonb, $8, $9, $10, $11) RETURNING id`,
       [key, receipt.bank, receipt.transactionId, receipt.amount, Number.isFinite(t) ? new Date(t).toISOString() : null,
-        receipt.sender, JSON.stringify({ receipt, orders, method }), ids, ctx.user!.id, ctx.user!.full_name],
+        receipt.sender, JSON.stringify({ receipt, orders, method }), ids, ctx.user!.id, ctx.user!.full_name, branchId],
     );
     await audit(db, ctx.user, 'receipt_confirm', 'receipt', row.rows[0].id, { key, amount: receipt.amount, payments: ids.length, method });
     const full = await db.query(
@@ -888,7 +926,7 @@ route('POST', '/receipts/confirm', 'payments.create', async (ctx) => {
     return full.rows;
   });
   const telegram = await reportLater(ctx.user, saved[0]?.id ?? null, async () => sendIfOn(await paymentCaption({
-    method, amount: receipt.amount, by: ctx.user!.full_name, at: saved[0]?.paid_at || new Date(),
+    method, amount: receipt.amount, by: ctx.user!.full_name, at: saved[0]?.paid_at || new Date(), branch: branchId,
     head: [head, receipt.sender && `· ${receipt.sender}`].filter(Boolean).join(' '),
     lines: orders.map((o: { clientCode: string; clientName: string; orderNo: string; transport: string; amount: number }) =>
       `• ${o.clientCode}${o.clientName ? ` ${o.clientName}` : ''}${o.orderNo ? ` №${o.orderNo}` : ''}${o.transport ? ` ${o.transport}` : ''} — ${som(o.amount)}`),
@@ -925,6 +963,7 @@ route('POST', '/payments/import', 'payments.import', async (ctx) => {
     clean.push({ date, code, method, amount, note: str(r?.note, 500), key: `${date}|${code}|${method}|${amount}`, trips });
   });
   if (!clean.length) return { status: 400, body: { error: 'Yaroqli toʻlov topilmadi', errors: errors.slice(0, 50) } };
+  const branchId = ctx.branch();
 
   return transaction(async (db) => {
     const dates = clean.map((r) => r.date).sort();
@@ -933,10 +972,10 @@ route('POST', '/payments/import', 'payments.import', async (ctx) => {
       `SELECT to_char(p.paid_at AT TIME ZONE '${TZ}', 'YYYY-MM-DD') || '|' || p.client_code || '|' || p.method || '|' || p.amount AS key,
               COUNT(*)::int AS n
          FROM payments p
-        WHERE p.voided_at IS NULL AND p.client_code = ANY($3::text[])
+        WHERE p.voided_at IS NULL AND p.client_code = ANY($3::text[]) AND p.branch_id = $4
           AND p.paid_at >= ($1::date)::timestamp AT TIME ZONE '${TZ}' AND p.paid_at < ($2::date + 1)::timestamp AT TIME ZONE '${TZ}'
         GROUP BY 1`,
-      [dates[0], dates[dates.length - 1], [...new Set(clean.map((r) => r.code))]],
+      [dates[0], dates[dates.length - 1], [...new Set(clean.map((r) => r.code))], branchId],
     );
     const have = new Map<string, number>(existing.rows.map((r) => [r.key, r.n]));
     const seen = new Map<string, number>();
@@ -966,14 +1005,14 @@ route('POST', '/payments/import', 'payments.import', async (ctx) => {
     const payload = toAdd.map((r, seq) => {
       const n = (occurrence.get(r.key) || 0) + 1;
       occurrence.set(r.key, n);
-      return { ...r, seq, legacy_id: `xls:${r.key}|${(have.get(r.key) || 0) + n}` };
+      return { ...r, seq, legacy_id: `xls:${branchId > 1 ? `${branchId}:` : ''}${r.key}|${(have.get(r.key) || 0) + n}` };
     });
     await db.query(
-      `INSERT INTO payments (client_code, amount, method, note, paid_at, created_by, created_by_name, legacy_id, trips)
-       SELECT x.code, x.amount, x.method, NULLIF(x.note, ''), (x.date::date + time '12:00' + make_interval(secs => x.seq)) AT TIME ZONE '${TZ}', $2, $3, x.legacy_id, x.trips
+      `INSERT INTO payments (client_code, amount, method, note, paid_at, created_by, created_by_name, legacy_id, trips, branch_id)
+       SELECT x.code, x.amount, x.method, NULLIF(x.note, ''), (x.date::date + time '12:00' + make_interval(secs => x.seq)) AT TIME ZONE '${TZ}', $2, $3, x.legacy_id, x.trips, $4
          FROM jsonb_to_recordset($1::jsonb) AS x(code text, amount bigint, method text, note text, date text, legacy_id text, seq int, trips int)
        ON CONFLICT (legacy_id) DO NOTHING`,
-      [JSON.stringify(payload), null, IMPORT_SOURCE],
+      [JSON.stringify(payload), null, IMPORT_SOURCE, branchId],
     );
     await audit(db, ctx.user, 'payment_import', 'payment', null, { from: summary.from, to: summary.to, ...summary.adding, alreadyInKassa: summary.alreadyInKassa });
     return summary;
@@ -983,8 +1022,8 @@ route('POST', '/payments/import', 'payments.import', async (ctx) => {
 route('GET', '/payments', 'user', async (ctx) => {
   const q = ctx.query;
   const { from, to } = parseRange(q, 6);
-  const where = ['1=1', RANGE_SQL(1, 2)];
-  const params: unknown[] = [from, to];
+  const where = ['1=1', RANGE_SQL(1, 2), inBranch('p.branch_id', 3)];
+  const params: unknown[] = [from, to, ctx.view];
   const add = (sql: string, value: unknown) => { params.push(value); where.push(sql.replace('?', `$${params.length}`)); };
   if (METHODS.includes(q.method as string)) add('p.method = ?', q.method);
   else if (q.method === 'card_all') where.push("p.method IN ('card', 'yandex', 'pochta')");
@@ -1030,8 +1069,8 @@ route('POST', '/payments/:id/void', 'payments.void', async (ctx) => {
   const payment = await transaction(async (db) => {
     const updated = await db.query(
       `UPDATE payments SET voided_at = NOW(), voided_by = $2, voided_by_name = $3, void_reason = $4
-        WHERE id = $1 AND voided_at IS NULL RETURNING id, amount, method, client_code`,
-      [ctx.params.id, ctx.user!.id, ctx.user!.full_name, reason],
+        WHERE id = $1 AND voided_at IS NULL AND ${inBranch('branch_id', 5)} RETURNING id, amount, method, client_code`,
+      [ctx.params.id, ctx.user!.id, ctx.user!.full_name, reason, ctx.view],
     );
     if (!updated.rowCount) throw new HttpError(404, 'Operatsiya topilmadi yoki allaqachon bekor qilingan');
     await audit(db, ctx.user, 'payment_void', 'payment', ctx.params.id, { ...updated.rows[0], reason });
@@ -1051,8 +1090,8 @@ route('GET', '/summary', 'reports.view', async (ctx) => {
   const prevTo = addDays(from, -1);
   const prevFrom = addDays(prevTo, -(span - 1));
   const [totals, previous, byWorker, byDayRows, recent] = await Promise.all([
-    totalsFor(from, to),
-    totalsFor(prevFrom, prevTo),
+    totalsFor(from, to, ctx.view),
+    totalsFor(prevFrom, prevTo, ctx.view),
     query(
       `SELECT COALESCE(p.created_by::text, 'legacy:' || p.created_by_name) AS id,
               COALESCE(u.full_name, p.created_by_name) AS name,
@@ -1063,9 +1102,9 @@ route('GET', '/summary', 'reports.view', async (ctx) => {
               COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'pochta'), 0)::bigint AS pochta,
               COUNT(*)::bigint AS count
          FROM payments p LEFT JOIN app_users u ON u.id = p.created_by
-        WHERE p.voided_at IS NULL AND ${RANGE_SQL(1, 2)}
+        WHERE p.voided_at IS NULL AND ${RANGE_SQL(1, 2)} AND ${inBranch('p.branch_id', 3)}
         GROUP BY 1, 2 ORDER BY total DESC`,
-      [from, to],
+      [from, to, ctx.view],
     ),
     query(
       `SELECT (p.paid_at AT TIME ZONE '${TZ}')::date AS day,
@@ -1076,14 +1115,14 @@ route('GET', '/summary', 'reports.view', async (ctx) => {
               COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'pochta'), 0)::bigint AS pochta,
               COUNT(*)::bigint AS count
          FROM payments p
-        WHERE p.voided_at IS NULL AND ${RANGE_SQL(1, 2)}
+        WHERE p.voided_at IS NULL AND ${RANGE_SQL(1, 2)} AND ${inBranch('p.branch_id', 3)}
         GROUP BY 1 ORDER BY 1`,
-      [from, to],
+      [from, to, ctx.view],
     ),
     query(
       `SELECT ${PAYMENT_COLUMNS} FROM payments p LEFT JOIN clients c ON c.code = p.client_code
-        WHERE p.voided_at IS NULL AND ${RANGE_SQL(1, 2)} ORDER BY p.paid_at DESC, p.created_at DESC LIMIT 8`,
-      [from, to],
+        WHERE p.voided_at IS NULL AND ${RANGE_SQL(1, 2)} AND ${inBranch('p.branch_id', 3)} ORDER BY p.paid_at DESC, p.created_at DESC LIMIT 8`,
+      [from, to, ctx.view],
     ),
   ]);
   const byDayMap = new Map(byDayRows.map((r: any) => [r.day, r]));
@@ -1113,11 +1152,11 @@ route('GET', '/periods', 'reports.view', async (ctx) => {
             COUNT(DISTINCT p.client_code)::bigint AS clients,
             COUNT(DISTINCT (p.paid_at AT TIME ZONE '${TZ}')::date)::bigint AS active_days
        FROM payments p
-      WHERE p.voided_at IS NULL AND ${RANGE_SQL(1, 2)}
+      WHERE p.voided_at IS NULL AND ${RANGE_SQL(1, 2)} AND ${inBranch('p.branch_id', 3)}
       GROUP BY 1 ORDER BY 1 DESC`,
-    [from, to],
+    [from, to, ctx.view],
   );
-  return { group, from, to, rows, totals: await totalsFor(from, to) };
+  return { group, from, to, rows, totals: await totalsFor(from, to, ctx.view) };
 });
 
 // ---------- clients ----------
@@ -1134,11 +1173,11 @@ route('GET', '/clients', 'user', async (ctx) => {
   const sort = CLIENT_SORTS[ctx.query.sort || ''] ? ctx.query.sort! : 'active';
   const limit = Math.min(Math.max(Number(ctx.query.limit) || 50, 1), 200);
   const offset = Math.max(Number(ctx.query.offset) || 0, 0);
-  const params: unknown[] = [];
+  const params: unknown[] = [ctx.view];
   let where = '';
   if (term) {
     params.push(`%${term.replace(/[%_\\]/g, '\\$&')}%`);
-    where = `WHERE c.code ILIKE $1 OR COALESCE(c.full_name, '') ILIKE $1 OR COALESCE(c.phone, '') ILIKE $1`;
+    where = `WHERE c.code ILIKE $2 OR COALESCE(c.full_name, '') ILIKE $2 OR COALESCE(c.phone, '') ILIKE $2`;
   }
   const base = `
     SELECT c.code, c.full_name, c.phone,
@@ -1148,7 +1187,7 @@ route('GET', '/clients', 'user', async (ctx) => {
            COALESCE(SUM(p.amount) FILTER (WHERE p.method IN ('yandex', 'pochta')), 0)::bigint AS online,
            COUNT(p.id)::bigint AS count,
            MAX(p.paid_at) AS last_paid_at
-      FROM clients c LEFT JOIN payments p ON p.client_code = c.code AND p.voided_at IS NULL
+      FROM clients c LEFT JOIN payments p ON p.client_code = c.code AND p.voided_at IS NULL AND ${inBranch('p.branch_id', 1)}
       ${where}
      GROUP BY c.code`;
   const exactFirst = term ? `(upper(c.code) = upper($${params.length + 1})) DESC, ` : '';
@@ -1217,13 +1256,13 @@ route('GET', '/clients/:code', 'user', async (ctx) => {
               COALESCE(SUM(amount) FILTER (WHERE method = 'yandex'), 0)::bigint AS yandex,
               COALESCE(SUM(amount) FILTER (WHERE method = 'pochta'), 0)::bigint AS pochta,
               COUNT(*)::bigint AS count, MIN(paid_at) AS first_paid_at, MAX(paid_at) AS last_paid_at
-         FROM payments WHERE client_code = $1 AND voided_at IS NULL`,
-      [code],
+         FROM payments WHERE client_code = $1 AND voided_at IS NULL AND ${inBranch('branch_id', 2)}`,
+      [code, ctx.view],
     ),
     query(
       `SELECT ${PAYMENT_COLUMNS} FROM payments p LEFT JOIN clients c ON c.code = p.client_code
-        WHERE p.client_code = $1 ORDER BY p.paid_at DESC LIMIT 300`,
-      [code],
+        WHERE p.client_code = $1 AND ${inBranch('p.branch_id', 2)} ORDER BY p.paid_at DESC LIMIT 300`,
+      [code, ctx.view],
     ),
   ]);
   return { client: clients[0], stats: stats[0], payments };
@@ -1241,12 +1280,56 @@ route('PATCH', '/clients/:code', 'clients.edit', async (ctx) => {
   return { client: rows[0] };
 });
 
+// ---------- filiallar ----------
+
+// Every branch, and the ones this person may look at; the page shows a switcher when there is more than one.
+route('GET', '/branches', 'user', async (ctx) => ({
+  items: await allBranches(), mine: await branchesFor(ctx.user!), view: ctx.view,
+}));
+
+function branchName(value: unknown) {
+  const name = str(value, 40);
+  if (name.length < 2) throw new HttpError(400, 'Filial nomini yozing');
+  return name;
+}
+
+route('POST', '/branches', 'owner', async (ctx) => {
+  const name = branchName(ctx.body?.name);
+  const rows = await transaction(async (db) => {
+    await db.query('LOCK TABLE branches IN EXCLUSIVE MODE');
+    const dup = await db.query(`SELECT 1 FROM branches WHERE lower(name) = lower($1)`, [name]);
+    if (dup.rowCount) throw new HttpError(409, 'Bunday nomli filial bor');
+    const count = await db.query(`SELECT COUNT(*)::int AS n FROM branches`);
+    if (count.rows[0].n >= 20) throw new HttpError(400, 'Filiallar soni 20 tadan oshmaydi');
+    const inserted = await db.query(
+      `INSERT INTO branches (id, name) SELECT COALESCE(MAX(id), 0) + 1, $1 FROM branches RETURNING id::int, name`, [name],
+    );
+    await audit(db, ctx.user, 'branch_create', 'branch', String(inserted.rows[0].id), { name });
+    return inserted.rows;
+  });
+  branchCache = null;
+  return { status: 201, body: { branch: rows[0] } };
+});
+
+route('PATCH', '/branches/:id', 'owner', async (ctx) => {
+  const id = Number(ctx.params.id);
+  if (!Number.isInteger(id) || id < 1 || id > 32000) throw new HttpError(404, 'Filial topilmadi');
+  const name = branchName(ctx.body?.name);
+  const dup = await query(`SELECT 1 FROM branches WHERE lower(name) = lower($1) AND id <> $2`, [name, id]);
+  if (dup.length) throw new HttpError(409, 'Bunday nomli filial bor');
+  const rows = await query(`UPDATE branches SET name = $2 WHERE id = $1 RETURNING id::int, name`, [id, name]);
+  if (!rows.length) throw new HttpError(404, 'Filial topilmadi');
+  await audit(null, ctx.user, 'branch_rename', 'branch', String(id), { name });
+  branchCache = null;
+  return { branch: rows[0] };
+});
+
 // ---------- staff (admin) ----------
 
 route('GET', '/staff', 'staff.view', async (ctx) => {
   const { from, to } = parseRange(ctx.query, 0);
   const rows = await query(
-    `SELECT u.id, u.username, u.full_name, u.role, u.permissions, u.is_active, u.created_at, u.last_login_at,
+    `SELECT u.id, u.username, u.full_name, u.role, u.permissions, u.branches, u.is_active, u.created_at, u.last_login_at,
             COALESCE(SUM(p.amount), 0)::bigint AS total,
             COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'cash'), 0)::bigint AS cash,
             COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'card'), 0)::bigint AS card,
@@ -1254,10 +1337,10 @@ route('GET', '/staff', 'staff.view', async (ctx) => {
             COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'pochta'), 0)::bigint AS pochta,
             COUNT(p.id)::bigint AS count
        FROM app_users u
-       LEFT JOIN payments p ON p.created_by = u.id AND p.voided_at IS NULL AND ${RANGE_SQL(1, 2)}
+       LEFT JOIN payments p ON p.created_by = u.id AND p.voided_at IS NULL AND ${RANGE_SQL(1, 2)} AND ${inBranch('p.branch_id', 3)}
       GROUP BY u.id
       ORDER BY u.is_active DESC, total DESC, u.full_name`,
-    [from, to],
+    [from, to, ctx.view],
   );
   return { from, to, items: rows.map((u: any) => ({ ...u, permissions: permsOf(u.role, u.permissions) })) };
 });
@@ -1269,6 +1352,19 @@ function parsePermissions(value: unknown): Perm[] {
 }
 
 const parseRole = (value: unknown): Role => (value === 'owner' || value === 'admin' ? value : 'worker');
+
+/** Which branches a person sees: null = every one. Someone limited to some can hand out only those. */
+async function parseBranches(value: unknown, actor: AuthUser): Promise<number[] | null> {
+  const all = (await allBranches()).map((b) => b.id);
+  let ids = Array.isArray(value) ? [...new Set(value.map(Number))].filter((id) => all.includes(id)).sort((a, b) => a - b) : [];
+  if (ids.length === all.length) ids = [];
+  const mine = actor.role === 'owner' ? null : actor.branches?.length ? actor.branches : null;
+  if (mine) {
+    if (!ids.length) return [...mine];
+    if (ids.some((id) => !mine.includes(id))) throw new HttpError(403, 'Oʻzingizga ochilmagan filialni bera olmaysiz');
+  }
+  return ids.length ? ids : null;
+}
 
 // Only the owner manages admins and owners. Anyone else with staff.manage looks after workers
 // and can hand out only the rights they have themselves.
@@ -1289,12 +1385,13 @@ route('POST', '/staff', 'staff.manage', async (ctx) => {
   const passwordHash = await hashPassword(validatePassword(ctx.body?.password));
   const exists = await query(`SELECT 1 FROM app_users WHERE username = $1`, [username]);
   if (exists.length) throw new HttpError(409, 'Bu login band. Boshqa login tanlang');
+  const branches = role === 'owner' ? null : await parseBranches(ctx.body?.branches, ctx.user!);
   const rows = await query(
-    `INSERT INTO app_users (username, full_name, role, password_hash, permissions) VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, username, full_name, role, is_active, created_at`,
-    [username, fullName, role, passwordHash, permissions],
+    `INSERT INTO app_users (username, full_name, role, password_hash, permissions, branches) VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id, username, full_name, role, branches, is_active, created_at`,
+    [username, fullName, role, passwordHash, permissions, branches],
   );
-  await audit(null, ctx.user, 'staff_create', 'user', rows[0].id, { username, role, permissions });
+  await audit(null, ctx.user, 'staff_create', 'user', rows[0].id, { username, role, permissions, branches });
   return { status: 201, body: { staff: rows[0] } };
 });
 
@@ -1333,18 +1430,21 @@ route('PATCH', '/staff/:id', 'staff.manage', async (ctx) => {
     } else if (b.permissions !== undefined) set('permissions', permissions);
     else if (demoting) set('permissions', null);
     if (b.password !== undefined) set('password_hash', await hashPassword(validatePassword(b.password)));
+    if (role === 'owner') {
+      if (demoting || b.branches !== undefined) set('branches', null);
+    } else if (b.branches !== undefined) set('branches', await parseBranches(b.branches, ctx.user!));
     if (!sets.length) throw new HttpError(400, 'O‘zgartirish yo‘q');
     sets.push('updated_at = NOW()');
     const rows = await db.query(
       `UPDATE app_users SET ${sets.join(', ')} WHERE id = $1
-       RETURNING id, username, full_name, role, permissions, is_active, created_at, last_login_at`,
+       RETURNING id, username, full_name, role, permissions, branches, is_active, created_at, last_login_at`,
       params,
     );
     // Deactivation or password reset signs the person out everywhere.
     if (b.isActive === false || b.password !== undefined) await db.query(`DELETE FROM app_sessions WHERE user_id = $1`, [id]);
     await audit(db, ctx.user, 'staff_update', 'user', id, {
       fullName: b.fullName, role: b.role, isActive: b.isActive, passwordReset: b.password !== undefined,
-      permissions: b.permissions,
+      permissions: b.permissions, branches: b.branches,
     });
     const staff = rows.rows[0];
     return { staff: { ...staff, permissions: permsOf(staff.role, staff.permissions) } };
@@ -1422,9 +1522,9 @@ function parseAt(value: unknown, errors: Record<string, string>): string | null 
 // Every money movement per source: income (payments), expenses, signed adjustments.
 const LEDGER_SQL = `
   SELECT CASE WHEN method = 'cash' THEN 'cash' ELSE 'card' END AS source, method,
-         amount AS income, 0::bigint AS expense, 0::bigint AS adjustment, paid_at AS at FROM payments WHERE voided_at IS NULL
-  UNION ALL SELECT source, NULL, 0, amount, 0, spent_at FROM expenses WHERE voided_at IS NULL
-  UNION ALL SELECT CASE WHEN source = 'cash' THEN 'cash' ELSE 'card' END, NULL, 0, 0, amount, at FROM balance_adjustments`;
+         amount AS income, 0::bigint AS expense, 0::bigint AS adjustment, paid_at AS at, branch_id FROM payments WHERE voided_at IS NULL
+  UNION ALL SELECT source, NULL, 0, amount, 0, spent_at, branch_id FROM expenses WHERE voided_at IS NULL
+  UNION ALL SELECT CASE WHEN source = 'cash' THEN 'cash' ELSE 'card' END, NULL, 0, 0, amount, at, branch_id FROM balance_adjustments`;
 
 route('GET', '/balance', 'kassa', async (ctx) => {
   const date = ctx.query.date && DATE_RE.test(ctx.query.date) ? ctx.query.date : todayTashkent();
@@ -1442,18 +1542,18 @@ route('GET', '/balance', 'kassa', async (ctx) => {
               COALESCE(SUM(adjustment) FILTER (WHERE at >= ${start} AND at < ${end}), 0)::bigint AS adjustment,
               COALESCE(SUM(income - expense + adjustment) FILTER (WHERE at < ${end}), 0)::bigint AS closing,
               COALESCE(SUM(income - expense + adjustment), 0)::bigint AS current
-         FROM (${LEDGER_SQL}) l WHERE source = ANY($2::text[]) GROUP BY source`,
-      [date, allowed],
+         FROM (${LEDGER_SQL}) l WHERE source = ANY($2::text[]) AND ${inBranch('branch_id', 3)} GROUP BY source`,
+      [date, allowed, ctx.view],
     ),
     query(
       `SELECT id, amount, source, category, note, spent_at, created_by_name, voided_at, voided_by_name, void_reason
-         FROM expenses WHERE spent_at >= ${start} AND spent_at < ${end} AND source = ANY($2::text[]) ORDER BY spent_at DESC`,
-      [date, allowed],
+         FROM expenses WHERE spent_at >= ${start} AND spent_at < ${end} AND source = ANY($2::text[]) AND ${inBranch('branch_id', 3)} ORDER BY spent_at DESC`,
+      [date, allowed, ctx.view],
     ),
     query(
       `SELECT id, amount, source, note, at, created_by_name FROM balance_adjustments
-        WHERE at >= ${start} AND at < ${end} AND ${ACCOUNT_SQL('source')} = ANY($2::text[]) ORDER BY at DESC`,
-      [date, allowed],
+        WHERE at >= ${start} AND at < ${end} AND ${ACCOUNT_SQL('source')} = ANY($2::text[]) AND ${inBranch('branch_id', 3)} ORDER BY at DESC`,
+      [date, allowed, ctx.view],
     ),
     query(
       `SELECT (at AT TIME ZONE '${TZ}')::date AS day,
@@ -1466,9 +1566,9 @@ route('GET', '/balance', 'kassa', async (ctx) => {
               COALESCE(SUM(expense) FILTER (WHERE source = 'cash'), 0)::bigint AS cash_expense,
               COALESCE(SUM(expense) FILTER (WHERE source = 'card'), 0)::bigint AS card_expense
          FROM (${LEDGER_SQL}) l
-        WHERE at >= ($1::date - 13)::timestamp AT TIME ZONE '${TZ}' AND at < ${end} AND source = ANY($2::text[])
+        WHERE at >= ($1::date - 13)::timestamp AT TIME ZONE '${TZ}' AND at < ${end} AND source = ANY($2::text[]) AND ${inBranch('branch_id', 3)}
         GROUP BY 1 ORDER BY 1 DESC`,
-      [date, allowed],
+      [date, allowed, ctx.view],
     ),
   ]);
   const zero = { opening: 0, income: 0, income_yandex: 0, income_pochta: 0, expense: 0, adjustment: 0, closing: 0, current: 0 };
@@ -1499,31 +1599,31 @@ route('GET', '/balance/month', 'kassa', async (ctx) => {
     last = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
     if (last > today) last = today < first ? first : today;
   }
-  return balanceMonth(first, last, kassaSources(ctx.user!.permissions));
+  return balanceMonth(first, last, ctx.view, kassaSources(ctx.user!.permissions));
 });
 
-async function balanceMonth(first: string, last: string, sources: Array<'cash' | 'card'> = ['cash', 'card']) {
+async function balanceMonth(first: string, last: string, view: number[], sources: Array<'cash' | 'card'> = ['cash', 'card']) {
   const next = addDays(last, 1);
   const start = `($1::date)::timestamp AT TIME ZONE '${TZ}'`;
   const end = `($2::date)::timestamp AT TIME ZONE '${TZ}'`;
   const [opening, days, expenses, adjustments] = await Promise.all([
-    query(`SELECT source, COALESCE(SUM(income - expense + adjustment), 0)::bigint AS amount FROM (${LEDGER_SQL}) l WHERE at < ${start} AND source = ANY($2::text[]) GROUP BY source`, [first, sources]),
+    query(`SELECT source, COALESCE(SUM(income - expense + adjustment), 0)::bigint AS amount FROM (${LEDGER_SQL}) l WHERE at < ${start} AND source = ANY($2::text[]) AND ${inBranch('branch_id', 3)} GROUP BY source`, [first, sources, view]),
     query(
       `SELECT (at AT TIME ZONE '${TZ}')::date::text AS day, source,
               COALESCE(SUM(income), 0)::bigint AS income, COALESCE(SUM(expense), 0)::bigint AS expense,
               COALESCE(SUM(adjustment), 0)::bigint AS adjustment
-         FROM (${LEDGER_SQL}) l WHERE at >= ${start} AND at < ${end} AND source = ANY($3::text[]) GROUP BY 1, 2`,
-      [first, next, sources],
+         FROM (${LEDGER_SQL}) l WHERE at >= ${start} AND at < ${end} AND source = ANY($3::text[]) AND ${inBranch('branch_id', 4)} GROUP BY 1, 2`,
+      [first, next, sources, view],
     ),
     query(
       `SELECT id, amount, source, category, note, spent_at, created_by_name FROM expenses
-        WHERE voided_at IS NULL AND spent_at >= ${start} AND spent_at < ${end} AND source = ANY($3::text[]) ORDER BY spent_at`,
-      [first, next, sources],
+        WHERE voided_at IS NULL AND spent_at >= ${start} AND spent_at < ${end} AND source = ANY($3::text[]) AND ${inBranch('branch_id', 4)} ORDER BY spent_at`,
+      [first, next, sources, view],
     ),
     query(
       `SELECT id, amount, source, note, at, created_by_name FROM balance_adjustments
-        WHERE at >= ${start} AND at < ${end} AND ${ACCOUNT_SQL('source')} = ANY($3::text[]) ORDER BY at`,
-      [first, next, sources],
+        WHERE at >= ${start} AND at < ${end} AND ${ACCOUNT_SQL('source')} = ANY($3::text[]) AND ${inBranch('branch_id', 4)} ORDER BY at`,
+      [first, next, sources, view],
     ),
   ]);
   const open = Object.fromEntries(sources.map((src) => [src, Number(opening.find((r: any) => r.source === src)?.amount || 0)]));
@@ -1567,6 +1667,7 @@ route('POST', '/expenses/import', 'kassa', async (ctx) => {
     expenses.push({ date, source, category, amount, note, key: `${date}|${source}|${category}|${amount}`, row: index });
   });
   if (!expenses.length && !openings.size) return { status: 400, body: { error: 'Yaroqli qator topilmadi', errors: errors.slice(0, 50) } };
+  const branchId = ctx.branch();
 
   return transaction(async (db) => {
     let toAdd: typeof expenses = [];
@@ -1575,10 +1676,10 @@ route('POST', '/expenses/import', 'kassa', async (ctx) => {
       const existing = await db.query(
         `SELECT to_char(spent_at AT TIME ZONE '${TZ}', 'YYYY-MM-DD') || '|' || source || '|' || category || '|' || amount AS key, COUNT(*)::int AS n
            FROM expenses
-          WHERE voided_at IS NULL
+          WHERE voided_at IS NULL AND branch_id = $3
             AND spent_at >= ($1::date)::timestamp AT TIME ZONE '${TZ}' AND spent_at < ($2::date + 1)::timestamp AT TIME ZONE '${TZ}'
           GROUP BY 1`,
-        [dates[0], dates[dates.length - 1]],
+        [dates[0], dates[dates.length - 1], branchId],
       );
       const have = new Map<string, number>(existing.rows.map((r) => [r.key, r.n]));
       const seen = new Map<string, number>();
@@ -1593,8 +1694,8 @@ route('POST', '/expenses/import', 'kassa', async (ctx) => {
     for (const o of openings.values()) {
       const bal = await db.query(
         `SELECT COALESCE(SUM(income - expense + adjustment), 0)::bigint AS balance
-           FROM (${LEDGER_SQL}) l WHERE source = $1 AND at < ($2::date)::timestamp AT TIME ZONE '${TZ}'`,
-        [o.source, o.date],
+           FROM (${LEDGER_SQL}) l WHERE source = $1 AND branch_id = $3 AND at < ($2::date)::timestamp AT TIME ZONE '${TZ}'`,
+        [o.source, o.date, branchId],
       );
       const before = Number(bal.rows[0].balance);
       opening.push({ source: o.source, date: o.date, target: o.amount, before, adjustment: o.amount - before });
@@ -1609,17 +1710,17 @@ route('POST', '/expenses/import', 'kassa', async (ctx) => {
     // A second apart, so a day's expenses keep the order they had in the file.
     for (const [i, r] of toAdd.entries()) {
       await db.query(
-        `INSERT INTO expenses (amount, source, category, note, spent_at, created_by, created_by_name)
-         VALUES ($1, $2, $3, NULLIF($4, ''), ($5::date + time '12:00' + make_interval(secs => $8)) AT TIME ZONE '${TZ}', $6, $7)`,
-        [r.amount, r.source, r.category, r.note, r.date, ctx.user!.id, ctx.user!.full_name, i],
+        `INSERT INTO expenses (amount, source, category, note, spent_at, created_by, created_by_name, branch_id)
+         VALUES ($1, $2, $3, NULLIF($4, ''), ($5::date + time '12:00' + make_interval(secs => $8)) AT TIME ZONE '${TZ}', $6, $7, $9)`,
+        [r.amount, r.source, r.category, r.note, r.date, ctx.user!.id, ctx.user!.full_name, i, branchId],
       );
     }
     for (const o of opening) {
       if (!o.adjustment) continue;
       await db.query(
-        `INSERT INTO balance_adjustments (source, amount, note, at, created_by, created_by_name)
-         VALUES ($1, $2, $3, ($4::date)::timestamp AT TIME ZONE '${TZ}' - interval '1 second', $5, $6)`,
-        [o.source, o.adjustment, `Boshlangʻich qoldiq: ${o.target} soʻm (kassa daftaridan)`, o.date, ctx.user!.id, ctx.user!.full_name],
+        `INSERT INTO balance_adjustments (source, amount, note, at, created_by, created_by_name, branch_id)
+         VALUES ($1, $2, $3, ($4::date)::timestamp AT TIME ZONE '${TZ}' - interval '1 second', $5, $6, $7)`,
+        [o.source, o.adjustment, `Boshlangʻich qoldiq: ${o.target} soʻm (kassa daftaridan)`, o.date, ctx.user!.id, ctx.user!.full_name, branchId],
       );
     }
     await audit(db, ctx.user, 'expense_import', 'expense', null, { added: toAdd.length, total: summary.adding.total, opening });
@@ -1641,12 +1742,13 @@ route('POST', '/expenses', 'kassa', async (ctx) => {
   if (b.category === 'boshqa' && note.length < 3) errors.note = '“Boshqa” uchun izoh yozing';
   const at = parseAt(b.spentAt, errors);
   if (Object.keys(errors).length) return { status: 400, body: { error: 'Ma’lumotlarni tekshiring', fields: errors } };
+  const branchId = ctx.branch();
   const expense = await transaction(async (db) => {
     const inserted = await db.query(
-      `INSERT INTO expenses (amount, source, category, note, spent_at, created_by, created_by_name)
-       VALUES ($1, $2, $3, NULLIF($4, ''), COALESCE($5::timestamptz, NOW()), $6, $7)
+      `INSERT INTO expenses (amount, source, category, note, spent_at, created_by, created_by_name, branch_id)
+       VALUES ($1, $2, $3, NULLIF($4, ''), COALESCE($5::timestamptz, NOW()), $6, $7, $8)
        RETURNING id, amount, source, category, note, spent_at, created_by_name, voided_at`,
-      [amount, b.source, b.category, note, at, ctx.user!.id, ctx.user!.full_name],
+      [amount, b.source, b.category, note, at, ctx.user!.id, ctx.user!.full_name, branchId],
     );
     await audit(db, ctx.user, 'expense_create', 'expense', inserted.rows[0].id, { amount, source: b.source, category: b.category });
     return inserted.rows[0];
@@ -1662,8 +1764,8 @@ route('POST', '/expenses/:id/void', 'kassa', async (ctx) => {
   const expense = await transaction(async (db) => {
     const updated = await db.query(
       `UPDATE expenses SET voided_at = NOW(), voided_by_name = $2, void_reason = $3
-        WHERE id = $1 AND voided_at IS NULL AND source = ANY($4::text[]) RETURNING id, amount, source, category`,
-      [ctx.params.id, ctx.user!.full_name, reason, kassaSources(ctx.user!.permissions)],
+        WHERE id = $1 AND voided_at IS NULL AND source = ANY($4::text[]) AND ${inBranch('branch_id', 5)} RETURNING id, amount, source, category`,
+      [ctx.params.id, ctx.user!.full_name, reason, kassaSources(ctx.user!.permissions), ctx.view],
     );
     if (!updated.rowCount) throw new HttpError(404, 'Rasxod topilmadi yoki allaqachon bekor qilingan');
     await audit(db, ctx.user, 'expense_void', 'expense', ctx.params.id, { ...updated.rows[0], reason });
@@ -1689,12 +1791,13 @@ route('POST', '/adjustments', 'kassa', async (ctx) => {
   if (note.length < 3) errors.note = 'Sababini yozing';
   const at = parseAt(b.at, errors);
   if (Object.keys(errors).length) return { status: 400, body: { error: 'Ma’lumotlarni tekshiring', fields: errors } };
+  const branchId = ctx.branch();
   const adjustment = await transaction(async (db) => {
     const inserted = await db.query(
-      `INSERT INTO balance_adjustments (source, amount, note, at, created_by, created_by_name)
-       VALUES ($1, $2, $3, COALESCE($4::timestamptz, NOW()), $5, $6)
+      `INSERT INTO balance_adjustments (source, amount, note, at, created_by, created_by_name, branch_id)
+       VALUES ($1, $2, $3, COALESCE($4::timestamptz, NOW()), $5, $6, $7)
        RETURNING id, source, amount, note, at, created_by_name`,
-      [b.source, amount, note, at, ctx.user!.id, ctx.user!.full_name],
+      [b.source, amount, note, at, ctx.user!.id, ctx.user!.full_name, branchId],
     );
     await audit(db, ctx.user, 'balance_adjust', 'adjustment', inserted.rows[0].id, { source: b.source, amount, note });
     return inserted.rows[0];
@@ -1964,7 +2067,7 @@ async function dailyReportText(date: string): Promise<string | null> {
   const start = `($1::date)::timestamp AT TIME ZONE '${TZ}'`;
   const end = `($1::date + 1)::timestamp AT TIME ZONE '${TZ}'`;
   const [totals, voided, expenses, balance] = await Promise.all([
-    totalsFor(date, date),
+    totalsFor(date, date, (await allBranches()).map((b) => b.id)),
     query(`SELECT COUNT(*)::int AS n, COALESCE(SUM(amount), 0)::bigint AS total FROM payments
             WHERE voided_at >= ${start} AND voided_at < ${end}`, [date]),
     query(`SELECT COALESCE(SUM(amount), 0)::bigint AS total FROM expenses
@@ -2021,7 +2124,7 @@ async function reportWorkbooks(from: string, to: string) {
   // Rows go through JSON so dates are ISO strings, exactly as the browser gets them.
   const plain = <T,>(value: unknown) => JSON.parse(JSON.stringify(value)) as T;
   const [month, payments] = await Promise.all([
-    balanceMonth(from, to),
+    balanceMonth(from, to, (await allBranches()).map((b) => b.id)),
     query(`SELECT ${PAYMENT_COLUMNS} FROM payments p LEFT JOIN clients c ON c.code = p.client_code
             WHERE ${RANGE_SQL(1, 2)} ORDER BY p.paid_at`, [from, to]),
   ]);

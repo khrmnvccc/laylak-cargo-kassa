@@ -424,7 +424,27 @@ CREATE INDEX IF NOT EXISTS broadcasts_due ON broadcasts (send_at) WHERE status =
 ALTER TABLE broadcasts ENABLE ROW LEVEL SECURITY;
 `;
 
-const SCHEMA_VERSION = 16;
+// Filiallar: each branch keeps its own money (payments, expenses, corrections, orders, receipts); clients
+// stay shared. Everything there is now belongs to branch 1. A person's branches: NULL = all of them.
+const SCHEMA_V17_SQL = `
+CREATE TABLE IF NOT EXISTS branches (
+  id SMALLINT PRIMARY KEY,
+  name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 40),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE branches ENABLE ROW LEVEL SECURITY;
+INSERT INTO branches (id, name) VALUES (1, 'Asosiy filial') ON CONFLICT (id) DO NOTHING;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS branch_id SMALLINT NOT NULL DEFAULT 1 REFERENCES branches(id);
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS branch_id SMALLINT NOT NULL DEFAULT 1 REFERENCES branches(id);
+ALTER TABLE balance_adjustments ADD COLUMN IF NOT EXISTS branch_id SMALLINT NOT NULL DEFAULT 1 REFERENCES branches(id);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS branch_id SMALLINT NOT NULL DEFAULT 1 REFERENCES branches(id);
+ALTER TABLE receipts ADD COLUMN IF NOT EXISTS branch_id SMALLINT NOT NULL DEFAULT 1 REFERENCES branches(id);
+CREATE INDEX IF NOT EXISTS payments_branch ON payments (branch_id, paid_at);
+CREATE INDEX IF NOT EXISTS expenses_branch ON expenses (branch_id, spent_at);
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS branches SMALLINT[];
+`;
+
+const SCHEMA_VERSION = 17;
 
 export function ensureSchema(): Promise<void> {
   if (!globalForPool.__kassaSchema) {
@@ -468,6 +488,7 @@ async function migrate() {
       if (current < 14) await client.query(SCHEMA_V14_SQL);
       if (current < 15) await client.query(SCHEMA_V15_SQL);
       if (current < 16) await client.query(SCHEMA_V16_SQL);
+      if (current < 17) await client.query(SCHEMA_V17_SQL);
       await client.query(
         `INSERT INTO app_meta (key, value) VALUES ('schema_version', $1::jsonb)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,

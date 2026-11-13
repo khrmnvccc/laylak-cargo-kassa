@@ -11,10 +11,15 @@ process.env.ADMIN_SETUP_KEY ||= 'test-key';
 
 class Client {
   cookie = '';
+  /** The branch picked at the top of the page (x-branch); 0 = all. */
+  branch = 0;
   async call(method: string, path: string, body?: unknown, query: Record<string, string> = {}) {
     const res = await handleApi({
       method, path, query, body: body ?? {},
-      headers: { cookie: this.cookie, host: 'kassa.test', origin: 'https://kassa.test', 'user-agent': 'test' },
+      headers: {
+        cookie: this.cookie, host: 'kassa.test', origin: 'https://kassa.test', 'user-agent': 'test',
+        ...(this.branch ? { 'x-branch': String(this.branch) } : {}),
+      },
     });
     for (const c of res.cookies || []) this.cookie = c.split(';')[0];
     return res as { status: number; body: any };
@@ -1324,4 +1329,75 @@ test('rights for orders and the kassa, older rights carried over, and page setti
   assert.equal(saved.status, 200);
   assert.deepEqual(saved.body.pages, { clients: { who: 'boss', label: 'Mijozlar roʻyxati' }, daily: { paused: true } });
   assert.deepEqual((await cashier.call('GET', '/pages')).body.pages, saved.body.pages);
+});
+
+test('branches: each keeps its own money and kassa, clients are shared, staff see the branches given', async () => {
+  const owner = new Client();
+  assert.equal((await owner.call('POST', '/auth/login', { username: 'admin', password: 'password123' })).status, 200);
+  const one = (await owner.call('GET', '/branches')).body;
+  assert.equal(one.items.length, 1);
+  assert.deepEqual(one.mine, [1]);
+  const day = '2026-11-10';
+  const before = (await owner.call('GET', '/summary', undefined, { from: day, to: day })).body.totals;
+  // With one branch nothing changes: writes go to it without picking.
+  const p1 = await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'FIL-1', amount: 70000, method: 'cash', paidAt: `${day}T10:00` });
+  assert.equal(p1.status, 201, JSON.stringify(p1.body));
+
+  const made = await owner.call('POST', '/branches', { name: 'Chilonzor' });
+  assert.equal(made.status, 201);
+  const b2 = made.body.branch.id;
+  assert.equal(b2, 2);
+  assert.equal((await owner.call('POST', '/branches', { name: 'chilonzor' })).status, 409);
+  assert.equal((await owner.call('PATCH', `/branches/${b2}`, { name: 'Chilonzor filiali' })).body.branch.name, 'Chilonzor filiali');
+
+  // Two branches and "all" picked: reading sums both, writing asks to pick one.
+  const noPick = await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'FIL-1', amount: 5000, method: 'cash' });
+  assert.equal(noPick.status, 400);
+  assert.match(noPick.body.error, /filialni tanlang/);
+  owner.branch = b2;
+  const p2 = await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'FIL-1', amount: 30000, method: 'card', paidAt: `${day}T11:00` });
+  assert.equal(p2.status, 201);
+  assert.equal(p2.body.payment.branch_id, b2);
+  assert.equal((await owner.call('POST', '/expenses', { amount: 4000, source: 'cash', category: 'paket' })).status, 201);
+
+  const sum = async (c: Client) => Number((await c.call('GET', '/summary', undefined, { from: day, to: day })).body.totals.total);
+  assert.equal(await sum(owner), 30000, 'branch 2 sees only its own');
+  owner.branch = 1;
+  assert.equal(await sum(owner), Number(before.total) + 70000);
+  owner.branch = 0;
+  assert.equal(await sum(owner), Number(before.total) + 100000, 'all branches together');
+  owner.branch = b2;
+  const bal = (await owner.call('GET', '/balance')).body.sources;
+  assert.equal(bal.find((s: any) => s.source === 'cash').current, -4000, 'branch 2 kassa: only its expense');
+
+  // Clients are shared; their totals follow the branch looked at.
+  const client = (await owner.call('GET', '/clients/FIL-1')).body;
+  assert.equal(Number(client.stats.total), 30000);
+  owner.branch = 0;
+  assert.equal(Number((await owner.call('GET', '/clients/FIL-1')).body.stats.total), 100000);
+
+  // A worker limited to branch 2 sees only it, writes there without picking, and cannot touch branch 1.
+  const r = await owner.call('POST', '/staff', { username: 'chilonzor', fullName: 'Chilonzor kassir', password: 'worker123', role: 'worker',
+    permissions: ['payments.create', 'reports.view', 'payments.void'], branches: [b2] });
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  assert.deepEqual(r.body.staff.branches, [b2]);
+  const w = new Client();
+  await w.call('POST', '/auth/login', { username: 'chilonzor', password: 'worker123' });
+  assert.deepEqual((await w.call('GET', '/branches')).body.mine, [b2]);
+  assert.equal(await sum(w), 30000);
+  w.branch = 1;
+  assert.equal(await sum(w), 30000, 'picking a branch not given is ignored');
+  const wp = await w.call('POST', '/payments', { photos: PHOTOS, clientCode: 'FIL-2', amount: 1000, method: 'cash' });
+  assert.equal(wp.status, 201);
+  assert.equal(wp.body.payment.branch_id, b2);
+  assert.equal((await w.call('POST', `/payments/${p1.body.payment.id}/void`, { reason: 'boshqa filial' })).status, 404, 'cannot cancel in another branch');
+  assert.equal((await w.call('POST', '/branches', { name: 'Yunusobod' })).status, 403);
+
+  // Staff: giving every branch stores null; the evening report still counts every branch.
+  const id = r.body.staff.id;
+  const all = await owner.call('PATCH', `/staff/${id}`, { branches: [1, b2] });
+  assert.equal(all.body.staff.branches, null);
+  assert.equal((await owner.call('PATCH', `/staff/${id}`, { branches: [b2] })).body.staff.branches.join(), String(b2));
+  const listed = (await owner.call('GET', '/staff')).body.items.find((u: any) => u.id === id);
+  assert.deepEqual(listed.branches, [b2]);
 });
