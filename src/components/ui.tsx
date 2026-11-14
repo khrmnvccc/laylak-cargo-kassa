@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ButtonHTMLAttributes, type ComponentProps, type ReactNode, type SelectHTMLAttributes } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertCircle, ArrowDownRight, ArrowUpRight, CheckCircle2, ChevronDown, Inbox, Loader2, Minus, MoreHorizontal, RefreshCw, X } from 'lucide-react';
+import { useCardMethods, useFold, useShownMethod } from '../lib/methods';
 import { CARD_METHODS, cardTotal, isCardMethod, methodColor, methodLabel, money, percentChange } from '../lib/format';
 
 export const cx = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
@@ -158,10 +159,14 @@ export function StatCard({ label, value, previous, hint, accent, loading, format
 type MethodSums = { cash: number; card: number; yandex: number; pochta: number };
 
 /** What the Karta total is made of: plain card, Yandex and Pochta. */
-export function CardBreakdown({ t, p, className }: { t?: MethodSums | null; p?: MethodSums | null; className?: string }) {
+export function CardBreakdown({ t: rawT, p: rawP, className }: { t?: MethodSums | null; p?: MethodSums | null; className?: string }) {
+  // Yandex / Pochta hidden on this page by the owner are counted inside plain card.
+  const fold = useFold();
+  const methods = useCardMethods();
+  const t = fold(rawT), p = fold(rawP);
   return (
-    <div className={cx('anim-rise grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-line bg-line', className)}>
-      {CARD_METHODS.map((m) => (
+    <div className={cx('anim-rise grid gap-px overflow-hidden rounded-xl border border-line bg-line', methods.length === 3 ? 'grid-cols-3' : methods.length === 2 ? 'grid-cols-2' : 'grid-cols-1', className)}>
+      {methods.map((m) => (
         <div key={m.value} className="min-w-0 bg-surface px-3 py-2.5 sm:px-4">
           <div className="flex items-center gap-1.5 text-xs text-ink-3"><span className="size-1.5 rounded-full" style={{ background: m.color }} />{m.label}</div>
           <div className="mt-0.5 text-[13px] font-semibold leading-snug text-ink num sm:text-base">{money(t?.[m.value] || 0)}</div>
@@ -177,11 +182,12 @@ export function MethodStatCards({ t, p, loading, total }: { t?: MethodSums | nul
   const [open, setOpen] = useState(false);
   const card = cardTotal(t);
   const share = (v: number) => (total ? `${Math.round((v / total) * 100)}% ulush` : undefined);
+  const extras = useCardMethods().filter((m) => m.value !== 'card').map((m) => m.label);
   return (
     <>
       <StatCard label="Naqd" accent="var(--cash)" value={t?.cash || 0} previous={p ? p.cash : undefined} loading={loading} hint={share(t?.cash || 0)} />
       <StatCard label="Karta" accent="var(--card)" value={card} previous={p ? cardTotal(p) : undefined} loading={loading}
-        hint={open ? 'Yopish uchun bosing' : [share(card), 'Yandex, Pochta ichida'].filter(Boolean).join(' · ')} onClick={() => setOpen((o) => !o)} expanded={open} />
+        hint={open ? 'Yopish uchun bosing' : [share(card), extras.length ? `${extras.join(', ')} ichida` : ''].filter(Boolean).join(' · ')} onClick={() => setOpen((o) => !o)} expanded={open} />
       {open && <CardBreakdown t={t} p={p} className="col-span-full" />}
     </>
   );
@@ -189,6 +195,7 @@ export function MethodStatCards({ t, p, loading, total }: { t?: MethodSums | nul
 
 /** Table header cells: Naqd, Karta (tap to show its Karta / Yandex / Pochta columns). */
 export function MethodHeads({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  const methods = useCardMethods();
   return (
     <>
       <th className={cx(th, 'text-right')}>Naqd</th>
@@ -197,18 +204,20 @@ export function MethodHeads({ open, onToggle }: { open: boolean; onToggle: () =>
           Karta<ChevronDown className={cx('size-3.5 transition-transform', open && 'rotate-180')} />
         </button>
       </th>
-      {open && CARD_METHODS.map((m) => <th key={m.value} className={cx(th, 'bg-surface-2 text-right font-normal')}>{m.value === 'card' ? 'shundan karta' : m.label}</th>)}
+      {open && methods.map((m) => <th key={m.value} className={cx(th, 'bg-surface-2 text-right font-normal')}>{m.value === 'card' ? 'shundan karta' : m.label}</th>)}
     </>
   );
 }
 
-export function MethodCells({ row, open, bold }: { row?: MethodSums | null; open: boolean; bold?: boolean }) {
+export function MethodCells({ row: rawRow, open, bold }: { row?: MethodSums | null; open: boolean; bold?: boolean }) {
+  const methods = useCardMethods();
+  const row = useFold()(rawRow);
   const cls = cx(td, 'text-right num', bold && 'font-semibold');
   return (
     <>
       <td className={cls}>{money(row?.cash || 0)}</td>
       <td className={cls}>{money(cardTotal(row))}</td>
-      {open && CARD_METHODS.map((m) => <td key={m.value} className={cx(td, 'bg-surface-2/50 text-right text-ink-2 num', bold && 'font-semibold')}>{money(row?.[m.value] || 0)}</td>)}
+      {open && methods.map((m) => <td key={m.value} className={cx(td, 'bg-surface-2/50 text-right text-ink-2 num', bold && 'font-semibold')}>{money(row?.[m.value] || 0)}</td>)}
     </>
   );
 }
@@ -292,7 +301,8 @@ export function Badge({ children, tone = 'neutral', className }: { children: Rea
   return <span className={cx('inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-xs font-medium whitespace-nowrap', tones[tone], className)}>{children}</span>;
 }
 
-export function MethodBadge({ method }: { method: string }) {
+export function MethodBadge({ method: raw }: { method: string }) {
+  const method = useShownMethod()(raw);
   return (
     <Badge tone={method === 'cash' ? 'cash' : isCardMethod(method) ? 'card' : 'neutral'}>
       <span className="size-1.5 rounded-full" style={{ background: methodColor(method) }} />

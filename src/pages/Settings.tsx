@@ -7,13 +7,15 @@ import { TEMPLATE_BY_KEY, type TemplateKey } from '../lib/tgTemplates';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { clearApiCache, useApi } from '../lib/live';
-import { dateTime, groupDigits, money } from '../lib/format';
+import { dateTime, groupDigits, methodColor, money } from '../lib/format';
 import { useTheme, type ThemePref } from '../lib/theme';
 import type { User } from '../lib/types';
-import { Alert, Badge, Button, Card, CardHeader, ErrorState, Field, Input, Modal, PageHeader, Segmented, SkeletonRows, useToast } from '../components/ui';
+import { Alert, Badge, Button, Card, CardHeader, ErrorState, Field, Input, Modal, PageHeader, Segmented, SkeletonRows, cx, useToast } from '../components/ui';
 import { isBoss, roleLabel } from '../lib/perms';
 import { NAV } from '../components/Layout';
 import { Toggle } from '../components/TelegramTemplates';
+import { EXTRA_METHODS, METHOD_PLACES, cleanMethods, type ExtraMethod, type MethodPlace, type MethodRule, type MethodSettings } from '../lib/methodsConfig';
+import { setMethods, useMethodSettings } from '../lib/methods';
 import { ALWAYS_OPEN, MAX_PAGE_LABEL, type PageKey, type PageSetting, type PageSettings, type PageWho } from '../lib/pageConfig';
 import { setPageSettings } from '../lib/perms';
 import { useLive } from '../lib/live';
@@ -23,7 +25,7 @@ const ACTIONS: Record<string, string> = {
   staff_create: 'Xodim qoʻshdi', staff_update: 'Xodimni oʻzgartirdi', client_update: 'Mijozni oʻzgartirdi', password_change: 'Parolini oʻzgartirdi',
   client_import: 'Mijozlar roʻyxatini yukladi', expense_create: 'Rasxod yozdi', expense_void: 'Rasxodni bekor qildi', balance_adjust: 'Qoldiqni tuzatdi',
   telegram_set: 'Telegram botni kiritdi', telegram_connect: 'Telegramni uladi', telegram_remove: 'Telegramni uzdi', telegram_group: 'Telegram guruhini uladi', telegram_group_remove: 'Telegram guruhini uzdi', telegram_group_pause: 'Guruhga yuborishni toʻxtatdi', telegram_group_resume: 'Guruhga yuborishni qayta yoqdi', backup_download: 'Zaxirani yuklab oldi', payment_import: 'Toʻlovlarni Exceldan yukladi', expense_import: 'Kassa daftarini yukladi', attendance_edit: 'Davomatni tuzatdi', office_set: 'Ishxona joyini belgiladi', office_clear: 'Ishxona joyini olib tashladi', order_create: 'Stiker yaratdi', order_import: 'Buyurtmalar roʻyxatini yukladi', receipt_confirm: 'Chekdan toʻlov kiritdi', telegram_template_on: 'Telegram xabarini yoqdi', telegram_template_off: 'Telegram xabarini oʻchirdi', telegram_template: 'Telegram xabar matnini oʻzgartirdi', telegram_group_kinds: 'Guruhga boradigan xabarlarni tanladi', telegram_template_chats: 'Xabar qayerga borishini oʻzgartirdi', pages_set: 'Oynalar sozlamasini oʻzgartirdi', telegram_person_link: 'Oʻz Telegramini uladi', telegram_person_unlink: 'Telegramni uzdi', telegram_personal_pause: 'Shaxsiy chatga yuborishni toʻxtatdi', telegram_personal_resume: 'Shaxsiy chatga yuborishni qayta yoqdi', data_reset: 'Barcha maʼlumotlarni tozaladi',
-  brand_set: 'Sayt nomi va dizaynini oʻzgartirdi', branch_create: 'Yangi filial ochdi', branch_rename: 'Filial nomini oʻzgartirdi',
+  brand_set: 'Sayt nomi va dizaynini oʻzgartirdi', methods_set: 'Yandex va Pochta sozlamasini oʻzgartirdi', branch_create: 'Yangi filial ochdi', branch_rename: 'Filial nomini oʻzgartirdi',
   order_issue: 'Tovarni berdi', order_unissue: 'Tovarni omborga qaytardi', order_delete: 'Stikerni oʻchirdi', order_prepaid: 'Buyurtmani oldin toʻlangan deb belgiladi', order_unprepaid: 'Oldin toʻlangan belgisini olib tashladi',
 };
 
@@ -39,6 +41,7 @@ export default function Settings() {
         {user.role !== 'owner' && <MyTelegram />}
         {isBoss(user) && <SystemInfo />}
         {user.role === 'owner' && <BrandCard />}
+        {user.role === 'owner' && <MethodsCard />}
         {user.role === 'owner' && <BranchesCard />}
         {user.role === 'owner' && <PagesCard />}
         {user.role === 'owner' && <BackupCard />}
@@ -451,6 +454,81 @@ function BrandCard() {
             <div className="mt-3 text-sm text-primary">Havola shunday koʻrinadi</div>
           </div>
         </div>
+      </div>
+      {error && <div className="px-5 pb-4"><Alert>{error}</Alert></div>}
+    </Card>
+  );
+}
+
+/** Owner only: Yandex and Pochta on or off for new payments, and where each is shown by name. */
+function MethodsCard() {
+  const saved = useMethodSettings();
+  const toast = useToast();
+  const [draft, setDraft] = useState<MethodSettings | null>(null);
+  const m = draft ?? saved;
+  const changed = draft !== null && JSON.stringify(cleanMethods(draft)) !== JSON.stringify(saved);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const edit = (k: ExtraMethod, change: Partial<MethodRule>) => setDraft((d) => { const cur = d ?? saved; return { ...cur, [k]: { ...cur[k], ...change } }; });
+  const toggleShown = (k: ExtraMethod, place: MethodPlace, shown: boolean) =>
+    edit(k, { hidden: shown ? m[k].hidden.filter((p) => p !== place) : [...m[k].hidden, place] });
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api<{ methods: MethodSettings }>('/methods', { method: 'PUT', body: { methods: m } });
+      setMethods(res.methods);
+      setDraft(null);
+      toast({ tone: 'success', title: 'Toʻlov usullari saqlandi' });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card className="xl:col-span-2" padded={false}>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3.5 sm:px-5">
+        <div>
+          <h3 className="text-[15px] font-semibold tracking-tight text-ink">Toʻlov usullari</h3>
+          <p className="mt-0.5 text-[13px] text-ink-3">Yandex va Pochtani istalgan payt yoqing yoki oʻchiring va qaysi sahifalarda alohida koʻrinishini tanlang. Yashirilgan joyda ularning summasi “Karta” ichida koʻrsatiladi, jami oʻzgarmaydi.</p>
+        </div>
+        <div className="flex gap-2">
+          {changed && <Button size="sm" variant="ghost" onClick={() => setDraft(null)} disabled={busy}>Bekor</Button>}
+          <Button size="sm" variant="primary" loading={busy} disabled={!changed} onClick={save}>Saqlash</Button>
+        </div>
+      </div>
+      <div className="grid gap-4 p-4 sm:p-5 md:grid-cols-2">
+        {EXTRA_METHODS.map((k) => {
+          const rule = m[k];
+          return (
+            <div key={k} className={cx('rounded-xl border border-line p-4 transition-opacity', !rule.active && 'bg-surface-2/50')}>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <span className="size-2.5 rounded-full" style={{ background: methodColor(k) }} />
+                  <span className="text-[15px] font-semibold text-ink">{k === 'yandex' ? 'Yandex' : 'Pochta'}</span>
+                  <Badge tone={rule.active ? 'success' : 'neutral'}>{rule.active ? 'Faol' : 'Nofaol'}</Badge>
+                </div>
+                <Toggle on={rule.active} label={`${k === 'yandex' ? 'Yandex' : 'Pochta'} faol`} onChange={(on) => edit(k, { active: on })} />
+              </div>
+              <p className="mt-1.5 text-xs text-ink-3">{rule.active ? 'Yangi toʻlovda tanlash mumkin.' : 'Yangi toʻlovda chiqmaydi. Eski toʻlovlar hisobda qoladi.'}</p>
+              <div className="mt-3 text-[11px] font-medium uppercase tracking-[0.08em] text-ink-3">Alohida koʻrinadigan joylar</div>
+              <div className="mt-1.5 grid gap-1">
+                {METHOD_PLACES.map((pl) => {
+                  const shown = !rule.hidden.includes(pl.value);
+                  return (
+                    <label key={pl.value} className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm text-ink-2 hover:bg-surface-2">
+                      <input type="checkbox" className="size-4 accent-[var(--primary)]" checked={shown} onChange={(e) => toggleShown(k, pl.value, e.target.checked)} />
+                      {pl.label}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
       </div>
       {error && <div className="px-5 pb-4"><Alert>{error}</Alert></div>}
     </Card>

@@ -3,7 +3,8 @@ import { OPERATIONS_PAGE_SIZE } from '../lib/prefetch';
 import { ChevronDown, ChevronLeft, ChevronRight, Download, Search, Upload, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { useApi } from '../lib/live';
-import { CARD_METHODS, cardTotal, methodLabel, money, rangeLabel } from '../lib/format';
+import { useCardMethods } from '../lib/methods';
+import { cardTotal, methodLabel, money, rangeLabel } from '../lib/format';
 import { downloadOtchyotXlsx } from '../lib/excel';
 import type { Method, Payment, PaymentList, Summary } from '../lib/types';
 import { DateRangePicker, presetRange, type Range } from '../components/DateRange';
@@ -22,6 +23,7 @@ export default function Operations({ params }: { params: URLSearchParams }) {
   const { user } = useAuth();
   const [range, setRange] = useState<Range>(() => presetRange(params.get('client') ? '30d' : '7d'));
   const [method, setMethod] = useState<'all' | 'card_all' | Method>('all');
+  const cardMethods = useCardMethods();
   const [cardOpen, setCardOpen] = useState(false);
   const [worker, setWorker] = useState('');
   const [status, setStatus] = useState<'active' | 'voided' | 'all'>('active');
@@ -93,9 +95,9 @@ export default function Operations({ params }: { params: URLSearchParams }) {
             <DateRangePicker value={range} onChange={setRange} />
             <Segmented value={method === 'cash' || method === 'all' ? method : 'card_all'} onChange={setMethod}
               options={[{ value: 'all', label: 'Hammasi' }, { value: 'cash', label: 'Naqd' }, { value: 'card_all', label: 'Karta' }]} />
-            {method !== 'all' && method !== 'cash' && (
+            {method !== 'all' && method !== 'cash' && cardMethods.length > 1 && (
               <Segmented value={method} onChange={setMethod}
-                options={[{ value: 'card_all', label: 'Barchasi' }, ...CARD_METHODS.map((m) => ({ value: m.value, label: m.label }))]} />
+                options={[{ value: 'card_all', label: 'Barchasi' }, ...cardMethods.map((m) => ({ value: m.value, label: m.label }))]} />
             )}
             <Select value={worker} onChange={(e) => setWorker(e.target.value)} className="w-auto min-w-[150px]" aria-label="Ishchi">
               <option value="">Barcha ishchilar</option>

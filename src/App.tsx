@@ -9,6 +9,7 @@ import { useTheme } from './lib/theme';
 import { canSee, homePage, isPaused, setPageSettings } from './lib/perms';
 import { useApi } from './lib/live';
 import { setBrand } from './lib/brand';
+import { setMethods } from './lib/methods';
 import { Effects } from './components/Effects';
 import { BranchContext, currentBranch, saveBranch, type Branch } from './lib/branch';
 import type { PageSettings } from './lib/pageConfig';
@@ -190,6 +191,8 @@ function Branches({ current, onPick, children }: { current: number; onPick: (id:
 function Pages({ user, route, onLogout }: { user: User; route: Route; onLogout: () => void }) {
   const { data } = useApi<{ pages: PageSettings }>('/pages');
   setPageSettings(data?.pages);
+  const methods = useApi<{ methods: unknown }>('/methods');
+  useEffect(() => { if (methods.data) setMethods(methods.data.methods); }, [methods.data]);
   const page = canSee(user, route.page) ? route.page : homePage(user);
   const PageComponent = pages[page];
   const paused = isPaused(page);

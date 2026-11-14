@@ -31,6 +31,7 @@ import { EXPENSE_LABELS } from '../src/lib/excelSheets.js';
 import { MAX_TEMPLATE_LENGTH, STAFF_TEMPLATES, TEMPLATE_BY_KEY, renderTemplate, sampleValues, type TemplateKey } from '../src/lib/tgTemplates.js';
 import { DEFAULT_PAGE_SETTINGS, cleanPageSettings } from '../src/lib/pageConfig.js';
 import { cleanBrand } from '../src/lib/brandConfig.js';
+import { cleanMethods, type ExtraMethod } from '../src/lib/methodsConfig.js';
 import { kassaXlsx, otchyotXlsx } from '../src/lib/kassaBooks.js';
 import type { BalanceMonth, Payment } from '../src/lib/types.js';
 import { orderKey } from '../src/lib/orderImport.js';
@@ -133,6 +134,18 @@ function sameOrigin(headers: Record<string, string | undefined>): boolean {
 // ---------- helpers ----------
 
 const METHODS = ['cash', 'card', 'yandex', 'pochta'];
+
+/** Yandex / Pochta switches from Sozlamalar; read fresh on each payment (one tiny row). */
+async function methodSettings() {
+  const rows = await query(`SELECT value FROM app_meta WHERE key = 'methods'`);
+  return cleanMethods(rows[0]?.value);
+}
+/** A new payment may not use a method the owner switched off. Imports of old books still may. */
+async function methodAllowed(method: string) {
+  if (method !== 'yandex' && method !== 'pochta') return true;
+  return (await methodSettings())[method as ExtraMethod].active;
+}
+const METHOD_OFF = 'Bu toʻlov usuli hozir oʻchirilgan. Sozlamalarda yoqish mumkin';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -344,6 +357,7 @@ route('POST', '/payments', 'payments.create', async (ctx) => {
   if (!Number.isInteger(amount) || amount <= 0) errors.amount = 'Summa musbat butun son bo‘lishi kerak';
   else if (amount > 10_000_000_000) errors.amount = 'Summa juda katta';
   if (!METHODS.includes(method)) errors.method = 'To‘lov turini tanlang';
+  else if (!(await methodAllowed(method))) errors.method = METHOD_OFF;
   // Every payment comes with a picture of the client's orders; it goes to the admin on Telegram.
   const photos = (Array.isArray(b.photos) ? b.photos : []).slice(0, 4).map(photoFromDataUrl);
   if (!photos.length) errors.photos = 'Buyurtmalar rasmini yuklang';
@@ -664,6 +678,7 @@ route('GET', '/orders/scan/:code', 'orders.manage', async (ctx) => {
 route('POST', '/orders/:id/pay', 'payments.create', async (ctx) => {
   const method = ctx.body?.method;
   if (!METHODS.includes(method)) throw new HttpError(400, 'To‘lov turini tanlang');
+  if (!(await methodAllowed(method))) throw new HttpError(400, METHOD_OFF);
   if (!/^[0-9a-f-]{36}$/i.test(ctx.params.id)) throw new HttpError(404, 'Buyurtma topilmadi');
   const result = await transaction(async (db) => {
     const found = await db.query(`SELECT * FROM orders WHERE id = $1 AND deleted_at IS NULL AND ${inBranch('branch_id', 2)} FOR UPDATE`, [ctx.params.id, ctx.view]);
@@ -2054,6 +2069,20 @@ route('PUT', '/pages', 'owner', async (ctx) => {
   );
   await audit(null, ctx.user, 'pages_set', 'pages', null, pages);
   return { pages };
+});
+
+// Yandex and Pochta: on or off for new payments, and the pages where each is folded into Karta.
+route('GET', '/methods', 'user', async () => ({ methods: await methodSettings() }));
+
+route('PUT', '/methods', 'owner', async (ctx) => {
+  const methods = cleanMethods(ctx.body?.methods);
+  await query(
+    `INSERT INTO app_meta (key, value) VALUES ('methods', $1::jsonb)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [JSON.stringify(methods)],
+  );
+  await audit(null, ctx.user, 'methods_set', 'methods', null, methods);
+  return { methods };
 });
 
 // The site's name, colour, logo and corners. Read before signing in too, so the sign-in page looks right.
