@@ -7,6 +7,7 @@ import { printOrderSticker } from '../lib/print';
 import { TELEGRAM_MISS } from '../lib/photo';
 import { useStickerScanner } from '../lib/scanner';
 import type { Method, Order } from '../lib/types';
+import { useEntryMethods } from '../lib/methods';
 import { Alert, Button, Modal, cx, useToast } from './ui';
 
 type Unpaid = Array<{ scan_code: string; order_no: string | null; amount: number }>;
@@ -20,6 +21,7 @@ type View =
 /** Scanning a kassa sticker anywhere in the app opens the parcel: what is owed, then Naqd or Karta (Yandex / Pochta). */
 export function StickerPay() {
   const [view, setView] = useState<View>({ state: 'closed' });
+  const entry = useEntryMethods();
   const { bump } = useLive();
   const toast = useToast();
 
@@ -122,17 +124,18 @@ export function StickerPay() {
             <div className="space-y-2">
               {view.error && <Alert>{view.error}</Alert>}
               <div className="text-[13px] font-medium text-ink-2">{view.step === 'method' ? 'Qanday toʻlaydi?' : 'Qaysi kartaga?'}</div>
-              <div className={cx('grid gap-2', view.step === 'method' ? 'grid-cols-2' : 'grid-cols-3')}>
+              <div className={cx('grid gap-2', view.step === 'method' || entry.length === 2 ? 'grid-cols-2' : 'grid-cols-3')}>
                 {(view.step === 'method'
                   ? [
                     { key: 'cash', label: 'Naqd', icon: Banknote, color: 'var(--cash)', run: () => pay('cash') },
-                    { key: 'card', label: 'Karta', icon: CreditCard, color: 'var(--card)', run: () => setView({ ...view, step: 'card', error: undefined }) },
+                    // With Yandex and Pochta both off, Karta pays at once instead of asking which card.
+                    { key: 'card', label: 'Karta', icon: CreditCard, color: 'var(--card)', run: () => (entry.length > 1 ? setView({ ...view, step: 'card', error: undefined }) : pay('card')) },
                   ]
                   : [
                     { key: 'card', label: 'Karta', icon: CreditCard, color: 'var(--card)', run: () => pay('card') },
                     { key: 'yandex', label: 'Yandex', icon: Navigation, color: 'var(--yandex)', run: () => pay('yandex') },
                     { key: 'pochta', label: 'Pochta', icon: Mail, color: 'var(--pochta)', run: () => pay('pochta') },
-                  ]).map((b) => (
+                  ].filter((b) => entry.some((m) => m.value === b.key))).map((b) => (
                   <button key={b.key} type="button" onClick={b.run} disabled={Boolean(view.saving)}
                     className={cx('flex h-16 flex-wrap items-center justify-center gap-x-2 gap-y-0.5 rounded-xl px-2 text-center border border-line bg-surface text-base font-semibold text-ink transition-colors hover:bg-surface-2 disabled:opacity-60')}
                     style={{ boxShadow: `inset 0 -3px 0 ${b.color}` }}>

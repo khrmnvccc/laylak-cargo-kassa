@@ -3,6 +3,7 @@ import { Ban, ChevronLeft, ChevronRight, FileSpreadsheet, Minus, Plus, Scale, Up
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { printBalance } from '../lib/reports';
+import { useCardMethods, useFold } from '../lib/methods';
 import { PrintButton } from '../components/PrintButton';
 import { ImportKassa } from '../components/ImportKassa';
 import { useApi, useLive } from '../lib/live';
@@ -61,6 +62,8 @@ export default function Balance() {
   if (shownToday !== today) { setShownToday(today); if (date === shownToday) setDate(today); }
 
   const sources = data?.sources || [];
+  const fold = useFold();
+  const extras = useCardMethods().filter((m) => m.value !== 'card').map((m) => m.label);
   const sum = (k: keyof Omit<SourceBalance, 'source'>) => sources.reduce((s, r) => s + Number(r[k]), 0);
   const isToday = date === today;
   const activeExpenses = data?.expenses.filter((e) => !e.voided_at) || [];
@@ -163,16 +166,20 @@ export default function Balance() {
                       <tr key={r.source}>
                         <td className={td}>
                           <span className="flex items-center gap-2 font-medium"><span className="size-2 rounded-full" style={{ background: methodColor(r.source) }} />{accountLabel(r.source)}</span>
-                          {r.source === 'card' && <span className="ml-4 block text-xs text-ink-3">Yandex va Pochta ham shu yerga</span>}
+                          {r.source === 'card' && extras.length > 0 && <span className="ml-4 block text-xs text-ink-3">{extras.join(' va ')} ham shu yerga</span>}
                         </td>
                         <td className={cx(td, 'text-right text-ink-2 num')}>{money(r.opening)}</td>
                         <td className={cx(td, 'text-right num', r.income ? 'text-up' : 'text-ink-3')}>
                           {r.income ? `+${money(r.income)}` : '—'}
-                          {r.source === 'card' && (r.income_yandex > 0 || r.income_pochta > 0) && (
-                            <span className="block text-xs text-ink-3">
-                              {[['Karta', r.income - r.income_yandex - r.income_pochta], ['Yandex', r.income_yandex], ['Pochta', r.income_pochta]].filter(([, v]) => Number(v) > 0).map(([k, v]) => `${k} ${money(Number(v))}`).join(' · ')}
-                            </span>
-                          )}
+                          {r.source === 'card' && extras.length > 0 && (r.income_yandex > 0 || r.income_pochta > 0) && (() => {
+                            // A method the owner hid here stays inside plain Karta.
+                            const f = fold({ card: r.income - r.income_yandex - r.income_pochta, yandex: r.income_yandex, pochta: r.income_pochta })!;
+                            return (
+                              <span className="block text-xs text-ink-3">
+                                {[['Karta', f.card], ['Yandex', f.yandex], ['Pochta', f.pochta]].filter(([, v]) => Number(v) > 0).map(([k, v]) => `${k} ${money(Number(v))}`).join(' · ')}
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td className={cx(td, 'text-right num', r.expense ? 'text-down' : 'text-ink-3')}>{r.expense ? `−${money(r.expense)}` : '—'}</td>
                         <td className={cx(td, 'text-right num', r.adjustment ? 'text-ink' : 'text-ink-3')}>{r.adjustment ? signed(r.adjustment) : '—'}</td>
@@ -300,12 +307,14 @@ export default function Balance() {
 
 /** One day of the 14-day table opened up: how the takings split between cash and card. */
 function DaySplit({ day, allowed }: { day: BalanceReport['recent'][number]; allowed: Array<'cash' | 'card'> }) {
+  const f = useFold()({ card: day.card_income, yandex: day.yandex_income, pochta: day.pochta_income })!;
+  const shown = useCardMethods().map((m) => m.value as string);
   const parts = [
-    { label: 'Naqd', amount: day.cash_income, color: 'var(--cash)', src: 'cash' },
-    { label: 'Karta', amount: day.card_income, color: methodColor('card'), src: 'card' },
-    { label: 'Yandex', amount: day.yandex_income, color: methodColor('yandex'), src: 'card' },
-    { label: 'Pochta', amount: day.pochta_income, color: methodColor('pochta'), src: 'card' },
-  ].filter((p) => allowed.includes(p.src as 'cash' | 'card'));
+    { label: 'Naqd', amount: day.cash_income, color: 'var(--cash)', src: 'cash', key: 'cash' },
+    { label: 'Karta', amount: f.card, color: methodColor('card'), src: 'card', key: 'card' },
+    { label: 'Yandex', amount: f.yandex, color: methodColor('yandex'), src: 'card', key: 'yandex' },
+    { label: 'Pochta', amount: f.pochta, color: methodColor('pochta'), src: 'card', key: 'pochta' },
+  ].filter((p) => allowed.includes(p.src as 'cash' | 'card') && (p.key === 'cash' || shown.includes(p.key)));
   const card = day.card_income + day.yandex_income + day.pochta_income;
   return (
     <div className="space-y-2 text-sm">

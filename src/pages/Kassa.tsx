@@ -9,6 +9,7 @@ import { PaymentsTable } from '../components/PaymentsTable';
 import { ReceiptImport } from '../components/ReceiptImport';
 import { printPaymentLabel } from '../lib/print';
 import { TELEGRAM_MISS, photoDataUrl } from '../lib/photo';
+import { useEntryMethods } from '../lib/methods';
 import { Alert, Button, Card, CardBreakdown, CardHeader, EmptyState, Field, Input, MethodBadge, Modal, PageHeader, SkeletonRows, Textarea, cx, useToast } from '../components/ui';
 import { can } from '../lib/perms';
 
@@ -33,6 +34,9 @@ export default function Kassa() {
   const [clientName, setClientName] = useState('');
   const [amountText, setAmountText] = useState('');
   const [method, setMethod] = useState<Method>('cash');
+  // Yandex / Pochta only when the owner has them switched on for payment entry.
+  const entryMethods = useEntryMethods();
+  if (method !== 'cash' && !entryMethods.some((m) => m.value === method)) setMethod('card');
   const [cardOpen, setCardOpen] = useState(false);
   const [note, setNote] = useState('');
   // "Reyslar soni" for the daily report (otchyot) Excel; 1 unless the client brought more.
@@ -237,11 +241,11 @@ export default function Kassa() {
                   );
                 })}
               </div>
-              {isCardMethod(method) && (
+              {isCardMethod(method) && entryMethods.length > 1 && (
                 <div className="anim-rise mt-2 rounded-lg border border-line bg-surface-2 p-2">
                   <div className="mb-1.5 px-1 text-xs text-ink-3">Karta orqali qanday keldi?</div>
-                  <div role="radiogroup" aria-label="Karta turi" className="grid grid-cols-3 gap-1.5">
-                    {CARD_METHODS.map((m) => {
+                  <div role="radiogroup" aria-label="Karta turi" className={cx('grid gap-1.5', entryMethods.length === 3 ? 'grid-cols-3' : 'grid-cols-2')}>
+                    {entryMethods.map((m) => {
                       const Icon = METHOD_ICONS[m.value];
                       const active = method === m.value;
                       return (

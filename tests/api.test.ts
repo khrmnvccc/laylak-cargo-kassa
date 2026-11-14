@@ -1426,3 +1426,21 @@ test('owner sets the site name, colour, logo and menu names; everyone (even sign
   assert.equal((await anon.call('GET', '/brand')).body.brand.name, 'Laylak Express');
   assert.equal((await owner.call('PUT', '/brand', { brand: { effect: 'fireworks<script>' } })).body.brand.effect, 'none', 'an unknown moving background is turned off');
 });
+
+test('owner switches Yandex/Pochta off and picks where they show; a switched-off method takes no new payment', async () => {
+  const owner = new Client();
+  await owner.call('POST', '/auth/login', { username: 'admin', password: 'password123' });
+  const w = new Client();
+  await w.call('POST', '/auth/login', { username: 'chilonzor', password: 'worker123' });
+  assert.deepEqual((await w.call('GET', '/methods')).body.methods, { yandex: { active: true, hidden: [] }, pochta: { active: true, hidden: [] } });
+  assert.equal((await w.call('PUT', '/methods', { methods: {} })).status, 403);
+  const saved = await owner.call('PUT', '/methods', { methods: { pochta: { active: false, hidden: ['dashboard', 'nimadir', 'clients'] } } });
+  assert.deepEqual(saved.body.methods, { yandex: { active: true, hidden: [] }, pochta: { active: false, hidden: ['dashboard', 'clients'] } });
+  assert.equal((await w.call('GET', '/methods')).body.methods.pochta.active, false);
+  const off = await w.call('POST', '/payments', { photos: PHOTOS, clientCode: 'PM1', amount: 5000, method: 'pochta' });
+  assert.equal(off.status, 400);
+  assert.match(off.body.fields.method, /oʻchirilgan/);
+  assert.equal((await w.call('POST', '/payments', { photos: PHOTOS, clientCode: 'PM1', amount: 5000, method: 'yandex' })).status, 201);
+  await owner.call('PUT', '/methods', { methods: { pochta: { active: true, hidden: [] } } });
+  assert.equal((await w.call('POST', '/payments', { photos: PHOTOS, clientCode: 'PM1', amount: 5000, method: 'pochta' })).status, 201);
+});

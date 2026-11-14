@@ -1,11 +1,14 @@
+import { useCardMethods, useFold } from '../lib/methods';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { CARD_METHODS, PAY_GROUPS, cardTotal, compactMoney, formatDate, formatDateShort, monthLabel, money, weekday } from '../lib/format';
+import { PAY_GROUPS, cardTotal, compactMoney, formatDate, formatDateShort, monthLabel, money, weekday } from '../lib/format';
 
 export interface ChartRow { key: string; cash: number; card: number; yandex: number; pochta: number; total: number; count?: number }
 
 function ChartTooltip({ active, payload, labelMode }: any) {
+  const fold = useFold();
+  const methods = useCardMethods();
   if (!active || !payload?.length) return null;
-  const row: ChartRow = payload[0].payload;
+  const row = fold(payload[0].payload as ChartRow)!;
   const title = labelMode === 'month' ? monthLabel(row.key) : labelMode === 'week' ? `${formatDate(row.key, false)} dan boshlangan hafta` : `${weekday(row.key)}, ${formatDate(row.key)}`;
   return (
     <div className="min-w-[200px] rounded-lg border border-line bg-surface px-3 py-2.5 text-[13px] shadow-pop">
@@ -13,7 +16,7 @@ function ChartTooltip({ active, payload, labelMode }: any) {
       <div className="space-y-1">
         <Row color="var(--cash)" label="Naqd" value={row.cash || 0} />
         <Row color="var(--card)" label="Karta" value={cardTotal(row)} />
-        {(row.yandex > 0 || row.pochta > 0) && CARD_METHODS.map((m) => (
+        {(row.yandex > 0 || row.pochta > 0) && methods.map((m) => (
           <div key={m.value} className="flex justify-between gap-6 pl-4 text-xs text-ink-3"><span>{m.value === 'card' ? 'shundan karta' : m.label}</span><span className="num">{money(row[m.value] || 0)}</span></div>
         ))}
       </div>
