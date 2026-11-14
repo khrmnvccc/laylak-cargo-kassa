@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useState } from 'react';
 import { Ban, ChevronLeft, ChevronRight, FileSpreadsheet, Minus, Plus, Scale, Upload, Wallet } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -93,7 +93,6 @@ export default function Balance() {
                 {loading && !data ? <div className="skeleton mt-3 h-9 w-2/3" /> : (
                   <div className={cx('mt-2 text-[32px] font-semibold leading-tight tracking-tight num', sum('current') < 0 ? 'text-danger' : 'text-ink')}>{money(sum('current'))}</div>
                 )}
-                {both && data && <BalanceCapsule cash={sources.find((r) => r.source === 'cash')?.current || 0} card={sources.find((r) => r.source === 'card')?.current || 0} />}
                 <p className="mt-2 text-xs leading-relaxed text-ink-3">Barcha tushumlar − rasxodlar ± tuzatishlar. Bekor qilingan yozuvlar hisobga olinmaydi.</p>
               </Card>
               <div className={cx('grid gap-3 sm:gap-4', both ? 'grid-cols-2' : 'grid-cols-1')}>
@@ -303,44 +302,6 @@ export default function Balance() {
       {modal === 'adjust' && <AdjustForm allowed={allowed} sources={sources} onClose={() => setModal(null)} />}
       {modal && typeof modal === 'object' && <ExpenseDetail expense={modal} onClose={() => setModal(null)} />}
     </>
-  );
-}
-
-/** The money as a capsule: the naqd part and the karta part filled in by their share of the total. */
-function BalanceCapsule({ cash, card }: { cash: number; card: number }) {
-  // A kassa below zero holds nothing to show, so it counts as empty here.
-  const c = Math.max(cash, 0), k = Math.max(card, 0), total = c + k;
-  const cashPct = total > 0 ? Math.round((c / total) * 100) : 0;
-  const cardPct = total > 0 ? 100 - cashPct : 0;
-  const [filled, setFilled] = useState(false);
-  useEffect(() => { const t = requestAnimationFrame(() => setFilled(true)); return () => cancelAnimationFrame(t); }, []);
-  const parts = [
-    { key: 'cash', label: 'Naqd', pct: cashPct, amount: cash, color: 'var(--cash)' },
-    { key: 'card', label: 'Karta', pct: cardPct, amount: card, color: 'var(--card)' },
-  ];
-  return (
-    <div className="mt-4">
-      <div role="img" aria-label={`Naqd ${cashPct}%, karta ${cardPct}%`}
-        className="capsule relative flex h-12 overflow-hidden rounded-full border border-line bg-surface-2 shadow-[inset_0_2px_6px_rgba(0,0,0,0.12)]">
-        {total > 0 && parts.map((p) => p.pct > 0 && (
-          <div key={p.key} className="capsule-fill relative flex items-center justify-center overflow-hidden transition-[width] duration-[900ms] ease-[cubic-bezier(0.2,0.8,0.2,1)]"
-            style={{ width: filled ? `${p.pct}%` : '0%', background: p.color }}>
-            {p.pct >= 14 && <span className="relative z-[1] whitespace-nowrap text-[13px] font-semibold text-white drop-shadow-sm num">{p.label} {p.pct}%</span>}
-          </div>
-        ))}
-        {total === 0 && <span className="m-auto text-xs text-ink-3">Kassa boʻsh</span>}
-        {/* A glassy shine along the top makes it read as a capsule. */}
-        <span aria-hidden="true" className="pointer-events-none absolute inset-x-3 top-1 h-3 rounded-full bg-gradient-to-b from-white/45 to-white/0" />
-      </div>
-      <div className="mt-2 flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs text-ink-3">
-        {parts.map((p) => (
-          <span key={p.key} className="flex items-center gap-1.5 whitespace-nowrap">
-            <span className="size-2 shrink-0 rounded-full" style={{ background: p.color }} />
-            {p.label} <b className="text-ink num">{p.pct}%</b> · <span className="num">{money(p.amount)}</span>
-          </span>
-        ))}
-      </div>
-    </div>
   );
 }
 
