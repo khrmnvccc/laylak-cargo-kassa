@@ -241,19 +241,23 @@ export function Field({ label, error, hint, children, required, htmlFor, classNa
   );
 }
 
-const controlBase = 'rounded-lg border bg-surface-2 px-3 text-sm text-ink placeholder:text-ink-3 transition-colors outline-none focus:bg-surface focus:border-[var(--card)] focus:ring-4 focus:ring-[color-mix(in_srgb,var(--card)_15%,transparent)] disabled:bg-surface-2 disabled:text-ink-3';
+// 16px text on phones: iPhone zooms the whole page in when a smaller field is tapped, and it stays zoomed.
+// A caller that sets its own text size keeps it (two sizes on one element fight by CSS order).
+const ownSize = /(^|\s)(sm:|max-sm:)?text-(xs|sm|base|lg|\d?xl|\[\d)/;
+const textSize = (className?: string) => (className && ownSize.test(className) ? '' : 'text-base sm:text-sm');
+const controlBase = 'rounded-lg border bg-surface-2 px-3 text-ink placeholder:text-ink-3 transition-colors outline-none focus:bg-surface focus:border-[var(--card)] focus:ring-4 focus:ring-[color-mix(in_srgb,var(--card)_15%,transparent)] disabled:bg-surface-2 disabled:text-ink-3';
 
 export function Input({ invalid, className, ...rest }: ComponentProps<'input'> & { invalid?: boolean }) {
-  return <input {...rest} className={cx(controlBase, 'w-full h-10', invalid ? 'border-danger' : 'border-line', className)} />;
+  return <input {...rest} className={cx(controlBase, textSize(className), 'w-full h-10', invalid ? 'border-danger' : 'border-line', className)} />;
 }
 
 export function Textarea({ invalid, className, ...rest }: ComponentProps<'textarea'> & { invalid?: boolean }) {
-  return <textarea {...rest} className={cx(controlBase, 'w-full min-h-20 py-2', invalid ? 'border-danger' : 'border-line', className)} />;
+  return <textarea {...rest} className={cx(controlBase, textSize(className), 'w-full min-h-20 py-2', invalid ? 'border-danger' : 'border-line', className)} />;
 }
 
 export function Select({ className, children, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
-    <select {...rest} className={cx(controlBase, 'h-9 border-line pr-8 appearance-none bg-[length:16px] bg-[right_8px_center] bg-no-repeat', className)}
+    <select {...rest} className={cx(controlBase, textSize(className), 'h-9 border-line pr-8 appearance-none bg-[length:16px] bg-[right_8px_center] bg-no-repeat', className)}
       style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a94a6' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E\")" }}>
       {children}
     </select>

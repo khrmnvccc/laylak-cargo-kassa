@@ -10,6 +10,7 @@ import { ReceiptImport } from '../components/ReceiptImport';
 import { printPaymentLabel } from '../lib/print';
 import { TELEGRAM_MISS, photoDataUrl } from '../lib/photo';
 import { useEntryMethods } from '../lib/methods';
+import { useEntrySettings } from '../lib/entry';
 import { Alert, Button, Card, CardBreakdown, CardHeader, EmptyState, Field, Input, MethodBadge, Modal, PageHeader, SkeletonRows, Textarea, cx, useToast } from '../components/ui';
 import { can } from '../lib/perms';
 
@@ -36,6 +37,8 @@ export default function Kassa() {
   const [method, setMethod] = useState<Method>('cash');
   // Yandex / Pochta only when the owner has them switched on for payment entry.
   const entryMethods = useEntryMethods();
+  // The owner decides in Sozlamalar whether the orders picture is required.
+  const { photoRequired } = useEntrySettings();
   if (method !== 'cash' && !entryMethods.some((m) => m.value === method)) setMethod('card');
   const [cardOpen, setCardOpen] = useState(false);
   const [note, setNote] = useState('');
@@ -122,7 +125,7 @@ export default function Kassa() {
     if (clientName.length > 80) e.clientName = 'Ism juda uzun';
     if (note.length > 500) e.note = 'Izoh 500 belgidan oshmasin';
     if (!/^\d{1,3}$/.test(trips)) e.trips = 'Reyslar sonini kiriting';
-    if (!photos.length) e.photos = 'Buyurtmalar rasmini yuklang';
+    if (photoRequired && !photos.length) e.photos = 'Buyurtmalar rasmini yuklang';
     if (customTime) {
       const t = Date.parse(`${paidAtLocal}:00+05:00`);
       if (!Number.isFinite(t)) e.paidAt = 'Sana va vaqtni toʻgʻri kiriting';
@@ -161,7 +164,7 @@ export default function Kassa() {
       setLastSaved(payment);
       if (autoLabel) printPaymentLabel(payment);
       toast({ tone: 'success', title: 'Toʻlov saqlandi', description: `${payment.client_code} · ${money(payment.amount)} · ${methodLabel(payment.method)}` });
-      if (telegram === 'off') toast({ tone: 'error', title: 'Rasm adminga yuborilmadi', description: TELEGRAM_MISS[telegram] });
+      if (telegram === 'off') toast({ tone: 'error', title: photos.length ? 'Rasm adminga yuborilmadi' : 'Xabar adminga yuborilmadi', description: TELEGRAM_MISS[telegram] });
       setClientCode(''); setClientName(''); setAmountText(''); setNote(''); setTrips('1'); setPhotos([]); setErrors({}); setCustomTime(false);
       setLookup({ state: 'idle' });
       bump();
@@ -186,7 +189,7 @@ export default function Kassa() {
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
         <Card>
-          <form onSubmit={onSubmit} noValidate className="space-y-5">
+          <form onSubmit={onSubmit} noValidate className="space-y-4 sm:space-y-5">
             {lastSaved && (
               <div className="flex items-start gap-3 rounded-xl border border-[color-mix(in_srgb,var(--success)_25%,transparent)] bg-success-soft px-4 py-3 anim-rise">
                 <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-success" />
@@ -221,7 +224,7 @@ export default function Kassa() {
               <div className="relative">
                 <Input id="amount" inputMode="numeric" value={amountText} invalid={Boolean(errors.amount)}
                   onChange={(e) => { const digits = e.target.value.replace(/\D/g, '').slice(0, 11); setAmountText(digits ? groupDigits(Number(digits)) : ''); }}
-                  placeholder="0" className="h-14 pr-16 text-2xl font-semibold tracking-tight num" autoComplete="off" />
+                  placeholder="0" className="h-12 pr-16 text-xl font-semibold tracking-tight num sm:h-14 sm:text-2xl" autoComplete="off" />
                 <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm font-medium text-ink-3">soʻm</span>
               </div>
             </Field>
@@ -233,7 +236,7 @@ export default function Kassa() {
                   const active = m.value === 'cash' ? method === 'cash' : isCardMethod(method);
                   return (
                     <button key={m.value} type="button" role="radio" aria-checked={active} onClick={() => !active && setMethod(m.value)}
-                      className={cx('flex h-12 items-center justify-center gap-2 rounded-lg border text-base font-medium transition-colors',
+                      className={cx('flex h-11 items-center justify-center gap-2 rounded-lg border text-base font-medium transition-colors sm:h-12',
                         active ? 'border-transparent text-ink ring-2' : 'border-line bg-surface text-ink-2 hover:bg-surface-2')}
                       style={active ? { background: `color-mix(in srgb, ${m.color} 12%, var(--surface))`, ['--tw-ring-color' as string]: m.color } : undefined}>
                       <Icon className="size-4" style={{ color: m.color }} />{m.label}
@@ -262,13 +265,14 @@ export default function Kassa() {
               )}
             </Field>
 
-            <Field label="Buyurtmalar rasmi" required error={errors.photos}
-              hint="Mijozning buyurtmalari koʻringan skrinshot. Saqlangach adminga Telegram orqali yuboriladi. Ctrl+V bilan ham qoʻyish mumkin">
+            <Field label="Buyurtmalar rasmi" required={photoRequired} error={errors.photos}
+              hint={photoRequired ? 'Mijozning buyurtmalari koʻringan skrinshot. Saqlangach adminga Telegram orqali yuboriladi. Ctrl+V bilan ham qoʻyish mumkin'
+                : 'Ixtiyoriy. Rasm qoʻshsangiz adminga Telegram orqali yuboriladi'}>
               <input ref={photoInput} type="file" accept="image/*" multiple hidden
                 onChange={(e) => { if (e.target.files) void addPhotos(e.target.files); e.target.value = ''; }} />
               <div className="flex flex-wrap gap-2">
                 {photos.map((src, i) => (
-                  <div key={i} className="relative size-24 overflow-hidden rounded-lg border border-line bg-surface-2">
+                  <div key={i} className="relative size-20 overflow-hidden sm:size-24 rounded-lg border border-line bg-surface-2">
                     <img src={src} alt={`Rasm ${i + 1}`} className="size-full object-cover" />
                     <button type="button" aria-label="Rasmni olib tashlash" onClick={() => setPhotos((p) => p.filter((_, k) => k !== i))}
                       className="absolute right-1 top-1 grid size-6 place-items-center rounded-full bg-[color-mix(in_srgb,var(--ink)_70%,transparent)] text-surface">
@@ -278,8 +282,8 @@ export default function Kassa() {
                 ))}
                 {photos.length < MAX_PHOTOS && (
                   <button type="button" onClick={() => photoInput.current?.click()} disabled={photoBusy}
-                    className={cx('flex h-24 items-center justify-center gap-2 rounded-lg border border-dashed px-4 text-sm font-medium transition-colors',
-                      photos.length ? 'w-24 flex-col' : 'w-full', errors.photos ? 'border-danger text-danger' : 'border-line text-ink-2 hover:bg-surface-2')}>
+                    className={cx('flex items-center justify-center gap-2 rounded-lg border border-dashed px-4 text-sm font-medium transition-colors',
+                      photos.length ? 'size-20 flex-col sm:size-24' : 'h-14 w-full sm:h-24', errors.photos ? 'border-danger text-danger' : 'border-line text-ink-2 hover:bg-surface-2')}>
                     {photoBusy ? <Loader2 className="size-5 animate-spin" /> : <ImagePlus className="size-5" />}
                     {photos.length ? 'Yana' : 'Rasm yuklash'}
                   </button>
@@ -287,12 +291,12 @@ export default function Kassa() {
               </div>
             </Field>
 
-            <div className="grid gap-4 sm:grid-cols-[8rem_1fr]">
+            <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-3 sm:grid-cols-[8rem_1fr] sm:gap-4">
               <Field label="Reyslar soni" htmlFor="trips" error={errors.trips}>
                 <Input id="trips" inputMode="numeric" value={trips} onChange={(e) => setTrips(e.target.value.replace(/\D/g, '').slice(0, 3))} invalid={Boolean(errors.trips)} className="num" />
               </Field>
               <Field label="Izoh" htmlFor="note" error={errors.note} hint="Ixtiyoriy">
-                <Textarea id="note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Masalan: 3 ta posilka, Guanchjou reysi" rows={2} invalid={Boolean(errors.note)} />
+                <Textarea id="note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Masalan: 3 ta posilka" rows={2} invalid={Boolean(errors.note)} />
               </Field>
             </div>
 
@@ -310,12 +314,12 @@ export default function Kassa() {
                   </div>
                 )}
               </Field>
-              <Field label="Operatsiyani kiritgan ishchi">
+              <Field label="Operatsiyani kiritgan ishchi" className="hidden sm:block">
                 <div className="flex h-10 items-center rounded-lg border border-line bg-surface-2 px-3 text-sm text-ink-2">{user.full_name}</div>
               </Field>
             </div>
 
-            <div className="flex flex-col-reverse gap-2 border-t border-line pt-5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col-reverse gap-3 border-t border-line pt-4 sm:flex-row sm:pt-5 sm:items-center sm:justify-between">
               <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-2">
                 <input type="checkbox" className="size-4 accent-[var(--primary)]" checked={autoLabel} onChange={(e) => toggleAutoLabel(e.target.checked)} />
                 Saqlagach yorliqni chop etish (76×130)
