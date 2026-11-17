@@ -151,7 +151,7 @@ function Editor({ start, people, onClose }: { start: Draft; people: LinkedPerson
               <Card>
                 <div className="mb-2 flex items-center justify-between"><div className="text-sm font-semibold text-ink">Matn</div><span className={cx('text-xs', textLeft < 0 ? 'text-danger' : 'text-ink-3')}>{d.text.length}/{BROADCAST_MAX_TEXT}</span></div>
                 <textarea value={d.text} onChange={(e) => set({ text: e.target.value })} rows={7} placeholder="Xodimlarga nima demoqchisiz?"
-                  className="w-full rounded-xl border border-line bg-surface px-3.5 py-3 text-[14px] leading-relaxed text-ink outline-none focus:border-[var(--card)] focus:ring-4 focus:ring-[color-mix(in_srgb,var(--card)_15%,transparent)]" />
+                  className="w-full rounded-xl border border-line bg-surface px-3.5 py-3 text-base sm:text-[14px] leading-relaxed text-ink outline-none focus:border-[var(--card)] focus:ring-4 focus:ring-[color-mix(in_srgb,var(--card)_15%,transparent)]" />
                 <p className="mt-1.5 text-xs text-ink-3"><b className="text-ink-2">*yulduzcha orasidagi*</b> soʻz qalin chiqadi.</p>
               </Card>
               <Card>

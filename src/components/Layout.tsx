@@ -95,7 +95,7 @@ function BranchSwitch({ className }: { className?: string }) {
       <Building2 className="size-4 shrink-0 text-ink-3" />
       <span className="flex-1 truncate">{value ? state.mine.find((b) => b.id === value)!.name : 'Barcha filiallar'}</span>
       <svg viewBox="0 0 20 20" className="size-4 shrink-0 text-ink-3" fill="currentColor" aria-hidden><path d="M5.5 7.5 10 12l4.5-4.5" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
-      <select aria-label="Filial" value={value} onChange={(e) => state.pick(Number(e.target.value))} className="absolute inset-0 cursor-pointer opacity-0">
+      <select aria-label="Filial" value={value} onChange={(e) => state.pick(Number(e.target.value))} className="absolute inset-0 cursor-pointer text-base opacity-0">
         <option value={0}>Barcha filiallar</option>
         {state.mine.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
       </select>

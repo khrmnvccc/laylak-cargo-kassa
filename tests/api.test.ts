@@ -1444,3 +1444,20 @@ test('owner switches Yandex/Pochta off and picks where they show; a switched-off
   await owner.call('PUT', '/methods', { methods: { pochta: { active: true, hidden: [] } } });
   assert.equal((await w.call('POST', '/payments', { photos: PHOTOS, clientCode: 'PM1', amount: 5000, method: 'pochta' })).status, 201);
 });
+
+test('owner makes the orders picture optional; a payment without one is then saved', async () => {
+  const owner = new Client();
+  await owner.call('POST', '/auth/login', { username: 'admin', password: 'password123' });
+  const w = new Client();
+  await w.call('POST', '/auth/login', { username: 'chilonzor', password: 'worker123' });
+  assert.deepEqual((await w.call('GET', '/entry')).body.entry, { photoRequired: true });
+  assert.equal((await w.call('PUT', '/entry', { entry: { photoRequired: false } })).status, 403);
+  assert.deepEqual(Object.keys((await w.call('POST', '/payments', { clientCode: 'NP1', amount: 5000, method: 'cash' })).body.fields), ['photos']);
+  assert.deepEqual((await owner.call('PUT', '/entry', { entry: { photoRequired: false, junk: 1 } })).body.entry, { photoRequired: false });
+  assert.equal((await w.call('GET', '/entry')).body.entry.photoRequired, false);
+  assert.equal((await w.call('POST', '/payments', { clientCode: 'NP1', amount: 5000, method: 'cash' })).status, 201);
+  // A broken picture is still refused, even when pictures are optional.
+  assert.equal((await w.call('POST', '/payments', { photos: ['data:text/html;base64,PGI+'], clientCode: 'NP1', amount: 5000, method: 'cash' })).status, 400);
+  await owner.call('PUT', '/entry', { entry: { photoRequired: true } });
+  assert.equal((await w.call('POST', '/payments', { clientCode: 'NP1', amount: 5000, method: 'cash' })).status, 400);
+});

@@ -10,6 +10,7 @@ import { canSee, homePage, isPaused, setPageSettings } from './lib/perms';
 import { useApi } from './lib/live';
 import { setBrand } from './lib/brand';
 import { setMethods } from './lib/methods';
+import { setEntry } from './lib/entry';
 import { Effects } from './components/Effects';
 import { BranchContext, currentBranch, saveBranch, type Branch } from './lib/branch';
 import type { PageSettings } from './lib/pageConfig';
@@ -193,6 +194,8 @@ function Pages({ user, route, onLogout }: { user: User; route: Route; onLogout: 
   setPageSettings(data?.pages);
   const methods = useApi<{ methods: unknown }>('/methods');
   useEffect(() => { if (methods.data) setMethods(methods.data.methods); }, [methods.data]);
+  const entry = useApi<{ entry: unknown }>('/entry');
+  useEffect(() => { if (entry.data) setEntry(entry.data.entry); }, [entry.data]);
   const page = canSee(user, route.page) ? route.page : homePage(user);
   const PageComponent = pages[page];
   const paused = isPaused(page);

@@ -16,6 +16,8 @@ import { NAV } from '../components/Layout';
 import { Toggle } from '../components/TelegramTemplates';
 import { EXTRA_METHODS, METHOD_PLACES, cleanMethods, type ExtraMethod, type MethodPlace, type MethodRule, type MethodSettings } from '../lib/methodsConfig';
 import { setMethods, useMethodSettings } from '../lib/methods';
+import { setEntry, useEntrySettings } from '../lib/entry';
+import type { EntrySettings } from '../lib/entryConfig';
 import { ALWAYS_OPEN, MAX_PAGE_LABEL, type PageKey, type PageSetting, type PageSettings, type PageWho } from '../lib/pageConfig';
 import { setPageSettings } from '../lib/perms';
 import { useLive } from '../lib/live';
@@ -25,7 +27,7 @@ const ACTIONS: Record<string, string> = {
   staff_create: 'Xodim qoʻshdi', staff_update: 'Xodimni oʻzgartirdi', client_update: 'Mijozni oʻzgartirdi', password_change: 'Parolini oʻzgartirdi',
   client_import: 'Mijozlar roʻyxatini yukladi', expense_create: 'Rasxod yozdi', expense_void: 'Rasxodni bekor qildi', balance_adjust: 'Qoldiqni tuzatdi',
   telegram_set: 'Telegram botni kiritdi', telegram_connect: 'Telegramni uladi', telegram_remove: 'Telegramni uzdi', telegram_group: 'Telegram guruhini uladi', telegram_group_remove: 'Telegram guruhini uzdi', telegram_group_pause: 'Guruhga yuborishni toʻxtatdi', telegram_group_resume: 'Guruhga yuborishni qayta yoqdi', backup_download: 'Zaxirani yuklab oldi', payment_import: 'Toʻlovlarni Exceldan yukladi', expense_import: 'Kassa daftarini yukladi', attendance_edit: 'Davomatni tuzatdi', office_set: 'Ishxona joyini belgiladi', office_clear: 'Ishxona joyini olib tashladi', order_create: 'Stiker yaratdi', order_import: 'Buyurtmalar roʻyxatini yukladi', receipt_confirm: 'Chekdan toʻlov kiritdi', telegram_template_on: 'Telegram xabarini yoqdi', telegram_template_off: 'Telegram xabarini oʻchirdi', telegram_template: 'Telegram xabar matnini oʻzgartirdi', telegram_group_kinds: 'Guruhga boradigan xabarlarni tanladi', telegram_template_chats: 'Xabar qayerga borishini oʻzgartirdi', pages_set: 'Oynalar sozlamasini oʻzgartirdi', telegram_person_link: 'Oʻz Telegramini uladi', telegram_person_unlink: 'Telegramni uzdi', telegram_personal_pause: 'Shaxsiy chatga yuborishni toʻxtatdi', telegram_personal_resume: 'Shaxsiy chatga yuborishni qayta yoqdi', data_reset: 'Barcha maʼlumotlarni tozaladi',
-  brand_set: 'Sayt nomi va dizaynini oʻzgartirdi', methods_set: 'Yandex va Pochta sozlamasini oʻzgartirdi', branch_create: 'Yangi filial ochdi', branch_rename: 'Filial nomini oʻzgartirdi',
+  brand_set: 'Sayt nomi va dizaynini oʻzgartirdi', methods_set: 'Yandex va Pochta sozlamasini oʻzgartirdi', entry_set: 'Toʻlov rasmi sozlamasini oʻzgartirdi', branch_create: 'Yangi filial ochdi', branch_rename: 'Filial nomini oʻzgartirdi',
   order_issue: 'Tovarni berdi', order_unissue: 'Tovarni omborga qaytardi', order_delete: 'Stikerni oʻchirdi', order_prepaid: 'Buyurtmani oldin toʻlangan deb belgiladi', order_unprepaid: 'Oldin toʻlangan belgisini olib tashladi',
 };
 
@@ -41,6 +43,7 @@ export default function Settings() {
         {user.role !== 'owner' && <MyTelegram />}
         {isBoss(user) && <SystemInfo />}
         {user.role === 'owner' && <BrandCard />}
+        {user.role === 'owner' && <EntryCard />}
         {user.role === 'owner' && <MethodsCard />}
         {user.role === 'owner' && <BranchesCard />}
         {user.role === 'owner' && <PagesCard />}
@@ -456,6 +459,50 @@ function BrandCard() {
         </div>
       </div>
       {error && <div className="px-5 pb-4"><Alert>{error}</Alert></div>}
+    </Card>
+  );
+}
+
+/** Owner only: whether a new payment must come with the picture of the client's orders. Saves on tap. */
+function EntryCard() {
+  const saved = useEntrySettings();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function setRequired(on: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api<{ entry: EntrySettings }>('/entry', { method: 'PUT', body: { entry: { ...saved, photoRequired: on } } });
+      setEntry(res.entry);
+      toast({ tone: 'success', title: on ? 'Rasm endi majburiy' : 'Rasm endi ixtiyoriy' });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-[15px] font-semibold tracking-tight text-ink">Toʻlovda buyurtma rasmi</h3>
+            <Badge tone={saved.photoRequired ? 'success' : 'neutral'}>{saved.photoRequired ? 'Majburiy' : 'Ixtiyoriy'}</Badge>
+          </div>
+          <p className="mt-1 text-[13px] text-ink-3">
+            {saved.photoRequired
+              ? 'Rasmsiz toʻlov saqlanmaydi. Rasm adminga Telegram orqali boradi.'
+              : 'Rasmsiz ham saqlash mumkin. Rasm qoʻshilsa adminga Telegram orqali boradi, qoʻshilmasa faqat matn boradi.'}
+          </p>
+        </div>
+        <div className={cx('shrink-0 pt-0.5', busy && 'pointer-events-none opacity-60')}>
+          <Toggle on={saved.photoRequired} label="Buyurtma rasmi majburiy" onChange={(on) => void setRequired(on)} />
+        </div>
+      </div>
+      {error && <div className="mt-3"><Alert>{error}</Alert></div>}
     </Card>
   );
 }

@@ -305,7 +305,7 @@ export default function TelegramTemplates({ group, personalName, people }: { gro
                   <div className="min-w-0">
                     <SectionLabel right={custom ? <span className="text-xs font-medium text-success">Oʻzgartirilgan</span> : <span className="text-xs text-ink-3">Asl matn</span>}>MATN</SectionLabel>
                     <textarea ref={area} value={text} onChange={(e) => setText(e.target.value)} rows={9} maxLength={MAX_TEMPLATE_LENGTH} spellCheck={false}
-                      className="w-full rounded-xl border border-line bg-surface px-3.5 py-3 text-[14px] leading-relaxed text-ink outline-none transition-colors focus:border-[var(--card)] focus:ring-4 focus:ring-[color-mix(in_srgb,var(--card)_15%,transparent)]" />
+                      className="w-full rounded-xl border border-line bg-surface px-3.5 py-3 text-base sm:text-[14px] leading-relaxed text-ink outline-none transition-colors focus:border-[var(--card)] focus:ring-4 focus:ring-[color-mix(in_srgb,var(--card)_15%,transparent)]" />
                     <div className="mt-1 flex justify-end text-[11px] text-ink-3">{text.length}/{MAX_TEMPLATE_LENGTH}</div>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
                       <span className="mr-1 text-xs text-ink-3">Oʻzgaruvchi qoʻshish:</span>

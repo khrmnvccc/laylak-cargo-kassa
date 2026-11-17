@@ -32,6 +32,7 @@ import { MAX_TEMPLATE_LENGTH, STAFF_TEMPLATES, TEMPLATE_BY_KEY, renderTemplate, 
 import { DEFAULT_PAGE_SETTINGS, cleanPageSettings } from '../src/lib/pageConfig.js';
 import { cleanBrand } from '../src/lib/brandConfig.js';
 import { cleanMethods, type ExtraMethod } from '../src/lib/methodsConfig.js';
+import { cleanEntry } from '../src/lib/entryConfig.js';
 import { kassaXlsx, otchyotXlsx } from '../src/lib/kassaBooks.js';
 import type { BalanceMonth, Payment } from '../src/lib/types.js';
 import { orderKey } from '../src/lib/orderImport.js';
@@ -146,6 +147,12 @@ async function methodAllowed(method: string) {
   return (await methodSettings())[method as ExtraMethod].active;
 }
 const METHOD_OFF = 'Bu toʻlov usuli hozir oʻchirilgan. Sozlamalarda yoqish mumkin';
+
+/** Payment-entry settings from Sozlamalar (for now: is the orders picture required). */
+async function entrySettings() {
+  const rows = await query(`SELECT value FROM app_meta WHERE key = 'entry'`);
+  return cleanEntry(rows[0]?.value);
+}
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -358,9 +365,10 @@ route('POST', '/payments', 'payments.create', async (ctx) => {
   else if (amount > 10_000_000_000) errors.amount = 'Summa juda katta';
   if (!METHODS.includes(method)) errors.method = 'To‘lov turini tanlang';
   else if (!(await methodAllowed(method))) errors.method = METHOD_OFF;
-  // Every payment comes with a picture of the client's orders; it goes to the admin on Telegram.
+  // A picture of the client's orders goes to the admin on Telegram. The owner decides in Sozlamalar
+  // whether it is required; without one the message goes as plain text.
   const photos = (Array.isArray(b.photos) ? b.photos : []).slice(0, 4).map(photoFromDataUrl);
-  if (!photos.length) errors.photos = 'Buyurtmalar rasmini yuklang';
+  if (!photos.length) { if ((await entrySettings()).photoRequired) errors.photos = 'Buyurtmalar rasmini yuklang'; }
   else if (photos.some((p: Buffer | null) => !p)) errors.photos = 'Rasm ochilmadi yoki juda katta. Boshqa rasm tanlang';
 
   let paidAt: string | null = null;
@@ -401,7 +409,7 @@ route('POST', '/payments', 'payments.create', async (ctx) => {
   const telegram = await reportLater(ctx.user, payment.id, async () => sendIfOn(await paymentCaption({
     method, amount, by: ctx.user!.full_name, at: payment.paid_at, note, branch: payment.branch_id,
     lines: [`${clientCode}${clientName ? ` · ${clientName}` : ''}`],
-  }), photos as Buffer[]));
+  }), photos.length ? photos as Buffer[] : null));
   return { status: 201, body: { payment, telegram } };
 });
 
@@ -420,7 +428,7 @@ async function reportLater(user: AuthUser | null, entityId: string | null, send:
 /** Sends the payment message (with its pictures, if any) unless the owner switched it off. */
 function sendIfOn(caption: string | null, photos: Buffer[] | null) {
   if (caption === null) return Promise.resolve('off' as const);
-  return photos ? reportPhotos(photos, caption) : reportText(caption);
+  return photos?.length ? reportPhotos(photos, caption) : reportText(caption);
 }
 
 async function paymentCaption(p: { method: string; amount: number; by: string; at: string | Date; note?: string; lines: string[]; details?: string[]; head?: string; branch?: number }) {
@@ -2083,6 +2091,20 @@ route('PUT', '/methods', 'owner', async (ctx) => {
   );
   await audit(null, ctx.user, 'methods_set', 'methods', null, methods);
   return { methods };
+});
+
+// Payment entry: whether a new payment needs the orders picture.
+route('GET', '/entry', 'user', async () => ({ entry: await entrySettings() }));
+
+route('PUT', '/entry', 'owner', async (ctx) => {
+  const entry = cleanEntry(ctx.body?.entry);
+  await query(
+    `INSERT INTO app_meta (key, value) VALUES ('entry', $1::jsonb)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [JSON.stringify(entry)],
+  );
+  await audit(null, ctx.user, 'entry_set', 'entry', null, entry);
+  return { entry };
 });
 
 // The site's name, colour, logo and corners. Read before signing in too, so the sign-in page looks right.
