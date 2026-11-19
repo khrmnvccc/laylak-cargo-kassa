@@ -195,7 +195,7 @@ export function Layout({ page, user, onLogout, children }: { page: Page; user: U
     { page: 'dashboard', label: 'Asosiy', icon: LayoutDashboard },
     { page: 'operations', label: 'Tarix', icon: ListOrdered },
     { page: 'kassa', label: 'Toʻlov', icon: Plus },
-    { page: 'attendance', label: 'Davomat', icon: Clock },
+    { page: 'balance', label: 'Kassa', icon: Landmark },
   ] as Array<{ page: Page; label: string; icon: typeof Wallet }>).filter((t) => canSee(user, t.page));
 
   return (
