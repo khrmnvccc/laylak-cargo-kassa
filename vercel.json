@@ -3,7 +3,18 @@
   "outputDirectory": "dist",
   "regions": ["iad1"],
   "crons": [
-    { "path": "/api/cron/daily", "schedule": "0 14 * * *" }
+    { "path": "/api/cron/daily?t=12", "schedule": "0 7 * * *" },
+    { "path": "/api/cron/daily?t=13", "schedule": "0 8 * * *" },
+    { "path": "/api/cron/daily?t=14", "schedule": "0 9 * * *" },
+    { "path": "/api/cron/daily?t=15", "schedule": "0 10 * * *" },
+    { "path": "/api/cron/daily?t=16", "schedule": "0 11 * * *" },
+    { "path": "/api/cron/daily?t=17", "schedule": "0 12 * * *" },
+    { "path": "/api/cron/daily?t=18", "schedule": "0 13 * * *" },
+    { "path": "/api/cron/daily?t=19", "schedule": "0 14 * * *" },
+    { "path": "/api/cron/daily?t=20", "schedule": "0 15 * * *" },
+    { "path": "/api/cron/daily?t=21", "schedule": "0 16 * * *" },
+    { "path": "/api/cron/daily?t=22", "schedule": "0 17 * * *" },
+    { "path": "/api/cron/daily?t=23", "schedule": "0 18 * * *" }
   ],
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api?__route=:path*" }

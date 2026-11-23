@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Send, UserMinus } from 'lucide-react';
+import { Clock, Send, UserMinus } from 'lucide-react';
+import { DEFAULT_REPORT_TIME, REPORT_TIME, REPORT_TIME_MAX, REPORT_TIME_MIN } from '../lib/reportTime';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useApi } from '../lib/live';
@@ -28,6 +29,7 @@ export default function Messages({ params }: { params?: URLSearchParams }) {
   const [tab, setTab] = useState<Tab>(asked && TABS.some((t) => t.value === asked) ? asked : 'notify');
   // Until the bot is linked, only the connection makes sense.
   const shown: Tab = ready && !tg?.connected ? 'connect' : tab;
+  const { user } = useAuth();
   return (
     <>
       <PageHeader title="Xabarlar" subtitle="Telegram: akkauntingizga, guruhga va xodimlarga boradigan xabarlar" />
@@ -44,6 +46,7 @@ export default function Messages({ params }: { params?: URLSearchParams }) {
       <div className="grid gap-4">
         {shown === 'connect' && <TelegramCard tg={tg} ready={ready} loadError={error} setOverride={setOverride} />}
         {shown === 'connect' && tg?.connected && <PeopleCard items={people.data?.items} notLinked={people.data?.notLinked ?? 0} />}
+        {shown === 'notify' && tg?.connected && user.role === 'owner' && <ReportCard reportTime={tg.reportTime ?? DEFAULT_REPORT_TIME} setOverride={setOverride} />}
         {shown === 'notify' && tg?.connected && (
           <TelegramTemplates personalName={tg.chatName} people={people.data?.items ?? []}
             group={{ linked: Boolean(tg.groupName), name: tg.groupName, payments: tg.groupPayments !== false, cancels: tg.groupCancels !== false }} />
@@ -51,6 +54,44 @@ export default function Messages({ params }: { params?: URLSearchParams }) {
         {shown === 'broadcast' && tg?.connected && <Broadcasts people={people.data?.items ?? []} />}
       </div>
     </>
+  );
+}
+
+/** The evening report: what time it comes every day, and a button to send it right now. */
+function ReportCard({ reportTime, setOverride }: { reportTime: string; setOverride: (v: { telegram: TelegramState | null }) => void }) {
+  const toast = useToast();
+  const [time, setTime] = useState(reportTime);
+  const [busy, setBusy] = useState<'save' | 'send' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const valid = REPORT_TIME.test(time) && time >= REPORT_TIME_MIN && time <= REPORT_TIME_MAX;
+  async function run(name: 'save' | 'send', fn: () => Promise<void>) {
+    setError(null);
+    setBusy(name);
+    try { await fn(); } catch (err) { setError((err as Error).message); } finally { setBusy(null); }
+  }
+  const save = () => run('save', async () => {
+    setOverride(await api<{ telegram: TelegramState | null }>('/telegram/report-time', { method: 'PUT', body: { time } }));
+    toast({ tone: 'success', title: `Kechki hisobot endi har kuni ${time} da keladi` });
+  });
+  const sendNow = () => run('send', async () => {
+    await api('/telegram/send', { method: 'POST' });
+    toast({ tone: 'success', title: 'Hisobot va zaxira Telegramga yuborildi' });
+  });
+  return (
+    <Card>
+      <CardHeader title="Kechki hisobot" subtitle={`Har kuni ${reportTime} da sizga keladi: hisobot, Excel fayllar va zaxira`}
+        action={<Badge tone="success"><Clock className="size-3.5" />{reportTime}</Badge>} />
+      <div className="flex flex-wrap items-end gap-3 text-sm">
+        <Field label="Yuborish vaqti" htmlFor="report-time" hint={`${REPORT_TIME_MIN} dan ${REPORT_TIME_MAX} gacha, Toshkent vaqti`}>
+          <Input id="report-time" type="time" min={REPORT_TIME_MIN} max={REPORT_TIME_MAX} value={time}
+            onChange={(e) => setTime(e.target.value)} invalid={!valid} className="w-36" />
+        </Field>
+        <Button loading={busy === 'save'} disabled={!valid || time === reportTime} onClick={save}>Saqlash</Button>
+        <Button variant="primary" icon={<Send className="size-4" />} loading={busy === 'send'} onClick={sendNow}>Hozir yuborish</Button>
+      </div>
+      <p className="mt-3 text-xs text-ink-3">Sayt ochiq boʻlsa, hisobot aynan shu daqiqada ketadi. Hech kim kirmagan kunlari 1 soatgacha kechikishi mumkin.</p>
+      {error && <div className="mt-3"><Alert>{error}</Alert></div>}
+    </Card>
   );
 }
 
@@ -97,7 +138,7 @@ function PeopleCard({ items, notLinked }: { items?: LinkedPerson[]; notLinked: n
 }
 
 interface TelegramState { botName: string; connected: boolean; chatName: string | null; code: string | null; groupName: string | null; groupPaused?: boolean; personalPaused?: boolean; groupCode: string | null;
-  groupPayments?: boolean; groupCancels?: boolean; errors?: { chat: 'personal' | 'group'; message: string; at: string }[] }
+  groupPayments?: boolean; groupCancels?: boolean; reportTime?: string; errors?: { chat: 'personal' | 'group'; message: string; at: string }[] }
 
 /** Telegram's refusal in plain words, with what to do about it. */
 function telegramErrorHint(message: string) {

@@ -29,6 +29,7 @@ import { gzipSync } from 'node:zlib';
 import { createHash, randomInt } from 'node:crypto';
 import { EXPENSE_LABELS } from '../src/lib/excelSheets.js';
 import { MAX_TEMPLATE_LENGTH, STAFF_TEMPLATES, TEMPLATE_BY_KEY, renderTemplate, sampleValues, type TemplateKey } from '../src/lib/tgTemplates.js';
+import { DEFAULT_REPORT_TIME, REPORT_TIME, REPORT_TIME_MAX, REPORT_TIME_MIN } from '../src/lib/reportTime.js';
 import { DEFAULT_PAGE_SETTINGS, cleanPageSettings } from '../src/lib/pageConfig.js';
 import { cleanBrand } from '../src/lib/brandConfig.js';
 import { cleanMethods, type ExtraMethod } from '../src/lib/methodsConfig.js';
@@ -100,6 +101,8 @@ export async function handleApi(req: ApiRequest): Promise<ApiResponse> {
     if (r.access === 'kassa' && !kassaSources(user!.permissions).length) return { status: 403, body: { error: 'Sizga kassa ochilmagan' } };
     // Scheduled broadcasts go out on the next request after their time (checked at most once a minute).
     if (user) background(deliverDue());
+    // The evening report goes out on the first request after its time, so it comes on the minute while the site is open.
+    if (user) background(dailyReportDue());
     // A change may touch someone's role, rights or sessions: look sessions up afresh after it.
     if (req.method !== 'GET') forgetSessions();
     const allowed = user ? await branchesFor(user) : [];
@@ -1509,6 +1512,7 @@ route('POST', '/system/reset', 'owner', async (ctx) => {
     // together (no CASCADE) makes it fail rather than reach into any table not named here.
     await db.query(`TRUNCATE ${tables.join(', ')} RESTART IDENTITY`);
     await db.query(`DELETE FROM app_meta WHERE key = 'daily_report'`);
+    reportSentOn = null;
     await audit(db, ctx.user, 'data_reset', 'system', null, counted);
     return counted;
   });
@@ -2130,7 +2134,8 @@ const METHOD_LABEL: Record<string, string> = { cash: 'Naqd', card: 'Karta', yand
 const MONTHS = ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'];
 const som = (n: number | string) => `${String(Math.round(Number(n))).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} soʻm`;
 const dayLabel = (date: string) => `${Number(date.slice(8))}-${MONTHS[Number(date.slice(5, 7)) - 1]}, ${date.slice(0, 4)}`;
-const tashkentHour = () => new Date(Date.now() + 5 * 3600_000).getUTCHours();
+const tashkentMinutes = () => { const d = new Date(Date.now() + 5 * 3600_000); return d.getUTCHours() * 60 + d.getUTCMinutes(); };
+const reportTimeOf = (config: { reportTime?: string } | null) => (config?.reportTime && REPORT_TIME.test(config.reportTime) ? config.reportTime : DEFAULT_REPORT_TIME);
 
 async function dailyReportText(date: string): Promise<string | null> {
   const start = `($1::date)::timestamp AT TIME ZONE '${TZ}'`;
@@ -2299,7 +2304,7 @@ async function telegramView(config: Awaited<ReturnType<typeof getTelegram>>) {
   if (!config) return { telegram: null };
   const errors = config.chatId ? await getTelegramErrors() : [];
   return { telegram: {
-    groupPayments: config.groupPayments !== false, groupCancels: config.groupCancels !== false,
+    groupPayments: config.groupPayments !== false, groupCancels: config.groupCancels !== false, reportTime: reportTimeOf(config),
     errors: errors.filter((e) => e.chat === 'personal' || config.groupId),
     botName: config.botName, connected: Boolean(config.chatId), chatName: config.chatName || null, code: config.chatId ? null : config.code,
     groupName: config.groupId ? config.groupName || 'Guruh' : null, groupPaused: Boolean(config.groupId && config.groupPaused), personalPaused: Boolean(config.personalPaused), groupCode: config.chatId && !config.groupId ? groupCode(config.token) : null,
@@ -2503,14 +2508,16 @@ route('GET', '/backup', 'owner', async (ctx) => {
   return { filename: `laylak-zaxira-${todayTashkent()}.json.gz`, data: gz.toString('base64'), counts };
 });
 
-// Vercel Cron calls this every evening (vercel.json). It sends at most one report per day, and only
-// in the evening, so calling it by hand cannot spam the owner.
-route('GET', '/cron/daily', 'public', async (ctx) => {
-  const secret = process.env.CRON_SECRET;
-  if (secret && ctx.headers.authorization !== `Bearer ${secret}`) return { status: 401, body: { error: 'Ruxsat yoʻq' } };
-  await deliverDue(true).catch((error) => console.error('Broadcast delivery failed', error));
-  if (tashkentHour() < 19) return { sent: false, reason: 'early' };
+/**
+ * Sends today's evening report once its time (set on the Xabarlar page) has come. At most one a day:
+ * the day is claimed in app_meta first, so the cron and the site's own requests never both send it.
+ */
+async function deliverDailyReport(): Promise<{ sent: boolean; reason?: string }> {
+  const config = await getTelegram();
+  const [h, m] = reportTimeOf(config).split(':').map(Number);
+  if (tashkentMinutes() < h * 60 + m) return { sent: false, reason: 'early' };
   const date = todayTashkent();
+  if (reportSentOn === date) return { sent: false, reason: 'already-sent' };
   const claimed = await query(
     `INSERT INTO app_meta (key, value) VALUES ('daily_report', $1::jsonb)
      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
@@ -2518,7 +2525,10 @@ route('GET', '/cron/daily', 'public', async (ctx) => {
      RETURNING key`,
     [JSON.stringify({ date }), date],
   );
-  if (!claimed.length) return { sent: false, reason: 'already-sent' };
+  if (!claimed.length) {
+    reportSentOn = date;
+    return { sent: false, reason: 'already-sent' };
+  }
   try {
     await sendDailyReport(date);
   } catch (error) {
@@ -2526,5 +2536,39 @@ route('GET', '/cron/daily', 'public', async (ctx) => {
     if (error instanceof HttpError && error.status === 400) return { sent: false, reason: 'not-connected' };
     throw error;
   }
+  reportSentOn = date;
   return { sent: true };
+}
+let reportSentOn: string | null = null;
+let lastReportCheck = 0;
+/** The same, from ordinary requests: checked at most once a minute per server, and only when Telegram is linked. */
+async function dailyReportDue() {
+  if (process.env.DAILY_REPORT_ON_REQUEST === 'off' || Date.now() - lastReportCheck < 60_000) return;
+  lastReportCheck = Date.now();
+  if (!(await getTelegram())?.chatId) return;
+  await deliverDailyReport();
+}
+
+// When the evening report comes: the owner picks the time (Tashkent), between REPORT_TIME_MIN and REPORT_TIME_MAX.
+route('PUT', '/telegram/report-time', 'owner', async (ctx) => {
+  const config = await getTelegram();
+  if (!config?.chatId) throw new HttpError(400, 'Telegram ulanmagan');
+  const time = String(ctx.body?.time ?? '').trim();
+  if (!REPORT_TIME.test(time) || time < REPORT_TIME_MIN || time > REPORT_TIME_MAX) {
+    throw new HttpError(400, `Vaqtni ${REPORT_TIME_MIN} dan ${REPORT_TIME_MAX} gacha tanlang`);
+  }
+  const next = { ...config, reportTime: time };
+  await saveTelegram(next);
+  await audit(null, ctx.user, 'telegram_report_time', 'telegram', null, { from: reportTimeOf(config), to: time });
+  return telegramView(next);
+});
+
+// Vercel Cron calls this every hour of the afternoon and evening (vercel.json; on the free plan each run lands
+// somewhere inside its hour). It sends at most one report per day, and only after the chosen time,
+// so calling it by hand cannot spam the owner.
+route('GET', '/cron/daily', 'public', async (ctx) => {
+  const secret = process.env.CRON_SECRET;
+  if (secret && ctx.headers.authorization !== `Bearer ${secret}`) return { status: 401, body: { error: 'Ruxsat yoʻq' } };
+  await deliverDue(true).catch((error) => console.error('Broadcast delivery failed', error));
+  return deliverDailyReport();
 });

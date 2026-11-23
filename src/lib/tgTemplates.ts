@@ -70,7 +70,7 @@ export const TEMPLATES: TemplateDef[] = [
     text: '🗑 *{{soni}} oʻchirildi* · {{summa}}\n{{royxat}}\nKim: {{kim}}',
   },
   {
-    key: 'dailyReport', group: 'hisobot', files: true, title: 'Kechki hisobot', hint: 'Har kuni 19:00 dan keyin, faqat sizga',
+    key: 'dailyReport', group: 'hisobot', files: true, title: 'Kechki hisobot', hint: 'Har kuni siz tanlagan vaqtda, faqat sizga',
     vars: [
       { name: 'sana', label: 'Sana', sample: '13-noyabr, 2026' },
       { name: 'jami', label: 'Jami tushum', sample: '4 380 000 soʻm' },
