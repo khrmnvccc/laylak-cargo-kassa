@@ -1,0 +1,271 @@
+import { HttpError, query, transaction } from './db.js';
+import { escapeHtml, getTelegram, tg, type TelegramConfig } from './telegram.js';
+import {
+  MAX_FEE, MAX_LABEL, MAX_STOPS, googlePlaceUrl, googleRouteUrl, isShortMapLink, parsePlace, planRoute, roadKmLabel,
+  yandexPlaceUrl, yandexRouteUrl, type Place, type Point,
+} from '../src/lib/delivery.js';
+
+// Yetkazish: evening delivery runs inside the city. The owner sends the bot a few locations (or map links),
+// then /reys; the bot puts them in the shortest order from the start point and saves the run. The fee taken
+// at each stop is kept here only: it never becomes a payment, so 1-kassa and 2-kassa never see it.
+
+export interface DeliverySettings { start?: Place | null }
+interface DraftStop extends Place { fee?: number }
+interface Draft { stops: DraftStop[]; waitingStart?: boolean }
+
+const today = () => new Date(Date.now() + 5 * 3600_000).toISOString().slice(0, 10);
+
+async function meta<T>(key: string): Promise<T | null> {
+  const rows = await query(`SELECT value FROM app_meta WHERE key = $1`, [key]);
+  return (rows[0]?.value as T) ?? null;
+}
+async function setMeta(key: string, value: unknown) {
+  await query(
+    `INSERT INTO app_meta (key, value) VALUES ($1, $2::jsonb)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [key, JSON.stringify(value)],
+  );
+}
+
+export async function getDeliverySettings(): Promise<DeliverySettings> {
+  return (await meta<DeliverySettings>('delivery')) ?? {};
+}
+export async function saveDeliverySettings(settings: DeliverySettings) {
+  await setMeta('delivery', settings);
+}
+
+export async function getDraft(): Promise<Draft> {
+  const d = await meta<Draft>('delivery_draft');
+  return { stops: Array.isArray(d?.stops) ? d!.stops : [], waitingStart: Boolean(d?.waitingStart) };
+}
+async function saveDraft(draft: Draft) {
+  await setMeta('delivery_draft', draft);
+}
+export async function clearDraft() {
+  await query(`DELETE FROM app_meta WHERE key = 'delivery_draft'`);
+}
+
+/** Where every run starts: the place set on the Yetkazish page, else the office from Davomat. */
+export async function startPoint(): Promise<(Place & { from: 'set' | 'office' }) | null> {
+  const s = await getDeliverySettings();
+  if (s.start && Number.isFinite(s.start.lat)) return { ...s.start, from: 'set' };
+  const office = await meta<{ lat: number; lng: number }>('office');
+  if (office && Number.isFinite(office.lat) && Number.isFinite(office.lng)) return { lat: office.lat, lng: office.lng, label: 'Ishxona', from: 'office' };
+  return null;
+}
+
+/** Opens a short map link (it only redirects) to read the coordinates from where it leads. */
+async function followShortLink(url: string): Promise<Point | null> {
+  let next = url;
+  for (let hop = 0; hop < 5; hop++) {
+    let res: Response;
+    try {
+      res = await fetch(next, { redirect: 'manual', signal: AbortSignal.timeout(5000), headers: { 'user-agent': 'Mozilla/5.0 (kassa)' } });
+    } catch {
+      return null;
+    }
+    const location = res.headers.get('location');
+    if (!location) {
+      const html = res.status === 200 ? (await res.text().catch(() => '')).slice(0, 200_000) : '';
+      const m = html.match(/(?:center|ll|@)[=:"\s[]*(-?\d{1,3}\.\d{4,})[,%2C\s]+(-?\d{1,3}\.\d{4,})/);
+      return m ? parsePlace(`${m[1]},${m[2]}`) : null;
+    }
+    next = new URL(location, next).toString();
+    const found = parsePlace(next);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** A place from what was typed or pasted; null when it holds no place. */
+export async function readPlace(text: string): Promise<Point | null> {
+  const direct = parsePlace(text);
+  if (direct) return direct;
+  const link = text.match(/https?:\/\/\S+/)?.[0];
+  return link && isShortMapLink(link) ? followShortLink(link) : null;
+}
+
+export interface Stop { id: number; position: number; lat: number; lng: number; label: string; fee: number; done: boolean }
+export interface Trip { id: number; day: string; km: number; source: 'site' | 'bot'; start: Point | null; created_by_name: string | null; created_at: string; stops: Stop[] }
+
+/** Puts the places in order and saves them as one run. */
+export async function createTrip(places: DraftStop[], source: 'site' | 'bot', by: string | null, day = today()): Promise<Trip> {
+  if (!places.length) throw new HttpError(400, 'Kamida bitta manzil kerak');
+  if (places.length > MAX_STOPS) throw new HttpError(400, `Bir reysda ${MAX_STOPS} tagacha manzil`);
+  const start = await startPoint();
+  const { order, km } = planRoute(start, places);
+  const id = await transaction(async (db) => {
+    const trip = await db.query(
+      `INSERT INTO deliveries (day, start_lat, start_lng, km, source, created_by_name) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [day, start?.lat ?? null, start?.lng ?? null, Math.round(km * 100) / 100, source, by],
+    );
+    const tripId = Number(trip.rows[0].id);
+    for (const [i, p] of order.entries()) {
+      await db.query(
+        `INSERT INTO delivery_stops (delivery_id, position, lat, lng, label, fee) VALUES ($1, $2, $3, $4, $5, $6)`,
+        [tripId, i + 1, p.lat, p.lng, (p.label || '').slice(0, MAX_LABEL), Math.min(MAX_FEE, Math.max(0, Math.round(p.fee || 0)))],
+      );
+    }
+    return tripId;
+  });
+  return (await loadTrips({ id }))[0];
+}
+
+export async function loadTrips(where: { id?: number; from?: string; to?: string }): Promise<Trip[]> {
+  const params: unknown[] = [];
+  let sql = `SELECT id::int, day::text, km::float, source, start_lat, start_lng, created_by_name, created_at FROM deliveries`;
+  if (where.id) { params.push(where.id); sql += ` WHERE id = $1`; }
+  else { params.push(where.from, where.to); sql += ` WHERE day BETWEEN $1::date AND $2::date`; }
+  sql += ` ORDER BY day DESC, id DESC LIMIT 400`;
+  const trips = await query(sql, params);
+  if (!trips.length) return [];
+  const stops = await query<Stop & { delivery_id: number }>(
+    `SELECT id::int, delivery_id::int, position::int, lat, lng, label, fee::float, done FROM delivery_stops
+      WHERE delivery_id = ANY($1::bigint[]) ORDER BY position`,
+    [trips.map((t: any) => t.id)],
+  );
+  return trips.map((t: any) => ({
+    id: t.id, day: t.day, km: t.km, source: t.source, created_by_name: t.created_by_name, created_at: t.created_at,
+    start: t.start_lat == null ? null : { lat: t.start_lat, lng: t.start_lng },
+    stops: stops.filter((s) => s.delivery_id === t.id).map(({ delivery_id: _d, ...s }) => s),
+  }));
+}
+
+// ---------- the Telegram side ----------
+
+const money = (n: number) => `${String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} soʻm`;
+
+/** The run as the bot sends it: numbered stops, each with its map links, and buttons for the whole route. */
+export function tripMessage(trip: Trip) {
+  const lines = [`🚚 <b>Reys · ${trip.stops.length} ta manzil</b> · ${roadKmLabel(trip.km)}`];
+  if (trip.start) lines.push('Boshlanish: ishxonadan');
+  lines.push('');
+  for (const s of trip.stops) {
+    const name = s.label ? escapeHtml(s.label) : `${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}`;
+    const fee = s.fee > 0 ? ` · ${money(s.fee)}` : '';
+    lines.push(`${s.position}. ${name}${fee}\n   <a href="${yandexPlaceUrl(s)}">Yandex</a> · <a href="${googlePlaceUrl(s)}">Google</a>`);
+  }
+  const points = [...(trip.start ? [trip.start] : []), ...trip.stops];
+  return {
+    text: lines.join('\n'),
+    reply_markup: { inline_keyboard: [[
+      { text: '🗺 Yandex: butun yoʻl', url: yandexRouteUrl(points) },
+      { text: 'Google Maps', url: googleRouteUrl(points) },
+    ]] },
+  };
+}
+
+const HELP = [
+  '🚚 <b>Yetkazish</b>',
+  '',
+  '1. Manzillarni yuboring: 📎 → Joylashuv (lokatsiya), yoki Yandex / Google xarita havolasi.',
+  '2. Lokatsiyadan keyin yozilgan matn shu manzil nomi boʻladi, faqat raqam yozsangiz (masalan 30000) olingan pul.',
+  '3. Hammasi yuborilgach /reys yozing: eng qisqa tartibda yoʻl tuzib beraman.',
+  '',
+  '/royxat — yuborilgan manzillar',
+  '/bekor — roʻyxatni tozalash',
+  '/ombor — boshlanish joyini oʻzgartirish (keyin lokatsiya yuboring)',
+].join('\n');
+
+async function reply(config: TelegramConfig, chatId: number, text: string, extra: Record<string, unknown> = {}) {
+  await tg(config.token, 'sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true, ...extra }, 10_000);
+}
+
+function draftList(draft: Draft) {
+  if (!draft.stops.length) return 'Roʻyxat boʻsh. Lokatsiya yoki xarita havolasini yuboring.';
+  return [`📋 <b>${draft.stops.length} ta manzil</b>`, ...draft.stops.map((s, i) =>
+    `${i + 1}. ${s.label ? escapeHtml(s.label) : `${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}`}${s.fee ? ` · ${money(s.fee)}` : ''}`), '', 'Tayyor boʻlsa /reys'].join('\n');
+}
+
+/** One message to the bot (from the webhook). Only the owner's own chat is answered; returns what it did. */
+export async function handleBotMessage(config: TelegramConfig, message: any): Promise<string> {
+  if (!config.chatId || message?.chat?.id !== config.chatId || message.chat.type !== 'private') return 'ignored';
+  const chatId = config.chatId;
+  const draft = await getDraft();
+  const location = message.venue?.location ?? message.location;
+  const text: string = typeof message.text === 'string' ? message.text.trim() : '';
+  const cmd = text.startsWith('/') ? text.slice(1).split(/[\s@]/)[0].toLowerCase() : /^reys$/i.test(text) ? 'reys' : '';
+
+  let place: Point | null = location && Number.isFinite(location.latitude) && Number.isFinite(location.longitude)
+    ? { lat: Math.round(location.latitude * 1e6) / 1e6, lng: Math.round(location.longitude * 1e6) / 1e6 } : null;
+  if (!place && text && !cmd) place = await readPlace(text);
+
+  if (place && draft.waitingStart) {
+    await saveDeliverySettings({ ...(await getDeliverySettings()), start: { lat: place.lat, lng: place.lng, label: message.venue?.title || 'Boshlanish' } });
+    await saveDraft({ ...draft, waitingStart: false });
+    await reply(config, chatId, '✅ Boshlanish joyi saqlandi. Endi reyslar shu yerdan tuziladi.');
+    return 'start';
+  }
+  if (place) {
+    if (draft.stops.length >= MAX_STOPS) {
+      await reply(config, chatId, `Bir reysda ${MAX_STOPS} tagacha manzil. /reys yozing yoki /bekor bilan tozalang.`);
+      return 'full';
+    }
+    const label = (message.venue?.title || message.venue?.address || '').slice(0, MAX_LABEL);
+    draft.stops.push({ lat: place.lat, lng: place.lng, ...(label ? { label } : {}) });
+    await saveDraft(draft);
+    await reply(config, chatId, `📍 ${draft.stops.length}-manzil qoʻshildi. Nomi yoki olingan pulni yozishingiz mumkin. Yana yuboring yoki /reys`);
+    return 'added';
+  }
+  if (cmd === 'reys') {
+    if (!draft.stops.length) { await reply(config, chatId, 'Hali manzil yoʻq. Avval lokatsiyalarni yuboring.'); return 'empty'; }
+    const trip = await createTrip(draft.stops, 'bot', config.chatName ?? null);
+    await clearDraft();
+    const msg = tripMessage(trip);
+    await reply(config, chatId, msg.text, { reply_markup: msg.reply_markup });
+    return 'trip';
+  }
+  if (cmd === 'bekor' || cmd === 'yangi') {
+    await clearDraft();
+    await reply(config, chatId, '🧹 Roʻyxat tozalandi. Yangi manzillarni yuboring.');
+    return 'cleared';
+  }
+  if (cmd === 'royxat') { await reply(config, chatId, draftList(draft)); return 'list'; }
+  if (cmd === 'ombor') {
+    await saveDraft({ ...draft, waitingStart: true });
+    await reply(config, chatId, 'Boshlanish joyining lokatsiyasini yuboring (📎 → Joylashuv).');
+    return 'waiting-start';
+  }
+  if (cmd) { await reply(config, chatId, HELP); return 'help'; }
+  // Plain words after a location: a number is the money taken there, anything else is its name.
+  if (text && draft.stops.length) {
+    const last = draft.stops[draft.stops.length - 1];
+    const digits = text.replace(/[\s.,']/g, '').replace(/(soʻm|so'm|som|sum)$/i, '');
+    if (/^\d{3,9}$/.test(digits)) {
+      last.fee = Math.min(MAX_FEE, Number(digits));
+      await saveDraft(draft);
+      await reply(config, chatId, `💵 ${draft.stops.length}-manzil: ${money(last.fee)}`);
+      return 'fee';
+    }
+    last.label = text.slice(0, MAX_LABEL);
+    await saveDraft(draft);
+    await reply(config, chatId, `✏️ ${draft.stops.length}-manzil: ${escapeHtml(last.label)}`);
+    return 'label';
+  }
+  if (text) await reply(config, chatId, HELP);
+  return 'help';
+}
+
+/** Turns the webhook on (Telegram then posts every message here) or off (back to reading updates on demand). */
+export async function setBotHook(on: boolean, host: string | undefined, save: (c: TelegramConfig) => Promise<void>): Promise<TelegramConfig> {
+  const config = await getTelegram();
+  if (!config?.chatId) throw new HttpError(400, 'Avval Telegram botni ulang (Xabarlar oynasi)');
+  if (!on) {
+    if (config.hookSecret) await tg(config.token, 'deleteWebhook', { drop_pending_updates: false }).catch(() => undefined);
+    const { hookSecret: _s, ...rest } = config;
+    await save(rest);
+    return rest;
+  }
+  if (!host || /localhost|127\.0\.0\.1/.test(host)) throw new HttpError(400, 'Bot faqat internetdagi sayt manzilida ishlaydi');
+  const secret = config.hookSecret || crypto.randomUUID().replace(/-/g, '');
+  await tg(config.token, 'setWebhook', { url: `https://${host}/api/telegram/hook`, secret_token: secret, allowed_updates: ['message'] });
+  await tg(config.token, 'setMyCommands', { commands: [
+    { command: 'reys', description: 'Yuborilgan manzillardan reys tuzish' },
+    { command: 'royxat', description: 'Yuborilgan manzillar' },
+    { command: 'bekor', description: 'Roʻyxatni tozalash' },
+    { command: 'ombor', description: 'Boshlanish joyini oʻzgartirish' },
+  ] }).catch(() => undefined);
+  const next = { ...config, hookSecret: secret };
+  await save(next);
+  return next;
+}

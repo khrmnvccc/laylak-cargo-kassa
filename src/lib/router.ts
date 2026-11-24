@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
-export type Page = 'dashboard' | 'kassa' | 'orders' | 'operations' | 'monitoring' | 'daily' | 'periods' | 'workers' | 'attendance' | 'clients' | 'balance' | 'messages' | 'settings';
-export const PAGES: Page[] = ['dashboard', 'kassa', 'orders', 'operations', 'monitoring', 'daily', 'periods', 'workers', 'attendance', 'clients', 'balance', 'messages', 'settings'];
+export type Page = 'dashboard' | 'kassa' | 'orders' | 'operations' | 'monitoring' | 'delivery' | 'daily' | 'periods' | 'workers' | 'attendance' | 'clients' | 'balance' | 'messages' | 'settings';
+export const PAGES: Page[] = ['dashboard', 'kassa', 'orders', 'operations', 'monitoring', 'delivery', 'daily', 'periods', 'workers', 'attendance', 'clients', 'balance', 'messages', 'settings'];
 
 export interface Route {
   page: Page;

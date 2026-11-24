@@ -1521,3 +1521,109 @@ test('mixed payment: part cash, part card, saved as two payments', async () => {
   assert.equal(after.cash - before.cash, 30000);
   assert.equal(after.card - before.card, 70000);
 });
+
+test('delivery: off until the owner switches it on; the bot takes locations and plans the shortest run', async () => {
+  const { planRoute, parsePlace } = await import('../src/lib/delivery.js');
+  // Links and pairs people paste: Google is lat,lng; Yandex is lng,lat.
+  assert.deepEqual(parsePlace('41.311081, 69.279737'), { lat: 41.311081, lng: 69.279737 });
+  assert.deepEqual(parsePlace('https://www.google.com/maps/place/X/@41.3275,69.2817,17z'), { lat: 41.3275, lng: 69.2817 });
+  assert.deepEqual(parsePlace('https://yandex.uz/maps/10335/tashkent/?ll=69.240562%2C41.299496&z=12'), { lat: 41.299496, lng: 69.240562 });
+  assert.deepEqual(parsePlace('69.2401, 41.2995'), { lat: 41.2995, lng: 69.2401 }, 'a reversed pair is swapped');
+  assert.equal(parsePlace('salom'), null);
+  // Stops on a line east of the start come back nearest first, whatever order they were sent in.
+  const start = { lat: 41.3, lng: 69.2 };
+  const line = [3, 1, 4, 2].map((k) => ({ lat: 41.3, lng: 69.2 + k * 0.01, label: String(k) }));
+  assert.deepEqual(planRoute(start, line).order.map((p) => p.label), ['1', '2', '3', '4']);
+  const many = Array.from({ length: 14 }, (_, k) => ({ lat: 41.3, lng: 69.2 + ((k * 5) % 14 + 1) * 0.01, label: String((k * 5) % 14 + 1) }));
+  assert.deepEqual(planRoute(start, many).order.map((p) => Number(p.label)), Array.from({ length: 14 }, (_, k) => k + 1));
+
+  const sent: Array<{ method: string; body: any }> = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init: any) => {
+    const method = String(url).split('/').pop()!;
+    sent.push({ method, body: init?.body ? JSON.parse(init.body) : null });
+    const result = method === 'getMe' ? { username: 'laylak_test_bot' }
+      : method === 'getUpdates' ? [{ message: { text: `/start ${code}`, chat: { id: 555, type: 'private', first_name: 'Ega' } } }]
+      : true;
+    return new Response(JSON.stringify({ ok: true, result }), { status: 200 });
+  }) as typeof fetch;
+  let code = '';
+  try {
+    const owner = new Client();
+    await owner.call('POST', '/auth/login', { username: 'admin', password: 'password123' });
+    const w = new Client();
+    await w.call('POST', '/auth/login', { username: 'chilonzor', password: 'worker123' });
+    // Off by default: not in the page settings, and staff cannot reach it.
+    assert.equal((await owner.call('GET', '/pages')).body.pages.delivery?.on, undefined);
+    assert.equal((await w.call('GET', '/delivery')).status, 403);
+
+    code = (await owner.call('PUT', '/telegram', { token: '123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij' })).body.telegram.code;
+    assert.equal((await owner.call('POST', '/telegram/check')).status, 200);
+    const pages = (await owner.call('GET', '/pages')).body.pages;
+    assert.equal((await owner.call('PUT', '/pages', { pages: { ...pages, delivery: { on: true } } })).body.pages.delivery.on, true);
+
+    // The webhook: refused without Telegram's secret.
+    const hook = (body: unknown, secret: string) => handleApi({ method: 'POST', path: '/telegram/hook', query: {}, body, headers: { 'x-telegram-bot-api-secret-token': secret } });
+    assert.equal((await hook({ message: { text: 'x', chat: { id: 555, type: 'private' } } }, 'nope')).status, 403);
+    const on = await owner.call('POST', '/delivery/bot', { on: true });
+    assert.equal(on.status, 200, JSON.stringify(on.body));
+    const setHook = sent.find((s) => s.method === 'setWebhook')!;
+    assert.equal(setHook.body.url, 'https://kassa.test/api/telegram/hook');
+    const secret = setHook.body.secret_token;
+
+    const msg = (m: Record<string, unknown>) => hook({ update_id: 1, message: { chat: { id: 555, type: 'private' }, ...m } }, secret);
+    assert.equal((await owner.call('PUT', '/delivery/start', { place: '41.30, 69.20', label: 'Ombor' })).body.start.from, 'set');
+    await msg({ location: { latitude: 41.3, longitude: 69.24 } });
+    await msg({ text: 'Aziz' });
+    await msg({ text: '30 000' });
+    await msg({ text: 'https://www.google.com/maps/@41.3,69.21,17z' });
+    await msg({ location: { latitude: 41.3, longitude: 69.23 } });
+    // A stranger's chat is never answered.
+    sent.length = 0;
+    await hook({ message: { chat: { id: 999, type: 'private' }, location: { latitude: 41, longitude: 69 } } }, secret);
+    assert.equal(sent.length, 0);
+    assert.equal((await owner.call('GET', '/delivery')).body.draft.length, 3);
+
+    await msg({ text: '/reys' });
+    const reply = sent.find((s) => s.method === 'sendMessage')!;
+    assert.match(reply.body.text, /3 ta manzil/);
+    assert.match(reply.body.reply_markup.inline_keyboard[0][0].url, /rtext=41\.3,69\.2~41\.3,69\.21~41\.3,69\.23~41\.3,69\.24/);
+    const view = (await owner.call('GET', '/delivery')).body;
+    assert.equal(view.draft.length, 0);
+    assert.equal(view.trips.length, 1);
+    assert.deepEqual(view.trips[0].stops.map((s: any) => [s.lng, s.label, s.fee]), [[69.21, '', 0], [69.23, '', 0], [69.24, 'Aziz', 30000]]);
+    assert.equal(view.totals.earned, 30000);
+
+    // Linking another chat by code still works while the webhook is on (from what the hook kept).
+    const before = (await owner.call('GET', '/telegram/me')).body.telegram;
+    if (!before.linked) {
+      await msg({ text: `/start ${before.code}` });
+      assert.equal((await owner.call('POST', '/telegram/me/check')).status, 200);
+    }
+
+    // Money stays out of the kassa.
+    const summary = (await owner.call('GET', '/summary', undefined, { from: today, to: today })).body.totals;
+    const stop = view.trips[0].stops[0];
+    assert.equal((await owner.call('PUT', `/delivery/stops/${stop.id}`, { fee: 15000, done: true })).status, 200);
+    assert.deepEqual((await owner.call('GET', '/summary', undefined, { from: today, to: today })).body.totals, summary);
+    assert.equal((await owner.call('GET', '/delivery')).body.totals.earned, 45000);
+
+    // A run typed on the page; a line that is not a place is pointed out.
+    const bad = await owner.call('POST', '/delivery/trips', { stops: [{ place: '41.31, 69.25' }, { place: 'yoʻq' }] });
+    assert.equal(bad.status, 400);
+    assert.deepEqual(Object.keys(bad.body.fields), ['1']);
+    const made = await owner.call('POST', '/delivery/trips', { stops: [{ place: '41.31, 69.25', label: 'B', fee: 20000 }, { place: '41.30, 69.205', label: 'A' }] });
+    assert.equal(made.status, 201);
+    assert.deepEqual(made.body.trip.stops.map((s: any) => s.label), ['A', 'B']);
+    assert.equal((await owner.call('DELETE', `/delivery/trips/${made.body.trip.id}`)).status, 200);
+
+    // Switching the section off in Oynalar takes the webhook off too.
+    sent.length = 0;
+    await owner.call('PUT', '/pages', { pages });
+    assert.ok(sent.some((s) => s.method === 'deleteWebhook'));
+    assert.equal((await owner.call('GET', '/delivery')).body.bot.on, false);
+  } finally {
+    globalThis.fetch = realFetch;
+    await backgroundSettled();
+  }
+});

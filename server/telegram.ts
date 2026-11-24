@@ -20,6 +20,9 @@ export interface TelegramConfig {
   groupPayments?: boolean; // payment pictures
   groupCancels?: boolean; // cancelled payments and expenses, deleted orders
   reportTime?: string; // 'HH:MM' Tashkent time the evening report goes out; missing means 19:00
+  // Set while Telegram sends the bot's messages to our webhook (the Yetkazish bot); Telegram puts it in
+  // every call's header, so nobody else can post to the hook.
+  hookSecret?: string;
 }
 
 /** Which kind of message is being sent, so the group can be told to skip one. */
@@ -101,6 +104,22 @@ export async function tg(token: string, method: string, body: Record<string, unk
     throw new HttpError(502, `Telegram rad etdi: ${data?.description || res.status}`);
   }
   return data.result;
+}
+
+/**
+ * The bot's newest messages, for linking a chat by its code. Normally asked from Telegram; while the
+ * webhook is on Telegram refuses that, so they come from what the hook kept (telegram_inbox).
+ */
+export async function recentUpdates(config: TelegramConfig): Promise<any[]> {
+  if (!config.hookSecret) return tg(config.token, 'getUpdates', { offset: -100, allowed_updates: ['message'], timeout: 0 });
+  const rows = await query<{ update: any }>(`SELECT update FROM telegram_inbox ORDER BY id DESC LIMIT 100`);
+  return rows.map((r) => r.update).reverse();
+}
+
+/** Keeps one update the webhook got; only the last few hundred stay. */
+export async function keepUpdate(update: unknown) {
+  await query(`INSERT INTO telegram_inbox (update) VALUES ($1::jsonb)`, [JSON.stringify(update)]);
+  if (Math.random() < 0.1) await query(`DELETE FROM telegram_inbox WHERE id < (SELECT MAX(id) - 300 FROM telegram_inbox)`);
 }
 
 export const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

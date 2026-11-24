@@ -444,7 +444,43 @@ CREATE INDEX IF NOT EXISTS expenses_branch ON expenses (branch_id, spent_at);
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS branches SMALLINT[];
 `;
 
-const SCHEMA_VERSION = 17;
+// Yetkazish: evening delivery runs (reys) inside the city, each an ordered list of stops with the fee taken
+// there. Kept apart from the kassa: none of it is a payment or reaches 1-kassa / 2-kassa.
+// telegram_inbox: what the bot was sent while Telegram delivers to our webhook (getUpdates stops working then).
+const SCHEMA_V18_SQL = `
+CREATE TABLE IF NOT EXISTS deliveries (
+  id BIGSERIAL PRIMARY KEY,
+  day DATE NOT NULL,
+  start_lat DOUBLE PRECISION,
+  start_lng DOUBLE PRECISION,
+  km NUMERIC(8, 2) NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'site' CHECK (source IN ('site', 'bot')),
+  created_by_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS deliveries_day ON deliveries (day);
+ALTER TABLE deliveries ENABLE ROW LEVEL SECURITY;
+CREATE TABLE IF NOT EXISTS delivery_stops (
+  id BIGSERIAL PRIMARY KEY,
+  delivery_id BIGINT NOT NULL REFERENCES deliveries(id) ON DELETE CASCADE,
+  position SMALLINT NOT NULL,
+  lat DOUBLE PRECISION NOT NULL,
+  lng DOUBLE PRECISION NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  fee BIGINT NOT NULL DEFAULT 0 CHECK (fee >= 0),
+  done BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE INDEX IF NOT EXISTS delivery_stops_trip ON delivery_stops (delivery_id, position);
+ALTER TABLE delivery_stops ENABLE ROW LEVEL SECURITY;
+CREATE TABLE IF NOT EXISTS telegram_inbox (
+  id BIGSERIAL PRIMARY KEY,
+  update JSONB NOT NULL,
+  at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE telegram_inbox ENABLE ROW LEVEL SECURITY;
+`;
+
+const SCHEMA_VERSION = 18;
 
 export function ensureSchema(): Promise<void> {
   if (!globalForPool.__kassaSchema) {
@@ -489,6 +525,7 @@ async function migrate() {
       if (current < 15) await client.query(SCHEMA_V15_SQL);
       if (current < 16) await client.query(SCHEMA_V16_SQL);
       if (current < 17) await client.query(SCHEMA_V17_SQL);
+      if (current < 18) await client.query(SCHEMA_V18_SQL);
       await client.query(
         `INSERT INTO app_meta (key, value) VALUES ('schema_version', $1::jsonb)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
