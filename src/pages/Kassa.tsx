@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Banknote, CheckCircle2, ChevronDown, ImagePlus, Printer, CreditCard, Loader2, Mail, Navigation, ReceiptText, Save, UserCheck, UserPlus, X } from 'lucide-react';
+import { Banknote, CheckCircle2, Coins, ChevronDown, ImagePlus, Printer, CreditCard, Loader2, Mail, Navigation, ReceiptText, Save, UserCheck, UserPlus, X } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useApi, useLive } from '../lib/live';
@@ -17,7 +17,7 @@ import { can } from '../lib/perms';
 interface ClientInfo { client: { code: string; full_name: string | null }; stats: { total: number; count: number } }
 const METHOD_ICONS = { cash: Banknote, card: CreditCard, yandex: Navigation, pochta: Mail };
 
-type Errors = Partial<Record<'clientCode' | 'clientName' | 'amount' | 'method' | 'paidAt' | 'note' | 'photos' | 'trips', string>>;
+type Errors = Partial<Record<'clientCode' | 'clientName' | 'amount' | 'method' | 'cashPart' | 'paidAt' | 'note' | 'photos' | 'trips', string>>;
 const MAX_PHOTOS = 4;
 
 function nowLocalInput(): string {
@@ -35,6 +35,9 @@ export default function Kassa() {
   const [clientName, setClientName] = useState('');
   const [amountText, setAmountText] = useState('');
   const [method, setMethod] = useState<Method>('cash');
+  // Aralash: part in cash, the rest by card; saved as two payments.
+  const [mixed, setMixed] = useState(false);
+  const [cashText, setCashText] = useState('');
   // Yandex / Pochta only when the owner has them switched on for payment entry.
   const entryMethods = useEntryMethods();
   // The owner decides in Sozlamalar whether the orders picture is required.
@@ -62,6 +65,7 @@ export default function Kassa() {
   const codeRef = useRef<HTMLInputElement>(null);
 
   const amount = Number(amountText.replace(/\D/g, '')) || 0;
+  const cashPart = Number(cashText.replace(/\D/g, '')) || 0;
   const normalizedCode = clientCode.trim().toUpperCase();
 
   useEffect(() => {
@@ -124,6 +128,7 @@ export default function Kassa() {
     else if (amount > 10_000_000_000) e.amount = 'Summa juda katta';
     if (clientName.length > 80) e.clientName = 'Ism juda uzun';
     if (note.length > 500) e.note = 'Izoh 500 belgidan oshmasin';
+    if (mixed && amount && !(cashPart > 0 && cashPart < amount)) e.cashPart = 'Naqd qismi umumiy summadan kichik boʻlsin';
     if (!/^\d{1,3}$/.test(trips)) e.trips = 'Reyslar sonini kiriting';
     if (photoRequired && !photos.length) e.photos = 'Buyurtmalar rasmini yuklang';
     if (customTime) {
@@ -154,6 +159,7 @@ export default function Kassa() {
           clientName: clientName.trim(),
           amount,
           method,
+          cashPart: mixed ? cashPart : undefined,
           note: note.trim(),
           trips: Number(trips),
           paidAt: customTime ? new Date(`${paidAtLocal}:00+05:00`).toISOString() : undefined,
@@ -163,9 +169,11 @@ export default function Kassa() {
       setConfirming(false);
       setLastSaved(payment);
       if (autoLabel) printPaymentLabel(payment);
-      toast({ tone: 'success', title: 'Toʻlov saqlandi', description: `${payment.client_code} · ${money(payment.amount)} · ${methodLabel(payment.method)}` });
+      toast({ tone: 'success', title: 'Toʻlov saqlandi', description: mixed
+        ? `${payment.client_code} · naqd ${money(cashPart)} + ${methodLabel(method).toLowerCase()} ${money(amount - cashPart)}`
+        : `${payment.client_code} · ${money(payment.amount)} · ${methodLabel(payment.method)}` });
       if (telegram === 'off') toast({ tone: 'error', title: photos.length ? 'Rasm adminga yuborilmadi' : 'Xabar adminga yuborilmadi', description: TELEGRAM_MISS[telegram] });
-      setClientCode(''); setClientName(''); setAmountText(''); setNote(''); setTrips('1'); setPhotos([]); setErrors({}); setCustomTime(false);
+      setClientCode(''); setClientName(''); setAmountText(''); setCashText(''); setMixed(false); if (mixed) setMethod('cash'); setNote(''); setTrips('1'); setPhotos([]); setErrors({}); setCustomTime(false);
       setLookup({ state: 'idle' });
       bump();
       setTimeout(() => codeRef.current?.focus(), 50);
@@ -230,12 +238,17 @@ export default function Kassa() {
             </Field>
 
             <Field label="Toʻlov turi" required error={errors.method}>
-              <div role="radiogroup" aria-label="Toʻlov turi" className="grid grid-cols-2 gap-2">
-                {PAY_GROUPS.map((m) => {
-                  const Icon = m.value === 'cash' ? Banknote : CreditCard;
-                  const active = m.value === 'cash' ? method === 'cash' : isCardMethod(method);
+              <div role="radiogroup" aria-label="Toʻlov turi" className="grid grid-cols-3 gap-2">
+                {[...PAY_GROUPS, { value: 'mixed', label: 'Aralash', color: 'var(--ink-2)' }].map((m) => {
+                  const Icon = m.value === 'cash' ? Banknote : m.value === 'card' ? CreditCard : Coins;
+                  const active = m.value === 'mixed' ? mixed : !mixed && (m.value === 'cash' ? method === 'cash' : isCardMethod(method));
+                  const pick = () => {
+                    if (m.value === 'mixed') { setMixed(true); if (method === 'cash') setMethod('card'); return; }
+                    setMixed(false); setErrors((er) => ({ ...er, cashPart: undefined }));
+                    if (!(m.value === 'cash' ? method === 'cash' : isCardMethod(method))) setMethod(m.value as Method);
+                  };
                   return (
-                    <button key={m.value} type="button" role="radio" aria-checked={active} onClick={() => !active && setMethod(m.value)}
+                    <button key={m.value} type="button" role="radio" aria-checked={active} onClick={() => !active && pick()}
                       className={cx('flex h-11 items-center justify-center gap-2 rounded-lg border text-base font-medium transition-colors sm:h-12',
                         active ? 'border-transparent text-ink ring-2' : 'border-line bg-surface text-ink-2 hover:bg-surface-2')}
                       style={active ? { background: `color-mix(in srgb, ${m.color} 12%, var(--surface))`, ['--tw-ring-color' as string]: m.color } : undefined}>
@@ -244,6 +257,24 @@ export default function Kassa() {
                   );
                 })}
               </div>
+              {mixed && (
+                <div className="anim-rise mt-2 grid grid-cols-2 gap-2 rounded-lg border border-line bg-surface-2 p-2">
+                  <label className="block">
+                    <span className="mb-1 flex items-center gap-1.5 px-1 text-xs text-ink-3"><Banknote className="size-3.5" style={{ color: 'var(--cash)' }} />Naqd qismi</span>
+                    <Input inputMode="numeric" value={cashText} invalid={Boolean(errors.cashPart)} placeholder="0" autoComplete="off" className="h-10 font-semibold num"
+                      onChange={(e) => { const d = e.target.value.replace(/\D/g, '').slice(0, 11); setCashText(d ? groupDigits(Number(d)) : ''); }} />
+                  </label>
+                  <div>
+                    <span className="mb-1 flex items-center gap-1.5 px-1 text-xs text-ink-3"><CreditCard className="size-3.5" style={{ color: 'var(--card)' }} />Karta qismi</span>
+                    <div className="flex h-10 items-center rounded-lg border border-line bg-surface px-3 text-base font-semibold text-ink num sm:text-sm">
+                      {amount && cashPart < amount ? money(amount - cashPart) : '—'}
+                    </div>
+                  </div>
+                  <div className={cx('col-span-2 px-1 text-xs', errors.cashPart ? 'text-danger' : 'text-ink-3')}>
+                    {errors.cashPart || 'Umumiy summadan naqd berilganini yozing, qolgani karta boʻlib saqlanadi.'}
+                  </div>
+                </div>
+              )}
               {isCardMethod(method) && entryMethods.length > 1 && (
                 <div className="anim-rise mt-2 rounded-lg border border-line bg-surface-2 p-2">
                   <div className="mb-1.5 px-1 text-xs text-ink-3">Karta orqali qanday keldi?</div>
@@ -375,7 +406,13 @@ export default function Kassa() {
         <div className="rounded-xl border border-line bg-surface-2 px-4 py-4 text-center">
           <div className="text-xs text-ink-3">Summa</div>
           <div className="mt-1 text-[28px] font-semibold tracking-tight text-ink num">{money(amount)}</div>
-          <div className="mt-2"><MethodBadge method={method} /></div>
+          {mixed ? (
+            <div className="mt-2 flex flex-wrap justify-center gap-1.5">
+              <MethodBadge method="cash" /><span className="text-sm text-ink-2 num">{money(cashPart)}</span>
+              <span className="text-ink-3">+</span>
+              <MethodBadge method={method} /><span className="text-sm text-ink-2 num">{money(amount - cashPart)}</span>
+            </div>
+          ) : <div className="mt-2"><MethodBadge method={method} /></div>}
         </div>
         <dl className="mt-3 divide-y divide-line text-sm">
           <Row k="Mijoz ID" v={normalizedCode} />

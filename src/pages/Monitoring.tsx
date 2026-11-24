@@ -67,9 +67,9 @@ function dayTitle(day: string) {
   return formatDate(day, day.slice(0, 4) !== today.slice(0, 4));
 }
 
-/** Rasxod in red, naqd kirim in green, karta kirim in blue. */
-const amountClass = (op: Op, method: string | null) =>
-  op.kind === 'expense' ? 'text-danger' : op.kind === 'adjust' ? 'text-ink' : method === 'cash' ? 'text-up' : 'text-[var(--card)]';
+/** Rasxod in red, every kirim in green (karta kirim is told apart by its blue icon). */
+const amountClass = (op: Op, _method?: string | null) =>
+  op.kind === 'expense' ? 'text-danger' : op.kind === 'adjust' ? 'text-ink' : 'text-up';
 
 const signedMoney = (kind: Kind, amount: number) =>
   kind === 'income' ? `+${money(amount)}` : kind === 'expense' ? `−${money(amount)}` : amount > 0 ? `+${money(amount)}` : `−${money(-amount)}`;
@@ -492,7 +492,7 @@ function OpDetails({ op, method, onClose }: { op: Op; method: string | null; onC
           <div className="text-xs text-ink-3">Summa</div>
           <div className={cx('mt-0.5 text-2xl font-semibold tracking-tight num', amountClass(op, method))}>{signedMoney(op.kind, op.amount)}</div>
         </div>
-        <Badge tone={op.kind === 'income' ? (method === 'cash' ? 'success' : 'card') : op.kind === 'expense' ? 'danger' : 'warn'}>{KIND_LABEL[op.kind]}</Badge>
+        <Badge tone={op.kind === 'income' ? 'success' : op.kind === 'expense' ? 'danger' : 'warn'}>{KIND_LABEL[op.kind]}</Badge>
       </div>
       <dl className="mt-4 divide-y divide-line">
         {rows.map(([k, v]) => (

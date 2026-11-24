@@ -368,6 +368,13 @@ route('POST', '/payments', 'payments.create', async (ctx) => {
   else if (amount > 10_000_000_000) errors.amount = 'Summa juda katta';
   if (!METHODS.includes(method)) errors.method = 'To‘lov turini tanlang';
   else if (!(await methodAllowed(method))) errors.method = METHOD_OFF;
+  // Aralash: part of the sum paid in cash, the rest by card. It is saved as two payments (naqd and karta),
+  // so both kassas and every report count each part where it belongs.
+  const cashPart = b.cashPart === undefined || b.cashPart === null || b.cashPart === '' ? null : Number(b.cashPart);
+  if (cashPart !== null) {
+    if (method === 'cash') errors.method = 'Aralash toʻlovda karta qismini tanlang';
+    else if (!Number.isInteger(cashPart) || cashPart <= 0 || !(cashPart < amount)) errors.cashPart = 'Naqd qismi umumiy summadan kichik boʻlsin';
+  }
   // A picture of the client's orders goes to the admin on Telegram. The owner decides in Sozlamalar
   // whether it is required; without one the message goes as plain text.
   const photos = (Array.isArray(b.photos) ? b.photos : []).slice(0, 4).map(photoFromDataUrl);
@@ -396,24 +403,33 @@ route('POST', '/payments', 'payments.create', async (ctx) => {
                            THEN NOW() ELSE clients.updated_at END`,
       [clientCode, clientName],
     );
-    const inserted = await db.query(
-      `INSERT INTO payments (client_code, client_name, amount, method, note, paid_at, created_by, created_by_name, trips, branch_id)
-       VALUES ($1, NULLIF($2, ''), $3, $4, NULLIF($5, ''), COALESCE($6::timestamptz, NOW()), $7, $8, $9, $10)
-       RETURNING id`,
-      [clientCode, clientName, amount, method, note, paidAt, ctx.user!.id, ctx.user!.full_name, trips, branchId],
-    );
-    await audit(db, ctx.user, 'payment_create', 'payment', inserted.rows[0].id, { clientCode, amount, method });
+    // One row, or two for a mixed payment: the cash part (it carries the trips) and the card part.
+    const parts: Array<{ amount: number; method: string; trips: number | null }> = cashPart === null
+      ? [{ amount, method, trips }]
+      : [{ amount: cashPart, method: 'cash', trips }, { amount: amount - cashPart, method, trips: trips === null ? null : 0 }];
+    const ids: string[] = [];
+    for (const part of parts) {
+      const inserted = await db.query(
+        `INSERT INTO payments (client_code, client_name, amount, method, note, paid_at, created_by, created_by_name, trips, branch_id)
+         VALUES ($1, NULLIF($2, ''), $3, $4, NULLIF($5, ''), COALESCE($6::timestamptz, NOW()), $7, $8, $9, $10)
+         RETURNING id`,
+        [clientCode, clientName, part.amount, part.method, note, paidAt, ctx.user!.id, ctx.user!.full_name, part.trips, branchId],
+      );
+      ids.push(inserted.rows[0].id);
+      await audit(db, ctx.user, 'payment_create', 'payment', inserted.rows[0].id, { clientCode, amount: part.amount, method: part.method, ...(cashPart !== null && { mixed: amount }) });
+    }
     const full = await db.query(
-      `SELECT ${PAYMENT_COLUMNS} FROM payments p LEFT JOIN clients c ON c.code = p.client_code WHERE p.id = $1`,
-      [inserted.rows[0].id],
+      `SELECT ${PAYMENT_COLUMNS} FROM payments p LEFT JOIN clients c ON c.code = p.client_code WHERE p.id = ANY($1::uuid[]) ORDER BY p.method = 'cash' DESC`,
+      [ids],
     );
-    return full.rows[0];
+    return full.rows;
   });
-  const telegram = await reportLater(ctx.user, payment.id, async () => sendIfOn(await paymentCaption({
-    method, amount, by: ctx.user!.full_name, at: payment.paid_at, note, branch: payment.branch_id,
+  const telegram = await reportLater(ctx.user, payment[0].id, async () => sendIfOn(await paymentCaption({
+    method: cashPart === null ? method : `Naqd + ${METHOD_LABEL[method] || method}`, amount, by: ctx.user!.full_name, at: payment[0].paid_at, note, branch: payment[0].branch_id,
     lines: [`${clientCode}${clientName ? ` · ${clientName}` : ''}`],
+    details: cashPart === null ? undefined : [`Naqd: ${som(cashPart)}`, `${METHOD_LABEL[method] || method}: ${som(amount - cashPart)}`],
   }), photos.length ? photos as Buffer[] : null));
-  return { status: 201, body: { payment, telegram } };
+  return { status: 201, body: { payment: payment[0], payments: payment, telegram } };
 });
 
 /**
