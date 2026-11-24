@@ -43,6 +43,10 @@ export function prefetchFirstScreens(user: User) {
     list.push(['/attendance', month]);
     list.push(['/staff', month]);
   }
+  if (canSee(user, 'orders') && !isPaused('orders')) {
+    list.push(['/orders', { q: '', status: '' }]);
+    if (can(user, 'orders.delete')) list.push(['/orders/duplicates']);
+  }
   if (canSee(user, 'clients') && !isPaused('clients')) list.push(['/clients', { q: '', sort: 'active', limit: CLIENTS_PAGE_SIZE, offset: 0 }]);
   // A few at a time, so the page being looked at right now is never held up behind them.
   let i = 0;
