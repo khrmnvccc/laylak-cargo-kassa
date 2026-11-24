@@ -18,7 +18,7 @@ import { EXTRA_METHODS, METHOD_PLACES, cleanMethods, type ExtraMethod, type Meth
 import { setMethods, useMethodSettings } from '../lib/methods';
 import { setEntry, useEntrySettings } from '../lib/entry';
 import type { EntrySettings } from '../lib/entryConfig';
-import { ALWAYS_OPEN, MAX_PAGE_LABEL, OPT_IN, type PageKey, type PageSetting, type PageSettings, type PageWho } from '../lib/pageConfig';
+import { ALWAYS_OPEN, MAX_PAGE_LABEL, type PageKey, type PageSetting, type PageSettings, type PageWho } from '../lib/pageConfig';
 import { setPageSettings } from '../lib/perms';
 import { useLive } from '../lib/live';
 
@@ -668,7 +668,6 @@ function PagesCard() {
     if (!next.paused) delete next.paused;
     if (!next.who || next.who === 'all') delete next.who;
     if (!next.label) delete next.label;
-    if (!next.on) delete next.on;
     return { ...base, [page]: next };
   });
 
@@ -710,11 +709,11 @@ function PagesCard() {
                   const key = item.page as PageKey;
                   const s = pages[key] ?? {};
                   const locked = ALWAYS_OPEN.includes(key);
-                  const optIn = OPT_IN.includes(key);
+                  const ownerOnly = key === 'delivery';
                   return (
                     <div key={key} className="grid items-center gap-x-4 gap-y-2 px-4 py-3 sm:px-5 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
                       <div className="flex min-w-0 items-center gap-3">
-                        <span className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${s.paused || (optIn && !s.on) ? 'bg-warn-soft text-warn' : 'bg-surface-2 text-ink-2'}`}><item.icon className="size-[18px]" /></span>
+                        <span className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${s.paused ? 'bg-warn-soft text-warn' : 'bg-surface-2 text-ink-2'}`}><item.icon className="size-[18px]" /></span>
                         <div className="min-w-0 flex-1">
                           <Input aria-label={`${item.label} nomi`} value={s.label ?? ''} placeholder={item.label} maxLength={MAX_PAGE_LABEL}
                             onChange={(e) => edit(key, { label: e.target.value })} className="h-9 max-w-xs" />
@@ -722,17 +721,9 @@ function PagesCard() {
                       </div>
                       {locked ? (
                         <span className="text-xs text-ink-3 lg:col-span-2">Doim ochiq: shu yerdan qolganlarini boshqarasiz</span>
-                      ) : optIn ? (
-                        <>
-                          <span className="text-xs text-ink-3">Faqat Ega koʻradi</span>
-                          <div className="flex items-center justify-between gap-2.5 text-[13px] text-ink-2 lg:justify-start">
-                            <span>{s.on ? 'Yoqilgan' : <Badge tone="warn">Oʻchiq: menyuda yoʻq</Badge>}</span>
-                            <Toggle on={!!s.on} label={`${item.label} yoqilgan`} onChange={(on) => edit(key, { on })} />
-                          </div>
-                        </>
                       ) : (
                         <>
-                          <Segmented value={s.who ?? 'all'} onChange={(v) => edit(key, { who: v })} options={WHO_OPTIONS} />
+                          {ownerOnly ? <span className="text-xs text-ink-3">Faqat Ega koʻradi</span> : <Segmented value={s.who ?? 'all'} onChange={(v) => edit(key, { who: v })} options={WHO_OPTIONS} />}
                           <div className="flex items-center justify-between gap-2.5 text-[13px] text-ink-2 lg:justify-start">
                             <span>{s.paused ? <Badge tone="warn">Vaqtincha toʻxtatilgan</Badge> : 'Ishlayapti'}</span>
                             <Toggle on={!s.paused} label={`${item.label} ishlaydi`} onChange={(on) => edit(key, { paused: !on })} />

@@ -1553,14 +1553,12 @@ test('delivery: off until the owner switches it on; the bot takes locations and 
     await owner.call('POST', '/auth/login', { username: 'admin', password: 'password123' });
     const w = new Client();
     await w.call('POST', '/auth/login', { username: 'chilonzor', password: 'worker123' });
-    // Off by default: not in the page settings, and staff cannot reach it.
-    assert.equal((await owner.call('GET', '/pages')).body.pages.delivery?.on, undefined);
+    // Owner only: staff cannot reach it.
     assert.equal((await w.call('GET', '/delivery')).status, 403);
 
     code = (await owner.call('PUT', '/telegram', { token: '123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij' })).body.telegram.code;
     assert.equal((await owner.call('POST', '/telegram/check')).status, 200);
     const pages = (await owner.call('GET', '/pages')).body.pages;
-    assert.equal((await owner.call('PUT', '/pages', { pages: { ...pages, delivery: { on: true } } })).body.pages.delivery.on, true);
 
     // The webhook: refused without Telegram's secret.
     const hook = (body: unknown, secret: string) => handleApi({ method: 'POST', path: '/telegram/hook', query: {}, body, headers: { 'x-telegram-bot-api-secret-token': secret } });
@@ -1617,9 +1615,9 @@ test('delivery: off until the owner switches it on; the bot takes locations and 
     assert.deepEqual(made.body.trip.stops.map((s: any) => s.label), ['A', 'B']);
     assert.equal((await owner.call('DELETE', `/delivery/trips/${made.body.trip.id}`)).status, 200);
 
-    // Switching the section off in Oynalar takes the webhook off too.
+    // Pausing the section in Oynalar takes the webhook off too.
     sent.length = 0;
-    await owner.call('PUT', '/pages', { pages });
+    assert.equal((await owner.call('PUT', '/pages', { pages: { ...pages, delivery: { paused: true } } })).body.pages.delivery.paused, true);
     assert.ok(sent.some((s) => s.method === 'deleteWebhook'));
     assert.equal((await owner.call('GET', '/delivery')).body.bot.on, false);
   } finally {

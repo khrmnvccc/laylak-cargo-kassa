@@ -2186,8 +2186,8 @@ route('PUT', '/pages', 'owner', async (ctx) => {
     [JSON.stringify(pages)],
   );
   await audit(null, ctx.user, 'pages_set', 'pages', null, pages);
-  // Yetkazish switched off: the bot stops taking locations too.
-  if (!pages.delivery?.on && (await getTelegram())?.hookSecret) await setBotHook(false, undefined, saveTelegram).catch((e) => console.error('Webhook off failed', e));
+  // Yetkazish paused: the bot stops taking locations too.
+  if (pages.delivery?.paused && (await getTelegram())?.hookSecret) await setBotHook(false, undefined, saveTelegram).catch((e) => console.error('Webhook off failed', e));
   return { pages };
 });
 

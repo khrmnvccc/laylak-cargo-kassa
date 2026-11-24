@@ -1,6 +1,6 @@
 import type { Page } from './router';
 import type { User } from './types';
-import { DEFAULT_PAGE_SETTINGS, OPT_IN, type PageKey, type PageSettings } from './pageConfig';
+import { DEFAULT_PAGE_SETTINGS, type PageSettings } from './pageConfig';
 
 // Mirrors server/perms.ts. The owner (Ega) always has every right; for admins and workers each one is switched on or off.
 export type Perm =
@@ -103,11 +103,7 @@ export const pageLabel = (page: Page, fallback: string) => pageSettings[page]?.l
 /** Paused for now: it stays in the menu, but opening it shows a "temporarily not working" notice. */
 export const isPaused = (page: Page) => !!pageSettings[page]?.paused;
 
-/** A section that is off until the owner switches it on (Sozlamalar → Oynalar). */
-export const isOff = (page: Page) => OPT_IN.includes(page as PageKey) && !pageSettings[page]?.on;
-
 export const canSee = (user: User, page: Page) => {
-  if (isOff(page)) return false;
   // Yetkazish is the owner's own evening runs and money: only the owner.
   if (page === 'delivery') return user.role === 'owner';
   const who = pageSettings[page]?.who;
