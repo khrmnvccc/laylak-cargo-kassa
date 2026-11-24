@@ -3,11 +3,39 @@ import type { BrandSettings, EffectName } from '../lib/brandConfig';
 import { brandNow, useShownBrand } from '../lib/brand';
 
 // The moving background the owner picks in Sozlamalar → Brend va dizayn.
-// One canvas behind the page: it never takes clicks, draws at most 30 frames a second,
-// stops while the tab is hidden, and stays off for people who asked their phone for less motion.
+// One canvas behind the page: it never takes clicks, draws at most 30 frames a second (stars only
+// twinkle, so 15), stops while the tab is hidden, and stays off for people who asked their phone for
+// less motion. Dots and glows are drawn once into small pictures and then only stamped each frame:
+// drawing every dot from scratch kept a slow computer's processor 5 times busier than the site itself.
 
 const AMOUNT = { low: 0.5, mid: 1, high: 1.8 } as const;
-const FRAME_MS = 1000 / 30;
+// Office computers and cheap phones with few cores get fewer bits and fewer frames.
+const weak = typeof navigator !== 'undefined' && (navigator.hardwareConcurrency || 8) <= 4;
+const frameMs = (effect: EffectName) => 1000 / (effect === 'stars' || effect === 'glow' ? 15 : weak ? 20 : 30);
+
+// A soft round dot (or a glow) of one colour, drawn once and stamped with drawImage after that.
+const sprites = new Map<string, HTMLCanvasElement>();
+function sprite(color: string, kind: 'dot' | 'glow' | 'ring'): HTMLCanvasElement {
+  const id = `${kind}${color}`;
+  let c = sprites.get(id);
+  if (c) return c;
+  const size = kind === 'glow' ? 128 : 32;
+  c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d')!;
+  const r = size / 2;
+  if (kind === 'glow') {
+    const grad = g.createRadialGradient(r, r, 0, r, r, r);
+    grad.addColorStop(0, rgba(color, 1)); grad.addColorStop(1, rgba(color, 0));
+    g.fillStyle = grad; g.fillRect(0, 0, size, size);
+  } else if (kind === 'ring') {
+    g.strokeStyle = color; g.lineWidth = 2; g.beginPath(); g.arc(r, r, r - 1.5, 0, 6.283); g.stroke();
+  } else {
+    g.fillStyle = color; g.beginPath(); g.arc(r, r, r, 0, 6.283); g.fill();
+  }
+  sprites.set(id, c);
+  return c;
+}
 
 interface Bit { x: number; y: number; r: number; vx: number; vy: number; a: number; t: number; spin: number; c: string }
 interface Meteor { x: number; y: number; vx: number; vy: number; life: number }
@@ -24,7 +52,8 @@ function rgba(hex: string, a: number) {
 function countFor(effect: EffectName, w: number, h: number, amount: number) {
   const base = { none: 0, stars: 70, snow: 60, sparks: 45, bubbles: 22, confetti: 50, petals: 26, glow: 5 }[effect];
   if (effect === 'glow') return base;
-  return Math.round(Math.min(base * amount * ((w * h) / (1280 * 800)) ** 0.6, base * amount * 1.4));
+  const n = Math.min(base * amount * ((w * h) / (1280 * 800)) ** 0.6, base * amount * 1.4);
+  return Math.round(weak ? n * 0.6 : n);
 }
 
 function make(effect: EffectName, w: number, h: number, color: string, dark: boolean, fresh: boolean): Bit {
@@ -55,11 +84,15 @@ function run(canvas: HTMLCanvasElement, brand: BrandSettings) {
   const effect = brand.effect;
   const amount = AMOUNT[brand.effectAmount];
   let w = 0, h = 0, bits: Bit[] = [], meteor: Meteor | null = null, nextMeteor = performance.now() + rand(2000, 5000);
-  let raf = 0, last = 0;
+  let raf = 0, timer = 0, last = 0;
+  const FRAME = frameMs(effect) - 2; // a little slack so a 60 Hz screen doesn't skip every other chance
+  const BASE_MS = 1000 / 30; // movement speeds are per 1/30 s, whatever the frame rate
   const dark = () => document.documentElement.classList.contains('dark');
 
   const resize = () => {
-    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    // Soft dots need no sharp pixels, and the number of pixels is what costs: a half-size canvas,
+    // stretched over the screen, looks the same and is a quarter of the work.
+    const dpr = effect === 'stars' || effect === 'snow' || effect === 'sparks' || effect === 'glow' ? 0.5 : 0.75;
     w = window.innerWidth; h = window.innerHeight;
     canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -67,10 +100,16 @@ function run(canvas: HTMLCanvasElement, brand: BrandSettings) {
     bits = Array.from({ length: n }, () => make(effect, w, h, brand.color, dark(), true));
   };
 
+  // The next frame is asked for only when it is due. Asking the browser for a frame 60 times a second
+  // and skipping most of them still made it redraw the whole screen each time.
+  const schedule = () => {
+    // A passing meteor moves fast, so it gets the full 30 frames while it is on screen.
+    timer = window.setTimeout(() => { raf = requestAnimationFrame(step); }, meteor ? BASE_MS - 2 : FRAME);
+  };
+  const stop = () => { cancelAnimationFrame(raf); clearTimeout(timer); };
   const step = (now: number) => {
-    raf = requestAnimationFrame(step);
-    if (now - last < FRAME_MS) return;
-    const k = last ? Math.min((now - last) / FRAME_MS, 3) : 1;
+    schedule();
+    const k = last ? Math.min((now - last) / BASE_MS, 6) : 1;
     last = now;
     const isDark = dark();
     ctx.clearRect(0, 0, w, h);
@@ -80,9 +119,10 @@ function run(canvas: HTMLCanvasElement, brand: BrandSettings) {
       b.t += 0.03 * b.spin * k;
       if (effect === 'stars') {
         const a = b.a * (0.45 + 0.55 * Math.sin(b.t));
-        ctx.fillStyle = rgba(b.c, isDark ? a : a * 0.45);
-        ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, 6.283); ctx.fill();
+        ctx.globalAlpha = isDark ? a : a * 0.45;
+        ctx.drawImage(sprite(b.c, 'dot'), b.x - b.r, b.y - b.r, b.r * 2, b.r * 2);
         if (b.r > 1.6 && a > 0.7) { // a little cross of light on the brightest ones
+          ctx.fillStyle = b.c;
           ctx.fillRect(b.x - b.r * 3, b.y - 0.4, b.r * 6, 0.8);
           ctx.fillRect(b.x - 0.4, b.y - b.r * 3, 0.8, b.r * 6);
         }
@@ -93,28 +133,31 @@ function run(canvas: HTMLCanvasElement, brand: BrandSettings) {
       if (effect === 'glow') {
         if (b.x < -b.r / 2 || b.x > w + b.r / 2) b.vx *= -1;
         if (b.y < -b.r / 2 || b.y > h + b.r / 2) b.vy *= -1;
-        const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r);
-        g.addColorStop(0, rgba(b.c, b.a)); g.addColorStop(1, rgba(b.c, 0));
-        ctx.fillStyle = g; ctx.fillRect(b.x - b.r, b.y - b.r, b.r * 2, b.r * 2);
+        ctx.globalAlpha = b.a;
+        ctx.drawImage(sprite(b.c, 'glow'), b.x - b.r, b.y - b.r, b.r * 2, b.r * 2);
         continue;
       }
       const gone = b.vy > 0 ? b.y > h + 20 : b.y < -40;
       if (gone || b.x < -30 || b.x > w + 30) { bits[i] = make(effect, w, h, brand.color, isDark, false); continue; }
       if (effect === 'snow') {
-        ctx.fillStyle = rgba(b.c, b.a);
-        ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, 6.283); ctx.fill();
+        ctx.globalAlpha = b.a;
+        ctx.drawImage(sprite(b.c, 'dot'), b.x - b.r, b.y - b.r, b.r * 2, b.r * 2);
       } else if (effect === 'sparks') {
-        const a = b.a * (0.55 + 0.45 * Math.sin(b.t)) * Math.min(1, b.y / (h * 0.25));
-        ctx.fillStyle = rgba(b.c, a * 0.25);
-        ctx.beginPath(); ctx.arc(b.x, b.y, b.r * 3, 0, 6.283); ctx.fill();
-        ctx.fillStyle = rgba(b.c, a);
-        ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, 6.283); ctx.fill();
+        const a = Math.max(0, b.a * (0.55 + 0.45 * Math.sin(b.t)) * Math.min(1, b.y / (h * 0.25)));
+        const dot = sprite(b.c, 'dot');
+        ctx.globalAlpha = a * 0.25;
+        ctx.drawImage(dot, b.x - b.r * 3, b.y - b.r * 3, b.r * 6, b.r * 6);
+        ctx.globalAlpha = a;
+        ctx.drawImage(dot, b.x - b.r, b.y - b.r, b.r * 2, b.r * 2);
       } else if (effect === 'bubbles') {
-        ctx.strokeStyle = rgba(b.c, b.a); ctx.lineWidth = 1.2;
-        ctx.beginPath(); ctx.arc(b.x + Math.sin(b.t) * 6, b.y, b.r, 0, 6.283); ctx.stroke();
-        ctx.fillStyle = rgba('#ffffff', b.a * 0.8);
-        ctx.beginPath(); ctx.arc(b.x + Math.sin(b.t) * 6 - b.r * 0.35, b.y - b.r * 0.35, b.r * 0.18, 0, 6.283); ctx.fill();
+        const x = b.x + Math.sin(b.t) * 6;
+        ctx.globalAlpha = b.a;
+        ctx.drawImage(sprite(b.c, 'ring'), x - b.r, b.y - b.r, b.r * 2, b.r * 2);
+        ctx.globalAlpha = b.a * 0.8;
+        const hr = b.r * 0.18;
+        ctx.drawImage(sprite('#ffffff', 'dot'), x - b.r * 0.35 - hr, b.y - b.r * 0.35 - hr, hr * 2, hr * 2);
       } else {
+        ctx.globalAlpha = 1;
         // confetti and petals: a turning flat piece
         ctx.save();
         ctx.translate(b.x, b.y); ctx.rotate(b.t * (effect === 'confetti' ? 3 : 1) + b.spin * 20);
@@ -126,6 +169,7 @@ function run(canvas: HTMLCanvasElement, brand: BrandSettings) {
       }
     }
 
+    ctx.globalAlpha = 1;
     // Stars: now and then a meteor crosses the screen, as on the sample video.
     if (effect === 'stars') {
       if (!meteor && now > nextMeteor) {
@@ -153,7 +197,7 @@ function run(canvas: HTMLCanvasElement, brand: BrandSettings) {
   };
 
   const onVisible = () => {
-    cancelAnimationFrame(raf);
+    stop();
     if (!document.hidden) { last = 0; raf = requestAnimationFrame(step); }
   };
   resize();
@@ -161,7 +205,7 @@ function run(canvas: HTMLCanvasElement, brand: BrandSettings) {
   window.addEventListener('resize', resize);
   document.addEventListener('visibilitychange', onVisible);
   return () => {
-    cancelAnimationFrame(raf);
+    stop();
     window.removeEventListener('resize', resize);
     document.removeEventListener('visibilitychange', onVisible);
   };

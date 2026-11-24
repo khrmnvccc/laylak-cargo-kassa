@@ -25,7 +25,18 @@
         if (t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.classList.add('dark');
       } catch (e) {}
     </script>
-    <script src="https://telegram.org/js/telegram-web-app.js" async></script>
+    <script>
+      // Telegram's helper is only needed when the site is opened as a Telegram mini app; everywhere else
+      // it was one more outside download on every opening.
+      try {
+        if (/tgWebApp/.test(location.hash + location.search) || sessionStorage.getItem('__telegram__initParams')) {
+          var tgs = document.createElement('script');
+          tgs.src = 'https://telegram.org/js/telegram-web-app.js';
+          tgs.onload = function () { try { Telegram.WebApp.ready(); Telegram.WebApp.expand(); } catch (e) {} };
+          document.head.appendChild(tgs);
+        }
+      } catch (e) {}
+    </script>
     <style>
       /* Opening screen: the stork lands, then the name opens out beside it, then the app fades in. */
       #splash { position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; background: #fff; --brand-ink: #00204f; --brand-beak: #ea7612; transition: opacity .35s ease, transform .35s ease; }
