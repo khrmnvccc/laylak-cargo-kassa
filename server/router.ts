@@ -1980,6 +1980,15 @@ async function checkLocation(body: any): Promise<{ distance: number | null; accu
   return { distance, accuracy };
 }
 
+/** "09:02" in Tashkent time. */
+const clockTashkent = (at: string | Date) => new Date(new Date(at).getTime() + 5 * 3600_000).toISOString().slice(11, 16);
+/** "9 soat 8 daqiqa" */
+function workedLabel(from: string | Date, to: string | Date) {
+  const min = Math.max(0, Math.round((new Date(to).getTime() - new Date(from).getTime()) / 60_000));
+  const h = Math.floor(min / 60), m = min % 60;
+  return h ? (m ? `${h} soat ${m} daqiqa` : `${h} soat`) : `${m} daqiqa`;
+}
+
 const ATT_COLUMNS = `a.id, a.user_id, u.full_name AS user_name, a.check_in_at, a.check_out_at, a.in_distance, a.out_distance,
   a.forgot_out, a.edited_by_name, a.edited_at, to_char(a.check_in_at AT TIME ZONE '${TZ}', 'YYYY-MM-DD') AS day`;
 
@@ -2010,7 +2019,7 @@ route('GET', '/attendance/me', 'user', async (ctx) => {
 route('POST', '/attendance/check-in', 'user', async (ctx) => {
   const { distance, accuracy } = await checkLocation(ctx.body);
   await closeForgotten(ctx.user!.id);
-  return transaction(async (db) => {
+  const result = await transaction(async (db) => {
     await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`att:${ctx.user!.id}`]);
     const open = await db.query(`SELECT 1 FROM attendance WHERE user_id = $1 AND check_out_at IS NULL`, [ctx.user!.id]);
     if (open.rowCount) throw new HttpError(409, 'Siz allaqachon “Keldim” ni bosgansiz');
@@ -2020,6 +2029,9 @@ route('POST', '/attendance/check-in', 'user', async (ctx) => {
     );
     return { status: 201, body: { attendance: rows.rows[0] } };
   });
+  background(messageText('checkIn', { kim: ctx.user!.full_name, vaqt: clockTashkent(result.body.attendance.check_in_at), joy: distance == null ? '' : `ishxonadan ${Math.round(distance)} m` })
+    .then((text) => notify(text, 'checkIn')));
+  return result;
 });
 
 route('POST', '/attendance/check-out', 'user', async (ctx) => {
@@ -2031,6 +2043,8 @@ route('POST', '/attendance/check-out', 'user', async (ctx) => {
     [ctx.user!.id, distance, accuracy],
   );
   if (!rows[0]) throw new HttpError(409, 'Avval “Keldim” ni bosing');
+  background(messageText('checkOut', { kim: ctx.user!.full_name, vaqt: clockTashkent(rows[0].check_out_at), ishda: workedLabel(rows[0].check_in_at, rows[0].check_out_at) })
+    .then((text) => notify(text, 'checkOut')));
   return { attendance: rows[0] };
 });
 

@@ -630,6 +630,19 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     assert.match(sent[0]?.body.text ?? '', /Rasxod bekor qilindi[\s\S]*7 000 soʻm[\s\S]*xato yozildi/);
     assert.deepEqual(sent.map((x) => Number(x.body.chat_id)).sort(), [-1001, 777]);
 
+    // Attendance: "Keldim" and "Ketdim" are reported with who and when.
+    const here = { lat: 41.311, lng: 69.279, accuracy: 10 };
+    await w.call('POST', '/attendance/check-out', here);
+    await backgroundSettled();
+    sent.length = 0;
+    assert.equal((await w.call('POST', '/attendance/check-in', here)).status, 201);
+    await backgroundSettled();
+    assert.match(sent.find((x) => x.method === 'sendMessage')?.body.text ?? '', /Sardor keldi<\/b> · \d\d:\d\d/);
+    sent.length = 0;
+    assert.equal((await w.call('POST', '/attendance/check-out', here)).status, 200);
+    await backgroundSettled();
+    assert.match(sent.find((x) => x.method === 'sendMessage')!.body.text, /ketdi[\s\S]*Ishda: \d+ daqiqa/);
+
     // Telegram down: the payment is still saved at once, and the miss is written to the audit log.
     failSends = true;
     const offline = await owner.call('POST', '/payments', { photos: PHOTOS, clientCode: 'TG-4', amount: 1000, method: 'cash' });

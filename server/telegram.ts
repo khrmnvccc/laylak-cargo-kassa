@@ -231,7 +231,7 @@ async function everyChat(config: TelegramConfig, kind: MessageKind, log: { templ
 // The same messages also come as site notifications (web push) to the devices that switched them on:
 // the owner gets every message they did not turn off for their own chat, staff the ones picked for them on Xabarlar.
 const PUSH_PAGE: Record<TemplateKey, string> = {
-  payment: '/#/operations', paymentVoid: '/#/operations', expenseVoid: '/#/operations', orderDelete: '/#/orders', dailyReport: '/#/daily',
+  payment: '/#/operations', paymentVoid: '/#/operations', expenseVoid: '/#/operations', orderDelete: '/#/orders', checkIn: '/#/attendance', checkOut: '/#/attendance', dailyReport: '/#/daily',
 };
 
 /** Telegram HTML -> plain text for a notification. */
