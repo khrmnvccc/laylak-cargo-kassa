@@ -10,26 +10,14 @@ import { useApi, useLive } from '../lib/live';
 import { addDays, dateTime, formatDate, groupDigits, methodColor, methodLabel, money, nowMs, rangeLabel, startOfMonth, timeOf, todayTashkent, weekday } from '../lib/format';
 import { downloadKassaBook } from '../lib/excel';
 import { can, kassaSources } from '../lib/perms';
+import { EXPENSE_CATEGORIES } from '../lib/expenses';
 import type { BalanceMonth, BalanceReport, Expense, ExpenseCategory, SourceBalance } from '../lib/types';
 import {
   Alert, Badge, Button, Card, CardHeader, EmptyState, ErrorState, Field, IconButton, Input, MethodBadge, Modal, PageHeader, Segmented, Select,
   SkeletonRows, Textarea, cx, td, th, useToast,
 } from '../components/ui';
 
-export const EXPENSE_CATEGORIES: Array<{ value: ExpenseCategory; label: string }> = [
-  { value: 'tovar', label: 'Tovar xaridi' },
-  { value: 'paket', label: 'Paket va qadoq' },
-  { value: 'yetkazish', label: 'Yetkazib berish' },
-  { value: 'yoqilgi', label: 'Yoqilgʻi va transport' },
-  { value: 'ijara', label: 'Ijara' },
-  { value: 'oylik', label: 'Oylik va avans' },
-  { value: 'kommunal', label: 'Kommunal va aloqa' },
-  { value: 'inkassa', label: 'Inkassa (pul topshirildi)' },
-  { value: 'tovar_olib_kelish', label: 'Tovar olib kelish' },
-  { value: 'togamga', label: 'Togʻamga' },
-  { value: 'arofat', label: 'Arofat akaga' },
-  { value: 'boshqa', label: 'Boshqa' },
-];
+export { EXPENSE_CATEGORIES };
 const ACCOUNTS = [
   { value: 'cash', label: '1-kassa · Naqd', color: 'var(--cash)', hint: 'Hozirgi qoldiq' },
   { value: 'card', label: '2-kassa · Karta', color: 'var(--card)', hint: 'Karta + Yandex + Pochta' },

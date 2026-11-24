@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, PieChart } from 'lucide-react';
+import { useAuth } from '../lib/auth';
+import { canSee } from '../lib/perms';
 import { useApi } from '../lib/live';
 import { PAY_GROUPS, addDays, compactMoney, money, rangeLabel } from '../lib/format';
 import { href } from '../lib/router';
@@ -8,9 +10,10 @@ import { DateRangePicker, presetRange, type Range } from '../components/DateRang
 import { PaymentsTable } from '../components/PaymentsTable';
 import { Legend, RevenueChart } from '../components/Chart';
 import { StatsStrip } from '../components/StatsStrip';
-import { Avatar, Card, CardHeader, Delta, EmptyState, ErrorState, PageHeader, SkeletonRows } from '../components/ui';
+import { Avatar, Button, Card, CardHeader, Delta, EmptyState, ErrorState, PageHeader, SkeletonRows } from '../components/ui';
 
 export default function Dashboard() {
+  const { user } = useAuth();
   const [range, setRange] = useState<Range>(() => presetRange('today'));
   const { data, error, loading, reload } = useApi<Summary>('/summary', range);
   // Chart always shows at least the last 14 days, so a single-day selection still has context.
@@ -25,7 +28,12 @@ export default function Dashboard() {
       <PageHeader
         title="Dashboard"
         subtitle={<>Umumiy moliyaviy holat · <span className="text-ink-2">{rangeLabel(range.from, range.to)}</span></>}
-        actions={<DateRangePicker value={range} onChange={setRange} />}
+        actions={<>
+          {canSee(user, 'monitoring') && (
+            <a href={href('monitoring')}><Button icon={<PieChart className="size-4" />}>Monitoring</Button></a>
+          )}
+          <DateRangePicker value={range} onChange={setRange} />
+        </>}
       />
 
       {error && !data ? (

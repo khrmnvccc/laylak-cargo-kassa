@@ -7,6 +7,7 @@ import type { User } from './types';
 // question (the answer is only reused when the question matches exactly).
 export const OPERATIONS_PAGE_SIZE = 50;
 export const CLIENTS_PAGE_SIZE = 50;
+export const MONITORING_PAGE_SIZE = 60;
 
 export function periodDefaultRange(group: 'week' | 'month') {
   const t = todayTashkent();
@@ -36,6 +37,7 @@ export function prefetchFirstScreens(user: User) {
   }
   if (canSee(user, 'kassa')) list.push(['/payments', { from: t, to: t, worker: user.id, limit: 20 }]);
   if (seesKassa(user)) list.push(['/balance', { date: t }]);
+  if (canSee(user, 'monitoring') && !isPaused('monitoring')) list.push(['/monitoring', { ...month, limit: MONITORING_PAGE_SIZE }]);
   if (can(user, 'staff.view')) {
     list.push(['/attendance', day]);
     list.push(['/attendance', month]);

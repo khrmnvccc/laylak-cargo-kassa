@@ -1,7 +1,7 @@
 // How the owner set up each page (oyna): paused for a while, who sees it, and its name in the menu.
 // Shared by the server (to keep it) and the browser (to draw the menu), so both read it the same way.
 
-export const PAGE_KEYS = ['dashboard', 'kassa', 'orders', 'operations', 'daily', 'periods', 'balance', 'workers', 'attendance', 'clients', 'messages', 'settings'] as const;
+export const PAGE_KEYS = ['dashboard', 'kassa', 'orders', 'operations', 'monitoring', 'daily', 'periods', 'balance', 'workers', 'attendance', 'clients', 'messages', 'settings'] as const;
 export type PageKey = (typeof PAGE_KEYS)[number];
 
 /** all: whoever has the right for it; boss: the owner and admins; owner: only the owner. */

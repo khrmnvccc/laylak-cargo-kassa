@@ -257,6 +257,24 @@ test('yandex/pochta payments, expenses and kassa balance', async () => {
   await assert.rejects(getPool().query(`DELETE FROM expenses WHERE id = $1`, [e1.body.expense.id]));
   await assert.rejects(getPool().query(`UPDATE expenses SET amount = 1 WHERE id = $1`, [e1.body.expense.id]));
   await assert.rejects(getPool().query(`UPDATE balance_adjustments SET amount = 1 WHERE id = $1`, [opening.body.adjustment.id]));
+
+  // Monitoring: every income and expense of the day in one list, voided ones left out.
+  assert.equal((await ali.call('GET', '/monitoring')).status, 403);
+  const mon = (await admin.call('GET', '/monitoring', undefined, { from: today, to: today })).body;
+  assert.equal(mon.totals.income, after.sources.reduce((n: number, s: any) => n + s.income, 0));
+  assert.equal(mon.totals.expense, 45000);
+  assert.equal(mon.totals.adjust, 500000);
+  assert.equal(mon.count, mon.totals.income_count + mon.totals.expense_count + 1);
+  assert.ok(!mon.items.some((i: any) => i.note === 'xato'));
+  assert.deepEqual(mon.expense.map((g: any) => g.key).sort(), ['kommunal', 'paket']);
+  assert.equal(mon.income.find((g: any) => g.key === 'yandex').amount, 40000);
+  assert.equal(mon.days[0].expense, 45000);
+  const onlyCash = (await admin.call('GET', '/monitoring', undefined, { from: today, to: today, source: 'cash', kind: 'expense' })).body;
+  assert.deepEqual(onlyCash.items.map((i: any) => [i.category, i.amount]), [['paket', 30000]]);
+  const byCat = (await admin.call('GET', '/monitoring', undefined, { from: today, to: today, cat: 'pochta' })).body;
+  assert.deepEqual(byCat.items.map((i: any) => [i.kind, i.method, i.amount]), [['income', 'pochta', 25000]]);
+  const found = (await admin.call('GET', '/monitoring', undefined, { from: today, to: today, q: '200 ta' })).body;
+  assert.equal(found.count, 1);
 });
 
 test('client list sorting and admin import', async () => {

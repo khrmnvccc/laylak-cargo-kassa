@@ -28,6 +28,7 @@ const loaders = {
   kassa: () => import('./pages/Kassa'),
   orders: () => import('./pages/Orders'),
   operations: () => import('./pages/Operations'),
+  monitoring: () => import('./pages/Monitoring'),
   daily: () => import('./pages/DailyReport'),
   periods: () => import('./pages/PeriodReport'),
   workers: () => import('./pages/Workers'),
