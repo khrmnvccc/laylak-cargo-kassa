@@ -1626,7 +1626,11 @@ test('delivery: off until the owner switches it on; the bot takes locations and 
     assert.match(key, /^[A-Za-z0-9_-]{80,}$/);
     assert.equal((await owner.call('GET', '/push/key')).body.key, key);
     assert.equal((await owner.call('POST', '/push/subscribe', { subscription: { endpoint: 'http://x' } })).status, 400);
-    assert.equal((await w.call('POST', '/push/subscribe', { subscription: {} })).status, 403);
+    // Everyone can switch site notifications on for their own device (they get the messages picked for them).
+    const staffSub = { endpoint: 'https://push.invalid/staff', keys: { p256dh: 'p', auth: 'a' } };
+    assert.equal((await w.call('POST', '/push/subscribe', { subscription: {} })).status, 400);
+    assert.equal((await w.call('POST', '/push/subscribe', { subscription: staffSub })).status, 200);
+    assert.equal((await w.call('POST', '/push/unsubscribe', { endpoint: staffSub.endpoint })).status, 200);
     assert.equal((await owner.call('POST', '/push/test')).status, 400, 'no device subscribed yet');
     // "Yetkazdim" on a free stop just marks it delivered.
     await press(`d:${view.trips[0].stops[0].id}`);

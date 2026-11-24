@@ -6,6 +6,8 @@ import { BRAND_LIMITS, COLOR_PRESETS, DEFAULT_BRAND, MENU_GROUPS, EFFECTS, clean
 import { TEMPLATE_BY_KEY, type TemplateKey } from '../lib/tgTemplates';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { PushCard } from '../components/PushCard';
+import { DeliverySetupCard } from '../components/DeliverySetup';
 import { clearApiCache, useApi } from '../lib/live';
 import { dateTime, groupDigits, methodColor, money } from '../lib/format';
 import { useTheme, type ThemePref } from '../lib/theme';
@@ -40,12 +42,14 @@ export default function Settings() {
         <Profile />
         <Password />
         <Appearance />
+        <PushCard />
         {user.role !== 'owner' && <MyTelegram />}
         {isBoss(user) && <SystemInfo />}
         {user.role === 'owner' && <BrandCard />}
         {user.role === 'owner' && <EntryCard />}
         {user.role === 'owner' && <MethodsCard />}
         {user.role === 'owner' && <BranchesCard />}
+        {user.role === 'owner' && <DeliverySetupCard />}
         {user.role === 'owner' && <PagesCard />}
         {user.role === 'owner' && <BackupCard />}
         {user.role === 'owner' && <ResetCard />}

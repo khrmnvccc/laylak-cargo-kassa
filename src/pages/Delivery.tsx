@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Bell, Bot, Check, Coins, MapPin, Navigation, Play, Plus, Route, Send, Trash2, Truck, X } from 'lucide-react';
-import { disablePush, enablePush, pushState, type PushState } from '../lib/push';
-import { navigate } from '../lib/router';
+import { Bot, Check, ChevronDown, Coins, MapPin, Navigation, Play, Plus, Route, Send, Trash2, Truck, X } from 'lucide-react';
+import { href, navigate } from '../lib/router';
 import { api, ApiError } from '../lib/api';
 import { useApi } from '../lib/live';
 import { formatDate, groupDigits, money, monthLabel, startOfMonth, todayTashkent, weekday } from '../lib/format';
 import { MAX_STOPS, googlePlaceUrl, googleRouteUrl, roadKmLabel, yandexPlaceUrl, yandexRouteUrl, type Point } from '../lib/delivery';
-import { Toggle } from '../components/TelegramTemplates';
 import { Alert, Badge, Button, Card, CardHeader, EmptyState, ErrorState, Field, IconButton, Input, Modal, PageHeader, cx, useToast } from '../components/ui';
 
 interface Stop { id: number; position: number; lat: number; lng: number; label: string; fee: number; done: boolean; collected: boolean }
@@ -26,6 +24,13 @@ const digitsInput = (value: string) => { const d = value.replace(/\D/g, '').slic
 const digitsOf = (value: string) => Number(value.replace(/\D/g, '')) || 0;
 const placeName = (s: { label?: string; lat: number; lng: number }) => s.label || `${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}`;
 
+/** "Noy", "Okt", "Iyun"; with the year when it is not this year. */
+function shortMonth(m: string) {
+  const name = monthLabel(`${m}-01`).replace(/\s\d{4}$/, '');
+  const short = name.length <= 4 ? name : name.slice(0, 3);
+  return m.slice(0, 4) === todayTashkent().slice(0, 4) ? short : `${short} ʼ${m.slice(2, 4)}`;
+}
+
 function lastMonths(n: number): string[] {
   const out: string[] = [];
   const d = new Date(`${startOfMonth(todayTashkent())}T00:00:00Z`);
@@ -38,7 +43,7 @@ function lastMonths(n: number): string[] {
 
 export default function Delivery({ params }: { params: URLSearchParams }) {
   const toast = useToast();
-  const months = useMemo(() => lastMonths(6), []);
+  const months = useMemo(() => lastMonths(4), []);
   const [month, setMonth] = useState(months[months.length - 1]);
   const { data, error, loading, reload } = useApi<DeliveryData>('/delivery', { month });
   const [creating, setCreating] = useState(false);
@@ -48,7 +53,6 @@ export default function Delivery({ params }: { params: URLSearchParams }) {
   const driveId = Number(params.get('drive')) || 0;
   const driving = driveId && data ? data.trips.find((t) => t.id === driveId) ?? null : null;
   const drive = (id: number | null) => navigate('delivery', id ? { drive: String(id) } : undefined);
-  const [startOpen, setStartOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
   async function run(name: string, fn: () => Promise<unknown>, success?: string) {
@@ -72,19 +76,22 @@ export default function Delivery({ params }: { params: URLSearchParams }) {
       <PageHeader title="Yetkazish" subtitle="Shahar ichidagi kechki yetkazishlar: reys tartibi va alohida daromad. Kassaga qoʻshilmaydi."
         actions={<Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setCreating(true)}>Yangi reys</Button>} />
 
-      <div role="tablist" aria-label="Oy" className="no-print -mx-4 mb-3 flex gap-1 overflow-x-auto px-4 pb-1 scrollbar-none sm:mx-0 sm:px-0">
+      <div role="tablist" aria-label="Oy" className="no-print mx-auto mb-3 flex w-fit max-w-3xl gap-0.5 rounded-lg bg-surface-2 p-0.5">
         {months.map((m) => (
-          <button key={m} type="button" role="tab" aria-selected={m === month} onClick={() => setMonth(m)}
-            className={cx('h-9 shrink-0 rounded-lg px-3.5 text-sm font-medium transition-colors',
-              m === month ? 'bg-primary text-primary-fg shadow-soft' : 'text-ink-2 hover:bg-surface-2 hover:text-ink')}>
-            {m.slice(0, 4) === todayTashkent().slice(0, 4) ? monthLabel(`${m}-01`).replace(/\s\d{4}$/, '') : monthLabel(`${m}-01`)}
+          <button key={m} type="button" role="tab" aria-selected={m === month} onClick={() => setMonth(m)} title={monthLabel(`${m}-01`)}
+            className={cx('h-7 rounded-md px-3 text-[13px] font-medium transition-colors',
+              m === month ? 'bg-surface text-ink shadow-soft' : 'text-ink-3 hover:text-ink')}>
+            {shortMonth(m)}
           </button>
         ))}
       </div>
 
       {error && !data ? <Card><ErrorState message={error} onRetry={reload} /></Card> : (
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="mx-auto max-w-3xl">
           <div className="min-w-0 space-y-4">
+            {data && !data.bot.on && (
+              <p className="text-[13px] text-ink-3">Telegram bot lokatsiya qabul qilmayapti. Yoqish va boshlanish joyi: <a href={href('settings')} className="font-medium text-primary hover:underline">Sozlamalar → Yetkazish</a></p>
+            )}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
               <Card className="col-span-2 sm:col-span-1">
                 <div className="flex items-center gap-2 text-[13px] font-medium text-ink-2"><Coins className="size-4 text-up" />Yetkazishdan pul</div>
@@ -141,23 +148,6 @@ export default function Delivery({ params }: { params: URLSearchParams }) {
             ))}
           </div>
 
-          <div className="space-y-4 lg:sticky lg:top-20 lg:self-start">
-            <PushCard />
-            <BotCard data={data} onChanged={reload} />
-            <Card>
-              <CardHeader title="Boshlanish joyi" subtitle="Har bir reys shu yerdan tuziladi"
-                action={<Button size="sm" variant="ghost" onClick={() => setStartOpen(true)}>Oʻzgartirish</Button>} />
-              {first ? <div className="skeleton h-10" /> : data?.start ? (
-                <div className="flex items-start gap-2.5 text-sm">
-                  <MapPin className="mt-0.5 size-4 shrink-0 text-ink-3" />
-                  <div className="min-w-0">
-                    <div className="font-medium text-ink">{data.start.from === 'office' ? 'Ishxona (Davomatdagi joy)' : data.start.label || 'Belgilangan joy'}</div>
-                    <a href={yandexPlaceUrl(data.start)} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Xaritada koʻrish</a>
-                  </div>
-                </div>
-              ) : <p className="text-sm text-ink-2">Belgilanmagan: reys birinchi manzildan boshlanadi.</p>}
-            </Card>
-          </div>
         </div>
       )}
 
@@ -165,7 +155,6 @@ export default function Delivery({ params }: { params: URLSearchParams }) {
       {driving && <DriveMode trip={driving} onClose={() => drive(null)} onChanged={reload} />}
       <CollectModal stop={collecting} onClose={() => setCollecting(null)} onDone={() => { setCollecting(null); reload(); }} />
       <StopModal stop={editing} onClose={() => setEditing(null)} onDone={() => { setEditing(null); reload(); }} />
-      <StartModal open={startOpen} canReset={data?.start?.from === 'set'} onClose={() => setStartOpen(false)} onDone={() => { setStartOpen(false); reload(); }} />
     </div>
   );
 }
@@ -177,22 +166,30 @@ function TripCard({ trip, busy, onEdit, onToggle, onTelegram, onDelete, onDrive 
   const earned = trip.stops.filter((s) => s.collected).reduce((a, s) => a + s.fee, 0);
   const waiting = trip.stops.filter((s) => !s.collected).reduce((a, s) => a + s.fee, 0);
   const done = trip.stops.filter((s) => s.done).length;
+  // A finished run is folded to one line; tapping it opens it.
+  const finished = done === trip.stops.length;
+  const [open, setOpen] = useState(!finished);
+  useEffect(() => { if (!finished) setOpen(true); }, [finished]);
   return (
-    <Card padded={false}>
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-4 py-3.5 sm:px-5">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <h3 className="text-[15px] font-semibold tracking-tight text-ink">{formatDate(trip.day, false)}</h3>
+    <Card padded={false} className={cx(!open && 'opacity-90')}>
+      <button type="button" onClick={() => setOpen(!open)} aria-expanded={open}
+        className={cx('flex w-full items-start gap-3 px-4 py-3.5 text-left sm:px-5', open && 'border-b border-line')}>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <h3 className="whitespace-nowrap text-[15px] font-semibold tracking-tight text-ink">{formatDate(trip.day, false)}</h3>
             <span className="text-[13px] text-ink-3">{weekday(trip.day)}</span>
             {trip.source === 'bot' && <Badge><Bot className="size-3" />Botdan</Badge>}
+            {finished && <Badge tone="success"><Check className="size-3" />Tugadi</Badge>}
           </div>
           <div className="mt-0.5 text-[13px] text-ink-3 num">{trip.stops.length} ta manzil · {roadKmLabel(trip.km)} · {done}/{trip.stops.length} yetkazildi</div>
         </div>
-        <div className="sm:text-right">
+        <div className="shrink-0 text-right">
           {(earned > 0 || !waiting) && <div className={cx('text-[15px] font-semibold num', earned ? 'text-up' : 'text-ink-3')}>{earned ? `+${money(earned)}` : 'Bepul'}</div>}
           {!!waiting && <div className={cx('font-medium text-warn num', earned ? 'text-xs' : 'text-[15px]')}>{money(waiting)} olinadi</div>}
         </div>
-      </div>
+        <ChevronDown className={cx('mt-1 size-4 shrink-0 text-ink-3 transition-transform max-sm:hidden', open && 'rotate-180')} />
+      </button>
+      {open && <>
       <ol className="divide-y divide-line">
         {trip.stops.map((s) => (
           <li key={s.id} className="flex items-center gap-3 px-4 py-2.5 sm:px-5">
@@ -220,45 +217,11 @@ function TripCard({ trip, busy, onEdit, onToggle, onTelegram, onDelete, onDrive 
         <Button size="sm" variant="ghost" icon={<Send className="size-4" />} loading={busy === `tg-${trip.id}`} onClick={onTelegram}>Telegramga</Button>
         <IconButton label="Reysni oʻchirish" className="ml-auto size-8 hover:text-danger" onClick={onDelete}><Trash2 className="size-4" /></IconButton>
       </div>
+      </>}
     </Card>
   );
 }
 
-function BotCard({ data, onChanged }: { data?: DeliveryData | null; onChanged: () => void }) {
-  const toast = useToast();
-  const [busy, setBusy] = useState(false);
-  const bot = data?.bot;
-  async function toggle(on: boolean) {
-    setBusy(true);
-    try {
-      await api('/delivery/bot', { method: 'POST', body: { on } });
-      toast({ tone: 'success', title: on ? 'Bot manzil qabul qiladi' : 'Bot manzil qabul qilmaydi' });
-      onChanged();
-    } catch (e) {
-      toast({ tone: 'error', title: (e as Error).message });
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <Card>
-      <CardHeader title="Telegram bot" subtitle={bot?.botName ? `@${bot.botName}` : 'Lokatsiyalarni botga yuboring'}
-        action={bot?.connected ? <Toggle on={bot.on} disabled={busy} label="Botdan manzil qabul qilish" onChange={toggle} /> : undefined} />
-      {!data ? <div className="skeleton h-16" /> : !bot?.connected ? (
-        <p className="text-sm text-ink-2">Avval botni Xabarlar oynasida ulang.</p>
-      ) : !bot.on ? (
-        <p className="text-sm text-ink-2">Yoqsangiz, botga yuborgan lokatsiyalaringizdan reys tuzib beradi.</p>
-      ) : (
-        <ol className="list-decimal space-y-1.5 pl-5 text-[13px] text-ink-2">
-          <li>Botga lokatsiya (📎 → Joylashuv) yoki Yandex / Google havolasini yuboring.</li>
-          <li>Keyin mijoz ismini yoki olinadigan pulni (masalan <b className="num">30000</b>) yozing.</li>
-          <li><b>/reys</b> deb yozing: tartiblangan roʻyxat va xarita tugmasi keladi.</li>
-          <li>Yetganda “yetkazdim”ni bosing: “oling” deydi, <b>Oldim</b> bossangiz pul hisobga qoʻshiladi. Jonli joylashuv yuborsangiz, yetganingizni oʻzi eslatadi.</li>
-        </ol>
-      )}
-    </Card>
-  );
-}
 
 interface Row { place: string; label: string; fee: string }
 const emptyRow = (): Row => ({ place: '', label: '', fee: '' });
@@ -398,42 +361,7 @@ function CollectModal({ stop, onClose, onDone }: { stop: Stop | null; onClose: (
   );
 }
 
-function StartModal({ open, canReset, onClose, onDone }: { open: boolean; canReset: boolean; onClose: () => void; onDone: () => void }) {
-  const [place, setPlace] = useState('');
-  const [label, setLabel] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => { if (open) { setPlace(''); setLabel(''); setError(null); } }, [open]);
-  async function send(body: unknown) {
-    setBusy(true);
-    setError(null);
-    try {
-      await api('/delivery/start', { method: 'PUT', body });
-      onDone();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <Modal open={open} onClose={onClose} size="sm" title="Boshlanish joyi"
-      description="Odatda Davomatdagi ishxona joyi olinadi. Boshqa joydan chiqsangiz, shu yerda belgilang (yoki botga /ombor yozing)."
-      footer={<>
-        {canReset && <Button variant="ghost" className="mr-auto" disabled={busy} onClick={() => send({ start: null })}>Ishxonaga qaytarish</Button>}
-        <Button variant="ghost" onClick={onClose}>Bekor</Button>
-        <Button variant="primary" loading={busy} disabled={!place.trim()} onClick={() => send({ place, label })}>Saqlash</Button>
-      </>}>
-      <div className="space-y-3">
-        <Field label="Xarita havolasi yoki koordinata"><Input value={place} placeholder="https://yandex.uz/maps/… yoki 41.31, 69.28" onChange={(e) => setPlace(e.target.value)} /></Field>
-        <Field label="Nomi"><Input value={label} maxLength={120} placeholder="Masalan: Ombor" onChange={(e) => setLabel(e.target.value)} /></Field>
-        {error && <Alert>{error}</Alert>}
-      </div>
-    </Modal>
-  );
-}
 
-/** Yandex Maps (the app on a phone) with a driving route from where you are now to `p`. */
 const navigateUrl = (p: Point) => `https://yandex.uz/maps/?rtext=~${p.lat},${p.lng}&rtt=auto`;
 
 /**
@@ -583,35 +511,3 @@ function DriveMode({ trip, onClose, onChanged }: { trip: Trip; onClose: () => vo
   );
 }
 
-/** Notifications from the site itself, on this device: on top of Yandex, even with the site closed. */
-function PushCard() {
-  const toast = useToast();
-  const [state, setState] = useState<PushState | null>(null);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => { pushState().then(setState).catch(() => setState('unsupported')); }, []);
-  async function run(fn: () => Promise<unknown>) {
-    setBusy(true);
-    try { await fn(); } catch (e) { toast({ tone: 'error', title: (e as Error).message }); } finally { setBusy(false); }
-  }
-  return (
-    <Card>
-      <CardHeader title="Bildirishnomalar" subtitle="Manzilga yetganingizda shu qurilmaga, sayt yopiq boʻlsa ham"
-        action={state === 'on' ? <Badge tone="success"><span className="size-1.5 rounded-full bg-success" />Yoqilgan</Badge> : undefined} />
-      {state === null ? <div className="skeleton h-9" /> : state === 'on' ? (
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" icon={<Bell className="size-4" />} loading={busy} onClick={() => run(async () => { await api('/push/test', { method: 'POST' }); toast({ tone: 'success', title: 'Sinov yuborildi' }); })}>Sinab koʻrish</Button>
-          <Button size="sm" variant="ghost" disabled={busy} onClick={() => run(async () => setState(await disablePush()))}>Oʻchirish</Button>
-        </div>
-      ) : state === 'off' ? (
-        <Button size="sm" variant="primary" icon={<Bell className="size-4" />} loading={busy}
-          onClick={() => run(async () => { const s = await enablePush(); setState(s); if (s === 'on') toast({ tone: 'success', title: 'Bildirishnomalar yoqildi' }); })}>Shu qurilmada yoqish</Button>
-      ) : (
-        <p className="text-sm text-ink-2">
-          {state === 'ios-install' ? 'iPhoneʼda: Safari → Ulashish → “Bosh ekranga qoʻshish”, keyin saytni oʻsha belgidan ochib shu yerda yoqing.'
-            : state === 'denied' ? 'Brauzer sozlamalarida bu sayt uchun bildirishnomalarga ruxsat bering.'
-              : 'Bu brauzer bildirishnomalarni qoʻllamaydi. Chrome yoki ilova sifatida oʻrnatilgan saytdan foydalaning.'}
-        </p>
-      )}
-    </Card>
-  );
-}

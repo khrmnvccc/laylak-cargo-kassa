@@ -1,4 +1,5 @@
 import { HttpError, query } from './db.js';
+import { pushTo } from './push.js';
 import { MAX_TEMPLATE_LENGTH, TEMPLATE_BY_KEY, renderTemplate, STAFF_TEMPLATES, type TemplateChats, type TemplateKey, type TemplateSettings } from '../src/lib/tgTemplates.js';
 
 // The owner's Telegram bot. The token is typed in once on the Sozlamalar page and kept only in the
@@ -171,6 +172,7 @@ export async function sendDocument(data: Buffer, filename: string, caption: stri
 /** Best-effort alert (for example a cancelled payment) to the owner and the group: never fails or slows the request much. */
 export async function notify(text: string | null, template: TemplateKey) {
   if (!text) return; // the owner switched this message off
+  await pushTemplate(template, text);
   const config = await getTelegram();
   if (!config?.chatId) return;
   await everyChat(config, 'cancels', { template, text }, (chatId, topic) => tg(config.token, 'sendMessage', { chat_id: chatId, ...topic, text, parse_mode: 'HTML', disable_web_page_preview: true }, 10_000))
@@ -224,6 +226,33 @@ async function everyChat(config: TelegramConfig, kind: MessageKind, log: { templ
   if (failed.length === results.length) throw failed[0].reason;
   for (const f of failed) console.error('Telegram send failed', f.reason);
   return true;
+}
+
+// The same messages also come as site notifications (web push) to the devices that switched them on:
+// the owner gets every message they did not turn off for their own chat, staff the ones picked for them on Xabarlar.
+const PUSH_PAGE: Record<TemplateKey, string> = {
+  payment: '/#/operations', paymentVoid: '/#/operations', expenseVoid: '/#/operations', orderDelete: '/#/orders', dailyReport: '/#/daily',
+};
+
+/** Telegram HTML -> plain text for a notification. */
+export function plainText(html: string, max = 400) {
+  const text = html.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
+    .split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+/** Never throws. */
+export async function pushTemplate(key: TemplateKey, html: string) {
+  try {
+    const settings = await getTemplateSettings().catch((): TemplateSettings => ({ texts: {}, off: [] }));
+    if (settings.off.includes(key)) return;
+    const where = settings.chats?.[key];
+    const users = STAFF_TEMPLATES.includes(key) ? where?.staff ?? [] : [];
+    await pushTo({ owner: where?.personal !== false, users }, { title: TEMPLATE_BY_KEY[key].title, body: plainText(html), url: PUSH_PAGE[key] });
+  } catch (error) {
+    console.error('Push failed', error);
+  }
 }
 
 /** "data:image/jpeg;base64,…" from the browser -> bytes; null when it is not a small picture. */

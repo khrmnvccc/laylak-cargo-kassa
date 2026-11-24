@@ -21,11 +21,11 @@ import {
   forgetSessions,
 } from './auth.js';
 import { PERMISSIONS, WORKER_DEFAULT, isPerm, kassaSources, permsOf, upgrade, type Perm } from './perms.js';
-import { ChatMoved, recentUpdates, keepUpdate, getTelegram, logSend, getTelegramErrors, messageText, notify, saveTemplate, getTemplateSettings, setTelegramError, photoFromDataUrl, reportPhotos, reportText, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
+import { ChatMoved, recentUpdates, keepUpdate, getTelegram, logSend, getTelegramErrors, messageText, notify, pushTemplate, saveTemplate, getTemplateSettings, setTelegramError, photoFromDataUrl, reportPhotos, reportText, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
 import { receiptKey } from './receipts.js';
 import { COLUMNS as BROADCAST_COLUMNS, claim as claimBroadcast, deliver as deliverBroadcast, deliverDue, parseBroadcast, recipients as broadcastRecipients, sendOne as sendBroadcastTo } from './broadcast.js';
 import { background } from './background.js';
-import { dropSubscription, pushToOwner, saveSubscription, vapid } from './push.js';
+import { dropSubscription, pushTo, saveSubscription, vapid } from './push.js';
 import { checkArrival, clearDraft, createTrip, getDeliverySettings, getDraft, handleBotButton, handleBotMessage, handleLiveLocation, loadTrips, readPlace, saveDeliverySettings, setBotHook, startPoint, tripMessage } from './delivery.js';
 import { MAX_FEE, MAX_LABEL, MAX_STOPS } from '../src/lib/delivery.js';
 import { gzipSync } from 'node:zlib';
@@ -441,7 +441,8 @@ route('POST', '/payments', 'payments.create', async (ctx) => {
  */
 async function reportLater(user: AuthUser | null, entityId: string | null, send: () => Promise<'sent' | 'off' | 'failed'>): Promise<'queued' | 'off'> {
   const config = await getTelegram();
-  if (!config?.chatId) return 'off';
+  // Site notifications go out even when no bot is linked; send() then finds Telegram off.
+  if (!config?.chatId) { background(send()); return 'off'; }
   background(send().then((result) => (result === 'failed' ? audit(null, user, 'telegram_failed', 'payment', entityId) : undefined)));
   return 'queued';
 }
@@ -450,6 +451,7 @@ async function reportLater(user: AuthUser | null, entityId: string | null, send:
 /** Sends the payment message (with its pictures, if any) unless the owner switched it off. */
 function sendIfOn(caption: string | null, photos: Buffer[] | null) {
   if (caption === null) return Promise.resolve('off' as const);
+  background(pushTemplate('payment', caption));
   return photos?.length ? reportPhotos(photos, caption) : reportText(caption);
 }
 
@@ -2753,18 +2755,18 @@ route('POST', '/delivery/location', 'owner', async (ctx) => {
 
 route('GET', '/push/key', 'user', async () => ({ key: (await vapid()).publicKey }));
 
-route('POST', '/push/subscribe', 'owner', async (ctx) => {
+route('POST', '/push/subscribe', 'user', async (ctx) => {
   if (!(await saveSubscription(ctx.user!.id, ctx.body?.subscription))) throw new HttpError(400, 'Bildirishnoma manzili notoʻgʻri');
   return { ok: true };
 });
 
-route('POST', '/push/unsubscribe', 'owner', async (ctx) => {
+route('POST', '/push/unsubscribe', 'user', async (ctx) => {
   await dropSubscription(ctx.user!.id, str(ctx.body?.endpoint, 1000));
   return { ok: true };
 });
 
-route('POST', '/push/test', 'owner', async () => {
-  const n = await pushToOwner({ title: '🔔 Laylak Cargo', body: 'Bildirishnomalar ishlayapti. Manzilga yetganingizda shunday chiqadi.', url: '/#/delivery', tag: 'test' });
+route('POST', '/push/test', 'user', async (ctx) => {
+  const n = await pushTo({ users: [ctx.user!.id] }, { title: '🔔 Laylak Cargo', body: 'Bildirishnomalar ishlayapti. Kassa xabarlari shunday chiqadi.', url: '/#/', tag: 'test' });
   if (!n) throw new HttpError(400, 'Bildirishnoma yuborilmadi. Shu qurilmada qayta yoqib koʻring');
   return { devices: n };
 });
