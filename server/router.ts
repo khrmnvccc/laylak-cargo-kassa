@@ -25,7 +25,8 @@ import { ChatMoved, recentUpdates, keepUpdate, getTelegram, logSend, getTelegram
 import { receiptKey } from './receipts.js';
 import { COLUMNS as BROADCAST_COLUMNS, claim as claimBroadcast, deliver as deliverBroadcast, deliverDue, parseBroadcast, recipients as broadcastRecipients, sendOne as sendBroadcastTo } from './broadcast.js';
 import { background } from './background.js';
-import { clearDraft, createTrip, getDeliverySettings, getDraft, handleBotButton, handleBotMessage, handleLiveLocation, loadTrips, readPlace, saveDeliverySettings, setBotHook, startPoint, tripMessage } from './delivery.js';
+import { dropSubscription, pushToOwner, saveSubscription, vapid } from './push.js';
+import { checkArrival, clearDraft, createTrip, getDeliverySettings, getDraft, handleBotButton, handleBotMessage, handleLiveLocation, loadTrips, readPlace, saveDeliverySettings, setBotHook, startPoint, tripMessage } from './delivery.js';
 import { MAX_FEE, MAX_LABEL, MAX_STOPS } from '../src/lib/delivery.js';
 import { gzipSync } from 'node:zlib';
 import { createHash, randomInt } from 'node:crypto';
@@ -2271,14 +2272,14 @@ async function dailyReportText(date: string): Promise<string | null> {
 async function backupData() {
   const tables = await query<{ name: string }>(
     `SELECT table_name AS name FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_type = 'BASE TABLE' AND table_name NOT IN ('app_sessions', 'login_attempts', 'telegram_inbox')
+      WHERE table_schema = 'public' AND table_type = 'BASE TABLE' AND table_name NOT IN ('app_sessions', 'login_attempts', 'telegram_inbox', 'push_subscriptions')
       ORDER BY table_name`,
   );
   const data: Record<string, unknown[]> = {};
   for (const { name } of tables) {
     let rows = await query(`SELECT * FROM "${name.replace(/"/g, '')}"`);
     if (name === 'app_users') rows = rows.map(({ password_hash, ...u }: any) => u);
-    if (name === 'app_meta') rows = rows.filter((r: any) => !String(r.key).startsWith('telegram'));
+    if (name === 'app_meta') rows = rows.filter((r: any) => !String(r.key).startsWith('telegram') && r.key !== 'push_vapid');
     data[name] = rows;
   }
   const counts = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, v.length]));
@@ -2739,6 +2740,35 @@ route('PUT', '/delivery/stops/:id', 'owner', async (ctx) => {
   return { stop: rows[0] };
 });
 
+// The phone's own position while Reys rejimi is open: the same "you have arrived" as from Telegram's live location.
+route('POST', '/delivery/location', 'owner', async (ctx) => {
+  const lat = Number(ctx.body?.lat), lng = Number(ctx.body?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) throw new HttpError(400, 'Joylashuv notoʻgʻri');
+  const stop = await checkArrival({ lat, lng });
+  // The screen is open, so it shows the stop itself; a notification would only repeat it.
+  return { arrived: stop ? { id: stop.id, delivery_id: stop.delivery_id } : null };
+});
+
+// ---------- web push (site notifications on top of other apps) ----------
+
+route('GET', '/push/key', 'user', async () => ({ key: (await vapid()).publicKey }));
+
+route('POST', '/push/subscribe', 'owner', async (ctx) => {
+  if (!(await saveSubscription(ctx.user!.id, ctx.body?.subscription))) throw new HttpError(400, 'Bildirishnoma manzili notoʻgʻri');
+  return { ok: true };
+});
+
+route('POST', '/push/unsubscribe', 'owner', async (ctx) => {
+  await dropSubscription(ctx.user!.id, str(ctx.body?.endpoint, 1000));
+  return { ok: true };
+});
+
+route('POST', '/push/test', 'owner', async () => {
+  const n = await pushToOwner({ title: '🔔 Laylak Cargo', body: 'Bildirishnomalar ishlayapti. Manzilga yetganingizda shunday chiqadi.', url: '/#/delivery', tag: 'test' });
+  if (!n) throw new HttpError(400, 'Bildirishnoma yuborilmadi. Shu qurilmada qayta yoqib koʻring');
+  return { devices: n };
+});
+
 route('DELETE', '/delivery/trips/:id', 'owner', async (ctx) => {
   const id = Number(ctx.params.id);
   const rows = Number.isInteger(id) ? await query(`DELETE FROM deliveries WHERE id = $1 RETURNING id`, [id]) : [];
@@ -2753,7 +2783,7 @@ route('POST', '/delivery/trips/:id/telegram', 'owner', async (ctx) => {
   if (!trip) throw new HttpError(404, 'Reys topilmadi');
   const config = await getTelegram();
   if (!config?.chatId) throw new HttpError(400, 'Telegram bot ulanmagan');
-  const msg = tripMessage(trip);
+  const msg = tripMessage(trip, config.siteUrl);
   await tg(config.token, 'sendMessage', { chat_id: config.chatId, text: msg.text, parse_mode: 'HTML', disable_web_page_preview: true, reply_markup: msg.reply_markup });
   return { ok: true };
 });
