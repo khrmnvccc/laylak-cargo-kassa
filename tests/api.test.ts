@@ -1585,14 +1585,15 @@ test('delivery: off until the owner switches it on; the bot takes locations and 
     await msg({ text: '/reys' });
     const reply = sent.find((s) => s.method === 'sendMessage')!;
     assert.match(reply.body.text, /3 ta manzil/);
-    assert.match(reply.body.reply_markup.inline_keyboard[0][0].url, /rtext=41\.3,69\.2~41\.3,69\.21~41\.3,69\.23~41\.3,69\.24/);
+    assert.match(reply.body.reply_markup.inline_keyboard[1][0].url, /rtext=41\.3,69\.2~41\.3,69\.21~41\.3,69\.23~41\.3,69\.24/);
     const view = (await owner.call('GET', '/delivery')).body;
     assert.equal(view.draft.length, 0);
     assert.equal(view.trips.length, 1);
     assert.deepEqual(view.trips[0].stops.map((s: any) => [s.lng, s.label, s.fee]), [[69.21, '', 0], [69.23, '', 0], [69.24, 'Aziz', 30000]]);
     // Money to take is not counted until "Oldim".
     assert.deepEqual([view.totals.earned, view.totals.waiting], [0, 30000]);
-    assert.equal(reply.body.reply_markup.inline_keyboard.length, 4, 'route row + one "yetkazdim" button per stop');
+    // The work happens on the site: the bot hands the run over with one button.
+    assert.equal(reply.body.reply_markup.inline_keyboard[0][0].url, `https://kassa.test/#/delivery?drive=${view.trips[0].id}`);
     const aziz = view.trips[0].stops[2];
     const press = (data: string) => hook({ update_id: 2, callback_query: { id: 'cb', from: { id: 555 }, data, message: { message_id: 9, text: '🚚 Reys', chat: { id: 555 } } } }, secret);
     // A stranger pressing a button changes nothing.
@@ -1612,6 +1613,21 @@ test('delivery: off until the owner switches it on; the bot takes locations and 
     await press(`c:${aziz.id}`);
     const afterTake = (await owner.call('GET', '/delivery')).body;
     assert.deepEqual([afterTake.totals.earned, afterTake.totals.waiting, afterTake.trips[0].stops[2].done], [30000, 0, true]);
+    // Reys rejimi on the site sends the phone's position: reaching a stop says so (once), and it is the site's job to show it.
+    const runOnSite = await owner.call('POST', '/delivery/trips', { stops: [{ place: '41.40, 69.30', label: 'Yaqin', fee: 10000 }] });
+    const near = runOnSite.body.trip.stops[0];
+    assert.equal((await owner.call('POST', '/delivery/location', { lat: 41.35, lng: 69.30 })).body.arrived, null);
+    assert.equal((await owner.call('POST', '/delivery/location', { lat: 41.4005, lng: 69.3001 })).body.arrived.id, near.id);
+    assert.equal((await owner.call('POST', '/delivery/location', { lat: 41.4005, lng: 69.3001 })).body.arrived, null);
+    assert.equal((await w.call('POST', '/delivery/location', { lat: 41.4, lng: 69.3 })).status, 403);
+    await owner.call('DELETE', `/delivery/trips/${runOnSite.body.trip.id}`);
+    // Site notifications: the key is made once; a bad subscription is refused; staff cannot subscribe.
+    const key = (await owner.call('GET', '/push/key')).body.key;
+    assert.match(key, /^[A-Za-z0-9_-]{80,}$/);
+    assert.equal((await owner.call('GET', '/push/key')).body.key, key);
+    assert.equal((await owner.call('POST', '/push/subscribe', { subscription: { endpoint: 'http://x' } })).status, 400);
+    assert.equal((await w.call('POST', '/push/subscribe', { subscription: {} })).status, 403);
+    assert.equal((await owner.call('POST', '/push/test')).status, 400, 'no device subscribed yet');
     // "Yetkazdim" on a free stop just marks it delivered.
     await press(`d:${view.trips[0].stops[0].id}`);
     assert.equal((await owner.call('GET', '/delivery')).body.trips[0].stops[0].done, true);

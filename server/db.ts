@@ -488,7 +488,19 @@ ALTER TABLE delivery_stops ADD COLUMN IF NOT EXISTS arrived_at TIMESTAMPTZ;
 UPDATE delivery_stops SET collected = TRUE WHERE fee > 0 AND done;
 `;
 
-const SCHEMA_VERSION = 19;
+// v20: web push: each device (phone or computer) that allowed notifications from the site.
+const SCHEMA_V20_SQL = `
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id BIGSERIAL PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+  endpoint TEXT NOT NULL UNIQUE,
+  keys JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY;
+`;
+
+const SCHEMA_VERSION = 20;
 
 export function ensureSchema(): Promise<void> {
   if (!globalForPool.__kassaSchema) {
@@ -535,6 +547,7 @@ async function migrate() {
       if (current < 17) await client.query(SCHEMA_V17_SQL);
       if (current < 18) await client.query(SCHEMA_V18_SQL);
       if (current < 19) await client.query(SCHEMA_V19_SQL);
+      if (current < 20) await client.query(SCHEMA_V20_SQL);
       await client.query(
         `INSERT INTO app_meta (key, value) VALUES ('schema_version', $1::jsonb)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,

@@ -1,5 +1,6 @@
 import { HttpError, query, transaction } from './db.js';
 import { escapeHtml, getTelegram, tg, type TelegramConfig } from './telegram.js';
+import { pushToOwner } from './push.js';
 import {
   MAX_FEE, MAX_LABEL, MAX_STOPS, distanceKm, googlePlaceUrl, googleRouteUrl, isShortMapLink, parsePlace, planRoute, roadKmLabel,
   yandexPlaceUrl, yandexRouteUrl, type Place, type Point,
@@ -136,7 +137,7 @@ export async function loadTrips(where: { id?: number; from?: string; to?: string
 const money = (n: number) => `${String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} soʻm`;
 
 /** The run as the bot sends it: numbered stops, each with its map links, and buttons for the whole route. */
-export function tripMessage(trip: Trip) {
+export function tripMessage(trip: Trip, siteUrl?: string) {
   const lines = [`🚚 <b>Reys · ${trip.stops.length} ta manzil</b> · ${roadKmLabel(trip.km)}`];
   if (trip.start) lines.push('Boshlanish: ishxonadan');
   lines.push('');
@@ -145,14 +146,17 @@ export function tripMessage(trip: Trip) {
     const fee = s.fee > 0 ? ` · ${s.collected ? '✅ ' : '💵 '}${money(s.fee)}` : '';
     lines.push(`${s.done ? '✔️' : `${s.position}.`} ${name}${fee}\n   <a href="${yandexPlaceUrl(s)}">Yandex</a> · <a href="${googlePlaceUrl(s)}">Google</a>`);
   }
-  lines.push('', 'Manzilga yetganda pastdagi tugmani bosing. 📎 → Joylashuv → <b>Jonli joylashuv</b> yuborsangiz, yetib borganingizda oʻzim eslataman.');
+  lines.push('', siteUrl
+    ? 'Reysni saytda boshlang. 📎 → Joylashuv → <b>Jonli joylashuv</b> yuborsangiz, manzilga yetganingizda sayt tepadan eslatadi.'
+    : 'Manzilga yetganda pastdagi tugmani bosing. 📎 → Joylashuv → <b>Jonli joylashuv</b> yuborsangiz, yetib borganingizda oʻzim eslataman.');
   const points = [...(trip.start ? [trip.start] : []), ...trip.stops];
+  const route = [{ text: '🗺 Yandex: butun yoʻl', url: yandexRouteUrl(points) }, { text: 'Google Maps', url: googleRouteUrl(points) }];
   return {
     text: lines.join('\n'),
-    reply_markup: { inline_keyboard: [
-      [{ text: '🗺 Yandex: butun yoʻl', url: yandexRouteUrl(points) }, { text: 'Google Maps', url: googleRouteUrl(points) }],
-      ...trip.stops.filter((s) => !s.done).map((s) => [{ text: `✅ ${s.position}. ${shortName(s)}: yetkazdim`, callback_data: `d:${s.id}` }]),
-    ] },
+    reply_markup: { inline_keyboard: siteUrl
+      // The work itself happens on the site (Reys rejimi); the bot only hands the run over.
+      ? [[{ text: '🚚 Saytda reysni boshlash', url: `${siteUrl}/#/delivery?drive=${trip.id}` }], route]
+      : [route, ...trip.stops.filter((s) => !s.done).map((s) => [{ text: `✅ ${s.position}. ${shortName(s)}: yetkazdim`, callback_data: `d:${s.id}` }])] },
   };
 }
 
@@ -206,7 +210,7 @@ export async function handleBotButton(config: TelegramConfig, cb: any): Promise<
     }
     // The run message drops the button of the stop just delivered.
     const [trip] = await loadTrips({ id: stop.delivery_id });
-    if (trip && cb.message?.text?.startsWith('🚚')) { const t = tripMessage(trip); await edit(t.text, t.reply_markup); }
+    if (trip && cb.message?.text?.startsWith('🚚')) { const t = tripMessage(trip, config.siteUrl); await edit(t.text, t.reply_markup); }
     return 'delivered';
   }
   const took = kind === 'c';
@@ -228,7 +232,14 @@ export async function handleLiveLocation(config: TelegramConfig, message: any): 
   if (!config.chatId || message?.chat?.id !== config.chatId) return 'ignored';
   const loc = message.location;
   if (!loc || !Number.isFinite(loc.latitude)) return 'ignored';
-  const here = { lat: loc.latitude, lng: loc.longitude };
+  const near = await checkArrival({ lat: loc.latitude, lng: loc.longitude });
+  if (!near) return 'moving';
+  await notifyArrival(config, near);
+  return 'arrived';
+}
+
+/** The stop of today's runs (still to deliver, not yet announced) within reach of `here`; claims it so it is said once. */
+export async function checkArrival(here: Point): Promise<(Stop & { delivery_id: number }) | null> {
   const rows = await query<Stop & { delivery_id: number }>(
     `SELECT s.id::int, s.delivery_id::int, s.position::int, s.lat, s.lng, s.label, s.fee::float, s.done, s.collected
        FROM delivery_stops s JOIN deliveries d ON d.id = s.delivery_id
@@ -236,12 +247,26 @@ export async function handleLiveLocation(config: TelegramConfig, message: any): 
     [today()],
   );
   const near = rows.find((s) => distanceKm(here, s) * 1000 <= ARRIVE_M);
-  if (!near) return 'moving';
+  if (!near) return null;
   const claimed = await query(`UPDATE delivery_stops SET arrived_at = NOW() WHERE id = $1 AND arrived_at IS NULL RETURNING id`, [near.id]);
-  if (!claimed.length) return 'moving';
-  const msg = collectMessage(near, true);
+  return claimed.length ? near : null;
+}
+
+/**
+ * "You have arrived": a notification from the site on top of whatever is open (Yandex), with Oldim / Olmadim
+ * when money is to be taken. Only when no device allowed site notifications does it come in Telegram instead.
+ */
+export async function notifyArrival(config: TelegramConfig | null, s: Stop & { delivery_id: number }) {
+  const pushed = await pushToOwner({
+    title: `📍 Yetib keldingiz: ${s.position}. ${shortName(s)}`,
+    body: s.fee > 0 && !s.collected ? `💵 ${money(s.fee)} oling` : 'Bu manzildan pul olinmaydi',
+    url: `/#/delivery?drive=${s.delivery_id}`,
+    tag: `stop-${s.id}`,
+    ...(s.fee > 0 && !s.collected ? { collect: { stopId: s.id, fee: s.fee } } : {}),
+  }).catch((e) => { console.error('Push failed', e); return 0; });
+  if (pushed || !config?.chatId) return;
+  const msg = collectMessage(s, true);
   await reply(config, config.chatId, msg.text, { reply_markup: msg.reply_markup });
-  return 'arrived';
 }
 
 const HELP = [
@@ -250,8 +275,8 @@ const HELP = [
   '1. Manzillarni yuboring: 📎 → Joylashuv (lokatsiya), yoki Yandex / Google xarita havolasi.',
   '2. Lokatsiyadan keyin yozilgan matn shu manzil nomi boʻladi, faqat raqam yozsangiz (masalan 30000) shu yerdan olinadigan pul.',
   '3. Hammasi yuborilgach /reys yozing: eng qisqa tartibda yoʻl tuzib beraman.',
-  '4. Manzilga yetganda “yetkazdim” tugmasini bosing: pul boʻlsa “oling” deyman, “Oldim” bossangiz hisobga qoʻshiladi.',
-  '   Jonli joylashuv (📎 → Joylashuv → Jonli) yuborsangiz, yetib borganingizda oʻzim eslataman.',
+  '4. “Saytda reysni boshlash” tugmasi Reys rejimini ochadi: manzilga yetganda “Oldim” bossangiz pul hisobga qoʻshiladi.',
+  '   Jonli joylashuv (📎 → Joylashuv → Jonli) yuborsangiz, yetib borganingizda sayt tepadan eslatadi.',
   '',
   '/royxat — yuborilgan manzillar',
   '/bekor — roʻyxatni tozalash',
@@ -308,7 +333,7 @@ export async function handleBotMessage(config: TelegramConfig, message: any): Pr
     if (!draft.stops.length) { await reply(config, chatId, 'Hali manzil yoʻq. Avval lokatsiyalarni yuboring.'); return 'empty'; }
     const trip = await createTrip(draft.stops, 'bot', config.chatName ?? null);
     await clearDraft();
-    const msg = tripMessage(trip);
+    const msg = tripMessage(trip, config.siteUrl);
     await reply(config, chatId, msg.text, { reply_markup: msg.reply_markup });
     return 'trip';
   }
@@ -362,7 +387,7 @@ export async function setBotHook(on: boolean, host: string | undefined, save: (c
     { command: 'bekor', description: 'Roʻyxatni tozalash' },
     { command: 'ombor', description: 'Boshlanish joyini oʻzgartirish' },
   ] }).catch(() => undefined);
-  const next = { ...config, hookSecret: secret };
+  const next = { ...config, hookSecret: secret, siteUrl: `https://${host}` };
   await save(next);
   return next;
 }

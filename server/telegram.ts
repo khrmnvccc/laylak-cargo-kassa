@@ -23,6 +23,8 @@ export interface TelegramConfig {
   // Set while Telegram sends the bot's messages to our webhook (the Yetkazish bot); Telegram puts it in
   // every call's header, so nobody else can post to the hook.
   hookSecret?: string;
+  /** The site's own address (https://…), learnt when the hook is set, for "open on the site" buttons. */
+  siteUrl?: string;
 }
 
 /** Which kind of message is being sent, so the group can be told to skip one. */
