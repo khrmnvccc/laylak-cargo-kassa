@@ -8,6 +8,8 @@ import { getPool } from '../server/db.js';
 import { backgroundSettled } from '../server/background.js';
 
 process.env.ADMIN_SETUP_KEY ||= 'test-key';
+// The evening report also goes out on ordinary requests after its time; the telegram test switches that on itself.
+process.env.DAILY_REPORT_ON_REQUEST = 'off';
 
 class Client {
   cookie = '';
@@ -806,6 +808,15 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     const day = new Date(Date.now() + 5 * 3600_000).toISOString().slice(0, 10);
     Date.now = () => Date.parse(`${day}T10:00:00Z`); // 15:00 in Tashkent
     assert.equal((await cron('Bearer cron-test')).body.reason, 'early');
+    // The owner can move the report: only between 12:00 and 23:00, and the cron honours the new time.
+    assert.equal((await owner.call('GET', '/telegram')).body.telegram.reportTime, '19:00');
+    assert.equal((await owner.call('PUT', '/telegram/report-time', { time: '23:30' })).status, 400);
+    assert.equal((await owner.call('PUT', '/telegram/report-time', { time: '9:00' })).status, 400);
+    const moved = await owner.call('PUT', '/telegram/report-time', { time: '20:30' });
+    assert.equal(moved.body.telegram.reportTime, '20:30');
+    Date.now = () => Date.parse(`${day}T15:10:00Z`); // 20:10 in Tashkent
+    assert.equal((await cron('Bearer cron-test')).body.reason, 'early');
+    await owner.call('PUT', '/telegram/report-time', { time: '19:00' });
     Date.now = () => Date.parse(`${day}T14:05:00Z`); // 19:05 in Tashkent
     sent.length = 0;
     const first = await cron('Bearer cron-test');
@@ -827,6 +838,20 @@ test('telegram: owner connects a bot, gets void alerts, the evening report and a
     assert.match(sent[0].body.text, /Jami:/);
     assert.doesNotMatch(sent[0].body.text, /Kim qancha kiritdi|Davomat|Kelmadi/);
     assert.equal((await cron('Bearer cron-test')).body.reason, 'already-sent');
+    // Next day, the site's own requests send it on the minute, once, without waiting for the cron.
+    process.env.DAILY_REPORT_ON_REQUEST = 'on';
+    const next = new Date(Date.parse(`${day}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+    Date.now = () => Date.parse(`${next}T14:01:00Z`); // 19:01 in Tashkent
+    sent.length = 0;
+    await owner.call('GET', '/telegram');
+    await backgroundSettled();
+    assert.equal(sent.filter((s) => s.method === 'sendMessage').length, 1, 'the report went out from a request');
+    Date.now = () => Date.parse(`${next}T14:03:00Z`);
+    await owner.call('GET', '/telegram');
+    await backgroundSettled();
+    assert.equal(sent.filter((s) => s.method === 'sendMessage').length, 1, 'and only once');
+    assert.equal((await cron('Bearer cron-test')).body.reason, 'already-sent');
+    process.env.DAILY_REPORT_ON_REQUEST = 'off';
   } finally {
     globalThis.fetch = realFetch;
     Date.now = realNow;

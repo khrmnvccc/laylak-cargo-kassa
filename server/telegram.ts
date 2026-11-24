@@ -19,6 +19,7 @@ export interface TelegramConfig {
   // What the group gets; a missing value means yes. The owner's own chat always gets both kinds.
   groupPayments?: boolean; // payment pictures
   groupCancels?: boolean; // cancelled payments and expenses, deleted orders
+  reportTime?: string; // 'HH:MM' Tashkent time the evening report goes out; missing means 19:00
 }
 
 /** Which kind of message is being sent, so the group can be told to skip one. */
