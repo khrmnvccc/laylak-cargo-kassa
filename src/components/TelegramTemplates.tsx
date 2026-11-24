@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
-import { BarChart3, Check, FileSpreadsheet, Image as ImageIcon, Receipt, RotateCcw, Save, Send, Trash2, Undo2, User, Users, Wallet, X, Zap } from 'lucide-react';
+import { BarChart3, Check, FileSpreadsheet, Image as ImageIcon, LogIn, LogOut, Receipt, RotateCcw, Save, Send, Trash2, Undo2, User, Users, Wallet, X, Zap } from 'lucide-react';
 import { api } from '../lib/api';
 import { useApi } from '../lib/live';
 import {
@@ -9,7 +9,7 @@ import {
 import { Alert, Button, Card, ErrorState, useToast } from './ui';
 
 const ICONS: Record<TemplateKey, typeof Wallet> = {
-  payment: Wallet, paymentVoid: Undo2, expenseVoid: Receipt, orderDelete: Trash2, dailyReport: BarChart3,
+  payment: Wallet, paymentVoid: Undo2, expenseVoid: Receipt, orderDelete: Trash2, checkIn: LogIn, checkOut: LogOut, dailyReport: BarChart3,
 };
 const LOG_TITLES: Record<string, string> = { ...Object.fromEntries(TEMPLATES.map((t) => [t.key, t.title])), test: 'Sinov xabari', other: 'Xabar' };
 

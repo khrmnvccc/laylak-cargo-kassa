@@ -1,14 +1,15 @@
 // Telegram message texts the owner can change on the Sozlamalar page. Shared by the server (to send)
 // and the browser (to show how a message will look), so both render a text the same way.
 
-export type TemplateKey = 'payment' | 'paymentVoid' | 'expenseVoid' | 'orderDelete' | 'dailyReport';
+export type TemplateKey = 'payment' | 'paymentVoid' | 'expenseVoid' | 'orderDelete' | 'checkIn' | 'checkOut' | 'dailyReport';
 
-/** Where a message belongs in the list: A takes money in, B undoes something, C reports. */
-export type TemplateGroup = 'kirim' | 'bekor' | 'hisobot';
+/** Where a message belongs in the list: A takes money in, B undoes something, C attendance, D reports. */
+export type TemplateGroup = 'kirim' | 'bekor' | 'davomat' | 'hisobot';
 export const TEMPLATE_GROUPS: { key: TemplateGroup; letter: string; title: string }[] = [
   { key: 'kirim', letter: 'A', title: 'KIRIM' },
   { key: 'bekor', letter: 'B', title: 'BEKOR QILISH VA OʻCHIRISH' },
-  { key: 'hisobot', letter: 'C', title: 'HISOBOT' },
+  { key: 'davomat', letter: 'C', title: 'DAVOMAT' },
+  { key: 'hisobot', letter: 'D', title: 'HISOBOT' },
 ];
 
 export interface TemplateVar { name: string; label: string; sample: string }
@@ -70,6 +71,24 @@ export const TEMPLATES: TemplateDef[] = [
     text: '🗑 *{{soni}} oʻchirildi* · {{summa}}\n{{royxat}}\nKim: {{kim}}',
   },
   {
+    key: 'checkIn', group: 'davomat', groupChat: true, title: 'Ishga keldi', hint: 'Kimdir “Keldim” ni bosganda',
+    vars: [
+      KIM,
+      { name: 'vaqt', label: 'Vaqt', sample: '09:02' },
+      { name: 'joy', label: 'Joy', sample: 'ishxonadan 35 m' },
+    ],
+    text: '🟢 *{{kim}} keldi* · {{vaqt}}\n📍 {{joy}}',
+  },
+  {
+    key: 'checkOut', group: 'davomat', groupChat: true, title: 'Ishdan ketdi', hint: 'Kimdir “Ketdim” ni bosganda',
+    vars: [
+      KIM,
+      { name: 'vaqt', label: 'Vaqt', sample: '18:10' },
+      { name: 'ishda', label: 'Ishda boʻldi', sample: '9 soat 8 daqiqa' },
+    ],
+    text: '🔴 *{{kim}} ketdi* · {{vaqt}}\n⏱ Ishda: {{ishda}}',
+  },
+  {
     key: 'dailyReport', group: 'hisobot', files: true, title: 'Kechki hisobot', hint: 'Har kuni siz tanlagan vaqtda, faqat sizga',
     vars: [
       { name: 'sana', label: 'Sana', sample: '13-noyabr, 2026' },
@@ -93,7 +112,7 @@ export const TEMPLATES: TemplateDef[] = [
 export interface TemplateChats { personal?: boolean; group?: boolean; staff?: string[] }
 
 /** Messages a staff member may be given; the evening report carries the backup, so it stays with the owner. */
-export const STAFF_TEMPLATES: TemplateKey[] = ['payment', 'paymentVoid', 'expenseVoid', 'orderDelete'];
+export const STAFF_TEMPLATES: TemplateKey[] = ['payment', 'paymentVoid', 'expenseVoid', 'orderDelete', 'checkIn', 'checkOut'];
 
 /** What the owner changed: their own texts, the messages they switched off, and where each one goes. */
 export interface TemplateSettings { texts: Partial<Record<TemplateKey, string>>; off: TemplateKey[]; chats?: Partial<Record<TemplateKey, TemplateChats>> }
