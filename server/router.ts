@@ -31,7 +31,7 @@ import { MAX_FEE, MAX_LABEL, MAX_STOPS } from '../src/lib/delivery.js';
 import { gzipSync } from 'node:zlib';
 import { createHash, randomInt } from 'node:crypto';
 import { EXPENSE_LABELS } from '../src/lib/excelSheets.js';
-import { MAX_TEMPLATE_LENGTH, STAFF_TEMPLATES, TEMPLATE_BY_KEY, renderTemplate, sampleValues, type TemplateKey } from '../src/lib/tgTemplates.js';
+import { MAX_TEMPLATE_LENGTH, STAFF_TEMPLATES, TEMPLATE_BY_KEY, renderTemplate, sampleValues, type TemplateChats, type TemplateKey } from '../src/lib/tgTemplates.js';
 import { DEFAULT_REPORT_TIME, REPORT_TIME, REPORT_TIME_MAX, REPORT_TIME_MIN } from '../src/lib/reportTime.js';
 import { DEFAULT_PAGE_SETTINGS, cleanPageSettings } from '../src/lib/pageConfig.js';
 import { cleanBrand } from '../src/lib/brandConfig.js';
@@ -2441,10 +2441,12 @@ route('GET', '/telegram', 'messages.manage', async () => telegramView(await getT
 // Message texts: the owner's own words for each Telegram message (defaults live in src/lib/tgTemplates.ts).
 route('GET', '/telegram/templates', 'messages.manage', async () => getTemplateSettings());
 
+const userIds = (list: unknown[]) => [...new Set<string>(list.filter((id): id is string => typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id)))].slice(0, 100);
+
 route('PUT', '/telegram/templates', 'messages.manage', async (ctx) => {
   const key = String(ctx.body?.key || '') as TemplateKey;
   if (!TEMPLATE_BY_KEY[key]) throw new HttpError(400, 'Bunday xabar yoʻq');
-  const change: { text?: string | null; on?: boolean; chats?: { personal?: boolean; group?: boolean; staff?: string[] } } = {};
+  const change: { text?: string | null; on?: boolean; chats?: TemplateChats } = {};
   if ('text' in (ctx.body || {})) change.text = ctx.body.text == null ? null : String(ctx.body.text);
   if (typeof ctx.body?.on === 'boolean') change.on = ctx.body.on;
   const chats = ctx.body?.chats;
@@ -2455,12 +2457,21 @@ route('PUT', '/telegram/templates', 'messages.manage', async (ctx) => {
     if (typeof chats.group === 'boolean') change.chats.group = chats.group;
     if (Array.isArray(chats.staff)) {
       if (!STAFF_TEMPLATES.includes(key)) throw new HttpError(400, 'Bu xabar xodimlarga yuborilmaydi');
-      change.chats.staff = [...new Set<string>((chats.staff as unknown[]).filter((id): id is string => typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id)))].slice(0, 100);
+      change.chats.staff = userIds(chats.staff);
+    }
+    const push = chats.push;
+    if (push && typeof push === 'object') {
+      change.chats.push = {};
+      if (typeof push.owner === 'boolean') change.chats.push.owner = push.owner;
+      if (Array.isArray(push.staff)) {
+        if (!STAFF_TEMPLATES.includes(key)) throw new HttpError(400, 'Bu xabar xodimlarga yuborilmaydi');
+        change.chats.push.staff = userIds(push.staff);
+      }
     }
   }
   const settings = await saveTemplate(key, change);
   const action = change.chats ? 'telegram_template_chats' : change.on === undefined ? 'telegram_template' : change.on ? 'telegram_template_on' : 'telegram_template_off';
-  await audit(null, ctx.user, action, 'telegram', null, { key, ...change.chats, staff: change.chats?.staff?.length });
+  await audit(null, ctx.user, action, 'telegram', null, { key, ...change.chats, staff: change.chats?.staff?.length, push: change.chats?.push && { owner: change.chats.push.owner, staff: change.chats.push.staff?.length } });
   return settings;
 });
 
@@ -2768,6 +2779,15 @@ route('POST', '/delivery/location', 'owner', async (ctx) => {
 // ---------- web push (site notifications on top of other apps) ----------
 
 route('GET', '/push/key', 'user', async () => ({ key: (await vapid()).publicKey }));
+
+// Everyone who could get site notifications, and on how many devices they switched them on (Xabarlar page).
+route('GET', '/push/people', 'messages.manage', async () => {
+  const items = await query(
+    `SELECT u.id, u.full_name, u.role, (SELECT COUNT(*)::int FROM push_subscriptions s WHERE s.user_id = u.id) AS devices
+       FROM app_users u WHERE u.is_active ORDER BY (u.role = 'owner') DESC, u.full_name`,
+  );
+  return { items };
+});
 
 route('POST', '/push/subscribe', 'user', async (ctx) => {
   if (!(await saveSubscription(ctx.user!.id, ctx.body?.subscription))) throw new HttpError(400, 'Bildirishnoma manzili notoʻgʻri');

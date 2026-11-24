@@ -29,7 +29,11 @@ export async function enablePush(): Promise<PushState> {
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') return permission === 'denied' ? 'denied' : 'off';
   const reg = (await navigator.serviceWorker.getRegistration()) ?? (await navigator.serviceWorker.register('/sw.js'));
-  await navigator.serviceWorker.ready;
+  // Some phones never finish starting the worker; say so instead of spinning for ever.
+  await Promise.race([
+    navigator.serviceWorker.ready,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Telefon bildirishnoma xizmatini ishga tushirmadi. Saytni yopib qayta oching.')), 15_000)),
+  ]);
   const { key } = await api<{ key: string }>('/push/key');
   let sub = await reg.pushManager.getSubscription();
   if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(key) });

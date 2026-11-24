@@ -1,10 +1,10 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
-import { BarChart3, Check, FileSpreadsheet, Image as ImageIcon, LogIn, LogOut, Receipt, RotateCcw, Save, Send, Trash2, Undo2, User, Users, Wallet, X, Zap } from 'lucide-react';
+import { BarChart3, Bell, BellOff, Check, FileSpreadsheet, Image as ImageIcon, LogIn, LogOut, Receipt, RotateCcw, Save, Send, Trash2, Undo2, User, Users, Wallet, X, Zap } from 'lucide-react';
 import { api } from '../lib/api';
 import { useApi } from '../lib/live';
 import {
-  MAX_TEMPLATE_LENGTH, STAFF_TEMPLATES, TEMPLATES, TEMPLATE_BY_KEY, TEMPLATE_GROUPS, renderTemplate, sampleValues,
-  type TemplateKey, type TemplateSettings,
+  MAX_TEMPLATE_LENGTH, STAFF_TEMPLATES, pushTargets, TEMPLATES, TEMPLATE_BY_KEY, TEMPLATE_GROUPS, renderTemplate, sampleValues,
+  type TemplateChats, type TemplateKey, type TemplateSettings,
 } from '../lib/tgTemplates';
 import { Alert, Button, Card, ErrorState, useToast } from './ui';
 
@@ -82,6 +82,8 @@ function ChatPill({ on, icon, label, sub, disabled, onClick }: { on: boolean; ic
 }
 
 /** Every Telegram message the kassa sends, each with its own words, its own switch and its own chats, plus what was sent lately. */
+interface PushPerson { id: string; full_name: string; role: string; devices: number }
+
 export default function TelegramTemplates({ group, personalName, people }: { group: GroupInfo; personalName: string | null; people: LinkedPerson[] }) {
   const toast = useToast();
   const { data, error: loadError, loading } = useApi<TemplateSettings>('/telegram/templates');
@@ -130,7 +132,7 @@ export default function TelegramTemplates({ group, personalName, people }: { gro
   const staffOf = (k: TemplateKey) => settings.chats?.[k]?.staff ?? [];
   const activePeople = people.filter((p) => p.is_active);
   const staffCount = (k: TemplateKey) => staffOf(k).filter((id) => activePeople.some((p) => p.id === id)).length;
-  const put = (k: TemplateKey, body: { text?: string | null; on?: boolean; chats?: { personal?: boolean; group?: boolean; staff?: string[] } }) =>
+  const put = (k: TemplateKey, body: { text?: string | null; on?: boolean; chats?: TemplateChats }) =>
     api<TemplateSettings>('/telegram/templates', { method: 'PUT', body: { key: k, ...body } }).then(setSaved);
   const save = () => run('save', async () => {
     await put(key, { text });
@@ -159,6 +161,17 @@ export default function TelegramTemplates({ group, personalName, people }: { gro
   const test = () => run('test', async () => {
     await api('/telegram/templates/test', { method: 'POST', body: { key, text } });
     toast({ tone: 'success', title: 'Namuna Telegramga yuborildi' });
+  });
+
+  // Site notifications (web push): who gets this message on their phone, chosen apart from Telegram.
+  const pushPeople = useApi<{ items: PushPerson[] }>('/push/people');
+  const pushOf = (k: TemplateKey) => pushTargets(settings.chats?.[k], STAFF_TEMPLATES.includes(k));
+  const togglePush = (k: TemplateKey, person: PushPerson) => run(`push-${person.id}`, async () => {
+    const now = pushOf(k);
+    const owner = person.role === 'owner';
+    const on = owner ? !now.owner : !now.staff.includes(person.id);
+    await put(k, { chats: { push: owner ? { owner: on } : { staff: on ? [...now.staff, person.id] : now.staff.filter((id) => id !== person.id) } } });
+    toast({ tone: 'success', title: `${person.full_name}: “${TEMPLATE_BY_KEY[k].title}” bildirishnomasi ${on ? 'keladi' : 'kelmaydi'}` });
   });
 
   const sentCount = log.data?.total ?? 0;
@@ -296,6 +309,27 @@ export default function TelegramTemplates({ group, personalName, people }: { gro
                       ) : (
                         <p className="text-xs text-ink-3">Hali hech bir xodim Telegramini ulamagan. Har kim Sozlamalar → Telegram boʻlimida oʻzi ulaydi.</p>
                       )}
+                    </div>
+                  )}
+                  {key !== 'dailyReport' && (
+                    <div className="mt-4">
+                      <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-ink-2"><Bell className="size-3.5" />Sayt bildirishnomasi (telefon tepasida)</div>
+                      {!pushPeople.data ? <div className="skeleton h-8 w-2/3" /> : (
+                        <div className="flex flex-wrap gap-1.5">
+                          {pushPeople.data.items.filter((p) => p.role === 'owner' || STAFF_TEMPLATES.includes(key)).map((p) => {
+                            const now = pushOf(key);
+                            const on = p.role === 'owner' ? now.owner : now.staff.includes(p.id);
+                            return (
+                              <button key={p.id} type="button" aria-pressed={on} disabled={busy === `push-${p.id}`} onClick={() => togglePush(key, p)}
+                                title={p.devices ? `${p.devices} ta qurilmada yoqilgan` : 'Hali bildirishnomani yoqmagan'}
+                                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-medium transition-colors disabled:opacity-60 ${on ? 'border-[var(--card)] bg-[var(--card)] text-white' : 'border-line bg-surface text-ink-2 hover:bg-surface-2'}`}>
+                                {on ? <Check className="size-3.5" /> : p.devices ? <Bell className="size-3.5" /> : <BellOff className="size-3.5 opacity-60" />}{p.full_name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <p className="mt-1.5 text-[11px] text-ink-3">Har kim oʻz telefonida tepadagi 🔔 yoki Sozlamalar → Bildirishnomalar orqali yoqadi. Qoʻngʻiroqcha chizilgan odam hali yoqmagan.</p>
                     </div>
                   )}
                   {isOn(key) && !toMe(key) && !(toGroup(key) && group.linked) && staffCount(key) === 0 && <p className="mt-2 text-xs text-warn">Hech qaysi chat tanlanmagan: bu xabar hech kimga bormaydi.</p>}
