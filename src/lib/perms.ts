@@ -108,6 +108,8 @@ export const canSee = (user: User, page: Page) => {
   if (who === 'owner' && user.role !== 'owner') return false;
   if (who === 'boss' && !isBoss(user)) return false;
   if (page === 'balance') return seesKassa(user);
+  // Every income and expense with its client: needs a kassa and the reports right.
+  if (page === 'monitoring') return seesKassa(user) && can(user, 'reports.view');
   const perm = PAGE_PERM[page];
   return !perm || can(user, perm);
 };

@@ -44,5 +44,5 @@ export function cleanMethods(raw: unknown): MethodSettings {
 
 /** The page of the site that counts as which place. */
 export const PAGE_PLACE: Record<string, MethodPlace> = {
-  kassa: 'entry', dashboard: 'dashboard', operations: 'operations', daily: 'reports', periods: 'reports', balance: 'balance', clients: 'clients',
+  kassa: 'entry', dashboard: 'dashboard', operations: 'operations', daily: 'reports', periods: 'reports', balance: 'balance', monitoring: 'balance', clients: 'clients',
 };

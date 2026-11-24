@@ -75,6 +75,13 @@
   --glass-edge: rgb(255 255 255 / 0.65);
   --shadow: 0 0 0 0.5px rgb(0 0 0 / 0.04), 0 2px 6px rgb(0 0 0 / 0.04), 0 8px 24px -6px rgb(0 0 0 / 0.08);
   --shadow-lg: 0 0 0 0.5px rgb(0 0 0 / 0.06), 0 24px 60px -12px rgb(0 0 0 / 0.25), 0 8px 20px -8px rgb(0 0 0 / 0.10);
+  /* Chart slots (Monitoring breakdown): fixed order, checked for colour-blind separation. */
+  --viz-1: #2a78d6;
+  --viz-2: #eb6834;
+  --viz-3: #1baf7a;
+  --viz-4: #eda100;
+  --viz-5: #e87ba4;
+  --viz-rest: #a1a1aa;
 }
 
 .dark {
@@ -113,6 +120,12 @@
   --glass-edge: rgb(255 255 255 / 0.08);
   --shadow: 0 0 0 0.5px rgb(255 255 255 / 0.04), 0 8px 24px -8px rgb(0 0 0 / 0.6);
   --shadow-lg: 0 0 0 0.5px rgb(255 255 255 / 0.06), 0 24px 60px -12px rgb(0 0 0 / 0.8);
+  --viz-1: #3987e5;
+  --viz-2: #d95926;
+  --viz-3: #199e70;
+  --viz-4: #c98500;
+  --viz-5: #d55181;
+  --viz-rest: #636366;
 }
 
 @layer base {
@@ -187,3 +200,8 @@ button:not(:disabled):active { transform: scale(0.98); transition: transform 80m
   .print-plain { box-shadow: none !important; border-color: #ddd !important; }
   main { padding: 0 !important; }
 }
+
+.scrollbar-none { scrollbar-width: none; }
+.scrollbar-none::-webkit-scrollbar { display: none; }
+/* Opaque strip that stays on top while a list scrolls under it (Monitoring day headers). */
+.solid-strip { background: linear-gradient(var(--surface-solid), var(--surface-solid)), var(--bg); }

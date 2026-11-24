@@ -1630,6 +1630,94 @@ route('GET', '/balance/month', 'kassa', async (ctx) => {
   return balanceMonth(first, last, ctx.view, kassaSources(ctx.user!.permissions));
 });
 
+// ---------- monitoring: every income and expense in one place ----------
+
+// One row per money movement: income (payments), expenses and balance corrections. Voided ones are left out.
+const OPS_SQL = `
+  SELECT p.id::text AS id, 'income' AS kind, ${ACCOUNT_SQL('p.method')} AS source, p.method, NULL::text AS category, p.amount::bigint AS amount,
+         p.paid_at AS at, p.client_code, COALESCE(p.client_name, c.full_name) AS client_name, p.note, p.created_by_name AS by_name,
+         p.trips, p.branch_id::int AS branch_id
+    FROM payments p LEFT JOIN clients c ON c.code = p.client_code WHERE p.voided_at IS NULL
+  UNION ALL
+  SELECT e.id::text, 'expense', e.source, NULL, e.category, e.amount::bigint, e.spent_at, NULL, NULL, e.note, e.created_by_name, NULL, e.branch_id::int
+    FROM expenses e WHERE e.voided_at IS NULL
+  UNION ALL
+  SELECT a.id::text, 'adjust', ${ACCOUNT_SQL('a.source')}, a.source, NULL, a.amount::bigint, a.at, NULL, NULL, a.note, a.created_by_name, NULL, a.branch_id::int
+    FROM balance_adjustments a`;
+
+route('GET', '/monitoring', 'kassa', async (ctx) => {
+  // It lists every payment with its client, so it also needs the reports right, not only a kassa.
+  need(ctx.user!, 'reports.view');
+  const q = ctx.query;
+  const { from, to } = parseRange(q, 0);
+  const span = daysBetween(from, to) + 1;
+  const prevTo = addDays(from, -1);
+  const prevFrom = addDays(prevTo, -(span - 1));
+  const allowed = kassaSources(ctx.user!.permissions);
+  const sources = SOURCES.includes(q.source as string) ? allowed.filter((s) => s === q.source) : allowed;
+  const kind = ['income', 'expense', 'adjust'].includes(q.kind as string) ? q.kind! : null;
+  const cat = EXPENSE_CATEGORIES.includes(q.cat as string) || METHODS.includes(q.cat as string) ? q.cat! : null;
+
+  // Shared filters: period, kassa, branch, search. $1 from, $2 to, $3 sources, $4 branches, $5 search.
+  const params: unknown[] = [from, to, sources, ctx.view];
+  const base = [
+    `o.at >= ($1::date)::timestamp AT TIME ZONE '${TZ}'`, `o.at < ($2::date + 1)::timestamp AT TIME ZONE '${TZ}'`,
+    'o.source = ANY($3::text[])', inBranch('o.branch_id', 4),
+  ];
+  const text = String(q.q || '').trim().slice(0, 60);
+  if (text) {
+    params.push(`%${text.replace(/[%_\\]/g, '\\$&')}%`);
+    base.push(`(COALESCE(o.client_code, '') ILIKE $5 OR COALESCE(o.client_name, '') ILIKE $5 OR COALESCE(o.note, '') ILIKE $5 OR o.by_name ILIKE $5)`);
+  }
+  // The list and its day totals also follow the type and the category picked.
+  const list = [...base];
+  if (kind) list.push(`o.kind = '${kind}'`);
+  if (cat) list.push(EXPENSE_CATEGORIES.includes(cat) ? `o.kind = 'expense' AND o.category = '${cat}'` : `o.kind = 'income' AND o.method = '${cat}'`);
+  const baseSql = base.join(' AND ');
+  const listSql = list.join(' AND ');
+  const limit = Math.min(Math.max(Number(q.limit) || 60, 1), 500);
+  const offset = Math.max(Number(q.offset) || 0, 0);
+  const prevParams = [prevFrom, prevTo, ...params.slice(2)];
+
+  const totalsQuery = (where: string, args: unknown[]) => query(
+    `SELECT COALESCE(SUM(amount) FILTER (WHERE kind = 'income'), 0)::bigint AS income,
+            COALESCE(SUM(amount) FILTER (WHERE kind = 'expense'), 0)::bigint AS expense,
+            COALESCE(SUM(amount) FILTER (WHERE kind = 'adjust'), 0)::bigint AS adjust,
+            COUNT(*) FILTER (WHERE kind = 'income')::int AS income_count,
+            COUNT(*) FILTER (WHERE kind = 'expense')::int AS expense_count
+       FROM (${OPS_SQL}) o WHERE ${where}`,
+    args,
+  );
+  const [totals, previous, groups, days, items, count] = await Promise.all([
+    totalsQuery(baseSql, params),
+    totalsQuery(baseSql, prevParams),
+    query(
+      `SELECT kind, CASE WHEN kind = 'expense' THEN category ELSE method END AS key,
+              COALESCE(SUM(amount), 0)::bigint AS amount, COUNT(*)::int AS count
+         FROM (${OPS_SQL}) o WHERE ${baseSql} AND kind IN ('income', 'expense') GROUP BY 1, 2 ORDER BY amount DESC`,
+      params,
+    ),
+    query(
+      `SELECT (o.at AT TIME ZONE '${TZ}')::date::text AS day,
+              COALESCE(SUM(amount) FILTER (WHERE kind = 'income'), 0)::bigint AS income,
+              COALESCE(SUM(amount) FILTER (WHERE kind = 'expense'), 0)::bigint AS expense,
+              COALESCE(SUM(amount) FILTER (WHERE kind = 'adjust'), 0)::bigint AS adjust,
+              COUNT(*)::int AS count
+         FROM (${OPS_SQL}) o WHERE ${listSql} GROUP BY 1 ORDER BY 1 DESC`,
+      params,
+    ),
+    query(`SELECT o.* FROM (${OPS_SQL}) o WHERE ${listSql} ORDER BY o.at DESC, o.id LIMIT ${limit} OFFSET ${offset}`, params),
+    query(`SELECT COUNT(*)::int AS n FROM (${OPS_SQL}) o WHERE ${listSql}`, params),
+  ]);
+  return {
+    from, to, previousRange: { from: prevFrom, to: prevTo }, sources,
+    totals: totals[0], previous: previous[0],
+    income: groups.filter((g: any) => g.kind === 'income').map(({ key, amount, count: n }: any) => ({ key, amount, count: n })),
+    expense: groups.filter((g: any) => g.kind === 'expense').map(({ key, amount, count: n }: any) => ({ key, amount, count: n })),
+    days, items, count: count[0].n, limit, offset,
+  };
+});
+
 async function balanceMonth(first: string, last: string, view: number[], sources: Array<'cash' | 'card'> = ['cash', 'card']) {
   const next = addDays(last, 1);
   const start = `($1::date)::timestamp AT TIME ZONE '${TZ}'`;
