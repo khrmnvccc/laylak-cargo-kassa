@@ -18,7 +18,7 @@ import { EXTRA_METHODS, METHOD_PLACES, cleanMethods, type ExtraMethod, type Meth
 import { setMethods, useMethodSettings } from '../lib/methods';
 import { setEntry, useEntrySettings } from '../lib/entry';
 import type { EntrySettings } from '../lib/entryConfig';
-import { ALWAYS_OPEN, MAX_PAGE_LABEL, type PageKey, type PageSetting, type PageSettings, type PageWho } from '../lib/pageConfig';
+import { ALWAYS_OPEN, MAX_PAGE_LABEL, OPT_IN, type PageKey, type PageSetting, type PageSettings, type PageWho } from '../lib/pageConfig';
 import { setPageSettings } from '../lib/perms';
 import { useLive } from '../lib/live';
 
@@ -26,7 +26,7 @@ const ACTIONS: Record<string, string> = {
   setup: 'Tizim sozlandi', login: 'Tizimga kirdi', payment_create: 'Toʻlov kiritdi', payment_void: 'Toʻlovni bekor qildi', telegram_failed: 'Telegramga yuborilmadi',
   staff_create: 'Xodim qoʻshdi', staff_update: 'Xodimni oʻzgartirdi', client_update: 'Mijozni oʻzgartirdi', password_change: 'Parolini oʻzgartirdi',
   client_import: 'Mijozlar roʻyxatini yukladi', expense_create: 'Rasxod yozdi', expense_void: 'Rasxodni bekor qildi', balance_adjust: 'Qoldiqni tuzatdi',
-  telegram_set: 'Telegram botni kiritdi', telegram_connect: 'Telegramni uladi', telegram_remove: 'Telegramni uzdi', telegram_group: 'Telegram guruhini uladi', telegram_group_remove: 'Telegram guruhini uzdi', telegram_group_pause: 'Guruhga yuborishni toʻxtatdi', telegram_group_resume: 'Guruhga yuborishni qayta yoqdi', backup_download: 'Zaxirani yuklab oldi', payment_import: 'Toʻlovlarni Exceldan yukladi', expense_import: 'Kassa daftarini yukladi', attendance_edit: 'Davomatni tuzatdi', office_set: 'Ishxona joyini belgiladi', office_clear: 'Ishxona joyini olib tashladi', order_create: 'Stiker yaratdi', order_import: 'Buyurtmalar roʻyxatini yukladi', receipt_confirm: 'Chekdan toʻlov kiritdi', telegram_template_on: 'Telegram xabarini yoqdi', telegram_template_off: 'Telegram xabarini oʻchirdi', telegram_template: 'Telegram xabar matnini oʻzgartirdi', telegram_group_kinds: 'Guruhga boradigan xabarlarni tanladi', telegram_template_chats: 'Xabar qayerga borishini oʻzgartirdi', pages_set: 'Oynalar sozlamasini oʻzgartirdi', telegram_person_link: 'Oʻz Telegramini uladi', telegram_person_unlink: 'Telegramni uzdi', telegram_personal_pause: 'Shaxsiy chatga yuborishni toʻxtatdi', telegram_personal_resume: 'Shaxsiy chatga yuborishni qayta yoqdi', data_reset: 'Barcha maʼlumotlarni tozaladi',
+  telegram_set: 'Telegram botni kiritdi', telegram_connect: 'Telegramni uladi', telegram_remove: 'Telegramni uzdi', telegram_group: 'Telegram guruhini uladi', telegram_group_remove: 'Telegram guruhini uzdi', telegram_group_pause: 'Guruhga yuborishni toʻxtatdi', telegram_group_resume: 'Guruhga yuborishni qayta yoqdi', backup_download: 'Zaxirani yuklab oldi', payment_import: 'Toʻlovlarni Exceldan yukladi', expense_import: 'Kassa daftarini yukladi', attendance_edit: 'Davomatni tuzatdi', office_set: 'Ishxona joyini belgiladi', office_clear: 'Ishxona joyini olib tashladi', order_create: 'Stiker yaratdi', order_import: 'Buyurtmalar roʻyxatini yukladi', receipt_confirm: 'Chekdan toʻlov kiritdi', telegram_template_on: 'Telegram xabarini yoqdi', telegram_template_off: 'Telegram xabarini oʻchirdi', telegram_template: 'Telegram xabar matnini oʻzgartirdi', telegram_group_kinds: 'Guruhga boradigan xabarlarni tanladi', telegram_template_chats: 'Xabar qayerga borishini oʻzgartirdi', pages_set: 'Oynalar sozlamasini oʻzgartirdi', telegram_person_link: 'Oʻz Telegramini uladi', telegram_person_unlink: 'Telegramni uzdi', telegram_personal_pause: 'Shaxsiy chatga yuborishni toʻxtatdi', telegram_personal_resume: 'Shaxsiy chatga yuborishni qayta yoqdi', data_reset: 'Barcha maʼlumotlarni tozaladi', delivery_bot_on: 'Yetkazish botini yoqdi', delivery_bot_off: 'Yetkazish botini oʻchirdi', delivery_trip: 'Yetkazish reysi tuzdi', delivery_trip_delete: 'Yetkazish reysini oʻchirdi',
   brand_set: 'Sayt nomi va dizaynini oʻzgartirdi', methods_set: 'Yandex va Pochta sozlamasini oʻzgartirdi', entry_set: 'Toʻlov rasmi sozlamasini oʻzgartirdi', branch_create: 'Yangi filial ochdi', branch_rename: 'Filial nomini oʻzgartirdi',
   order_issue: 'Tovarni berdi', order_unissue: 'Tovarni omborga qaytardi', order_delete: 'Stikerni oʻchirdi', order_prepaid: 'Buyurtmani oldin toʻlangan deb belgiladi', order_unprepaid: 'Oldin toʻlangan belgisini olib tashladi',
 };
@@ -668,6 +668,7 @@ function PagesCard() {
     if (!next.paused) delete next.paused;
     if (!next.who || next.who === 'all') delete next.who;
     if (!next.label) delete next.label;
+    if (!next.on) delete next.on;
     return { ...base, [page]: next };
   });
 
@@ -709,10 +710,11 @@ function PagesCard() {
                   const key = item.page as PageKey;
                   const s = pages[key] ?? {};
                   const locked = ALWAYS_OPEN.includes(key);
+                  const optIn = OPT_IN.includes(key);
                   return (
                     <div key={key} className="grid items-center gap-x-4 gap-y-2 px-4 py-3 sm:px-5 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
                       <div className="flex min-w-0 items-center gap-3">
-                        <span className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${s.paused ? 'bg-warn-soft text-warn' : 'bg-surface-2 text-ink-2'}`}><item.icon className="size-[18px]" /></span>
+                        <span className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${s.paused || (optIn && !s.on) ? 'bg-warn-soft text-warn' : 'bg-surface-2 text-ink-2'}`}><item.icon className="size-[18px]" /></span>
                         <div className="min-w-0 flex-1">
                           <Input aria-label={`${item.label} nomi`} value={s.label ?? ''} placeholder={item.label} maxLength={MAX_PAGE_LABEL}
                             onChange={(e) => edit(key, { label: e.target.value })} className="h-9 max-w-xs" />
@@ -720,6 +722,14 @@ function PagesCard() {
                       </div>
                       {locked ? (
                         <span className="text-xs text-ink-3 lg:col-span-2">Doim ochiq: shu yerdan qolganlarini boshqarasiz</span>
+                      ) : optIn ? (
+                        <>
+                          <span className="text-xs text-ink-3">Faqat Ega koʻradi</span>
+                          <div className="flex items-center justify-between gap-2.5 text-[13px] text-ink-2 lg:justify-start">
+                            <span>{s.on ? 'Yoqilgan' : <Badge tone="warn">Oʻchiq: menyuda yoʻq</Badge>}</span>
+                            <Toggle on={!!s.on} label={`${item.label} yoqilgan`} onChange={(on) => edit(key, { on })} />
+                          </div>
+                        </>
                       ) : (
                         <>
                           <Segmented value={s.who ?? 'all'} onChange={(v) => edit(key, { who: v })} options={WHO_OPTIONS} />

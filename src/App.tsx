@@ -29,6 +29,7 @@ const loaders = {
   orders: () => import('./pages/Orders'),
   operations: () => import('./pages/Operations'),
   monitoring: () => import('./pages/Monitoring'),
+  delivery: () => import('./pages/Delivery'),
   daily: () => import('./pages/DailyReport'),
   periods: () => import('./pages/PeriodReport'),
   workers: () => import('./pages/Workers'),

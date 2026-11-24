@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import {
-  BarChart3, Bell, Building2, Clock, Landmark, CalendarDays, LayoutDashboard, ListOrdered, LogOut, Menu, Moon, Package, PieChart, Plus, Settings, Sun, UserSearch, Users, Wallet, X,
+  BarChart3, Bell, Building2, Clock, Landmark, CalendarDays, LayoutDashboard, ListOrdered, LogOut, Menu, Moon, Package, PieChart, Plus, Settings, Sun, Truck, UserSearch, Users, Wallet, X,
 } from 'lucide-react';
 import { href, type Page } from '../lib/router';
 import { useLive } from '../lib/live';
@@ -25,6 +25,7 @@ export const NAV: Array<{ group: string; items: NavItem[] }> = [
       { page: 'orders', label: 'Buyurtmalar', icon: Package },
       { page: 'operations', label: 'Operatsiyalar', icon: ListOrdered },
       { page: 'monitoring', label: 'Monitoring', icon: PieChart },
+      { page: 'delivery', label: 'Yetkazish', icon: Truck },
     ],
   },
   {
@@ -48,7 +49,7 @@ export const NAV: Array<{ group: string; items: NavItem[] }> = [
 ];
 
 export const PAGE_TITLES: Record<Page, string> = {
-  dashboard: 'Dashboard', kassa: 'Toʻlov kiritish', orders: 'Buyurtmalar', operations: 'Operatsiyalar', monitoring: 'Monitoring', daily: 'Kunlik hisobot',
+  dashboard: 'Dashboard', kassa: 'Toʻlov kiritish', orders: 'Buyurtmalar', operations: 'Operatsiyalar', monitoring: 'Monitoring', delivery: 'Yetkazish', daily: 'Kunlik hisobot',
   periods: 'Haftalik va oylik hisobot', workers: 'Ishchilar', attendance: 'Davomat', clients: 'Mijozlar', balance: 'Kassa balansi', messages: 'Xabarlar', settings: 'Sozlamalar',
 };
 

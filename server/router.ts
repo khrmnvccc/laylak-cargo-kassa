@@ -21,10 +21,12 @@ import {
   forgetSessions,
 } from './auth.js';
 import { PERMISSIONS, WORKER_DEFAULT, isPerm, kassaSources, permsOf, upgrade, type Perm } from './perms.js';
-import { ChatMoved, getTelegram, logSend, getTelegramErrors, messageText, notify, saveTemplate, getTemplateSettings, setTelegramError, photoFromDataUrl, reportPhotos, reportText, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
+import { ChatMoved, recentUpdates, keepUpdate, getTelegram, logSend, getTelegramErrors, messageText, notify, saveTemplate, getTemplateSettings, setTelegramError, photoFromDataUrl, reportPhotos, reportText, saveTelegram, sendDocument, sendMessage, tg } from './telegram.js';
 import { receiptKey } from './receipts.js';
 import { COLUMNS as BROADCAST_COLUMNS, claim as claimBroadcast, deliver as deliverBroadcast, deliverDue, parseBroadcast, recipients as broadcastRecipients, sendOne as sendBroadcastTo } from './broadcast.js';
 import { background } from './background.js';
+import { clearDraft, createTrip, getDeliverySettings, getDraft, handleBotMessage, loadTrips, readPlace, saveDeliverySettings, setBotHook, startPoint, tripMessage } from './delivery.js';
+import { MAX_FEE, MAX_LABEL, MAX_STOPS } from '../src/lib/delivery.js';
 import { gzipSync } from 'node:zlib';
 import { createHash, randomInt } from 'node:crypto';
 import { EXPENSE_LABELS } from '../src/lib/excelSheets.js';
@@ -1516,7 +1518,7 @@ route('GET', '/system', 'admin', async () => {
 // mark and the activity log are removed; staff accounts, sessions and settings (office place, Telegram) stay.
 // The client list goes too only when asked. The page downloads a backup first. Settings in app_meta keep the
 // old-data import from running again, so nothing comes back on the next start.
-const RESET_TABLES = ['orders', 'receipts', 'payments', 'expenses', 'balance_adjustments', 'attendance', 'audit_log', 'legacy_import'];
+const RESET_TABLES = ['orders', 'receipts', 'payments', 'expenses', 'balance_adjustments', 'attendance', 'audit_log', 'legacy_import', 'delivery_stops', 'deliveries'];
 
 route('POST', '/system/reset', 'owner', async (ctx) => {
   if (ctx.body?.confirm !== 'TOZALASH') throw new HttpError(400, 'Tasdiqlash uchun TOZALASH deb yozing');
@@ -2184,6 +2186,8 @@ route('PUT', '/pages', 'owner', async (ctx) => {
     [JSON.stringify(pages)],
   );
   await audit(null, ctx.user, 'pages_set', 'pages', null, pages);
+  // Yetkazish switched off: the bot stops taking locations too.
+  if (!pages.delivery?.on && (await getTelegram())?.hookSecret) await setBotHook(false, undefined, saveTelegram).catch((e) => console.error('Webhook off failed', e));
   return { pages };
 });
 
@@ -2267,7 +2271,7 @@ async function dailyReportText(date: string): Promise<string | null> {
 async function backupData() {
   const tables = await query<{ name: string }>(
     `SELECT table_name AS name FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_type = 'BASE TABLE' AND table_name NOT IN ('app_sessions', 'login_attempts')
+      WHERE table_schema = 'public' AND table_type = 'BASE TABLE' AND table_name NOT IN ('app_sessions', 'login_attempts', 'telegram_inbox')
       ORDER BY table_name`,
   );
   const data: Record<string, unknown[]> = {};
@@ -2366,7 +2370,7 @@ route('POST', '/telegram/me/check', 'user', async (ctx) => {
   const config = await getTelegram();
   if (!config?.chatId) throw new HttpError(400, 'Telegram bot hali ulanmagan');
   const code = personCode(config.token, ctx.user!.id);
-  const updates: any[] = await tg(config.token, 'getUpdates', { offset: -100, allowed_updates: ['message'], timeout: 0 });
+  const updates: any[] = await recentUpdates(config);
   const match = updates.reverse().find((u) => typeof u.message?.text === 'string' && u.message.text.includes(code) && u.message.chat?.type === 'private');
   if (!match) throw new HttpError(404, `Botga hali kod kelmadi. @${config.botName} ni ochib, “Start” bosing yoki ${code} deb yozing`);
   const chat = match.message.chat;
@@ -2491,7 +2495,7 @@ route('POST', '/telegram/check', 'owner', async (ctx) => {
   if (!config) throw new HttpError(400, 'Avval bot tokenini kiriting');
   if (config.chatId) return telegramView(config);
   // The newest 100 updates: older ones (a busy group) would otherwise hide the one we need.
-  const updates: any[] = await tg(config.token, 'getUpdates', { offset: -100, allowed_updates: ['message'], timeout: 0 });
+  const updates: any[] = await recentUpdates(config);
   const match = updates.reverse().find((u) => typeof u.message?.text === 'string' && u.message.text.includes(config.code) && u.message.chat?.type === 'private');
   if (!match) throw new HttpError(404, `Botga hali kod kelmadi. @${config.botName} ni ochib, “Start” bosing yoki ${config.code} deb yozing`);
   const chat = match.message.chat;
@@ -2509,7 +2513,7 @@ route('POST', '/telegram/group', 'owner', async (ctx) => {
   const config = await getTelegram();
   if (!config?.chatId) throw new HttpError(400, 'Avval botni oʻzingizga ulang');
   // The newest 100 updates: older ones (a busy group) would otherwise hide the one we need.
-  const updates: any[] = await tg(config.token, 'getUpdates', { offset: -100, allowed_updates: ['message'], timeout: 0 });
+  const updates: any[] = await recentUpdates(config);
   const code = groupCode(config.token);
   const inGroup = updates.map((u) => u.message).filter((m) => m && ['group', 'supergroup'].includes(m.chat?.type));
   const added = [...inGroup].reverse().find((m) => (typeof m.text === 'string' && m.text.includes(code))
@@ -2594,6 +2598,8 @@ route('DELETE', '/telegram/group', 'owner', async (ctx) => {
 });
 
 route('DELETE', '/telegram', 'owner', async (ctx) => {
+  const old = await getTelegram();
+  if (old?.hookSecret) await tg(old.token, 'deleteWebhook', {}).catch(() => undefined);
   await saveTelegram(null);
   await Promise.all([setTelegramError('personal', null), setTelegramError('group', null)]);
   await audit(null, ctx.user, 'telegram_remove', 'telegram', null);
@@ -2602,6 +2608,146 @@ route('DELETE', '/telegram', 'owner', async (ctx) => {
 
 route('POST', '/telegram/send', 'owner', async () => {
   await sendDailyReport(todayTashkent());
+  return { ok: true };
+});
+
+// ---------- yetkazish (delivery runs; owner only, kept apart from the kassa) ----------
+
+// Telegram posts every message the bot gets here while the Yetkazish bot is on. The secret it sends
+// back proves the call is Telegram's; anything else is refused.
+route('POST', '/telegram/hook', 'public', async (ctx) => {
+  const config = await getTelegram();
+  const secret = ctx.headers['x-telegram-bot-api-secret-token'] || '';
+  if (!config?.hookSecret || secret !== config.hookSecret) return { status: 403, body: { ok: false } };
+  const message = ctx.body?.message;
+  if (!message) return { ok: true };
+  await keepUpdate(ctx.body).catch((e) => console.error('Telegram inbox failed', e));
+  try {
+    await handleBotMessage(config, message);
+  } catch (error) {
+    console.error('Delivery bot failed', error);
+    if (message.chat?.id === config.chatId) {
+      const why = error instanceof HttpError ? error.message : 'Xatolik yuz berdi, qayta urinib koʻring';
+      await tg(config.token, 'sendMessage', { chat_id: config.chatId, text: `⚠️ ${why}` }).catch(() => undefined);
+    }
+  }
+  // Always 200: Telegram would otherwise send the same message again and again.
+  return { ok: true };
+});
+
+function monthRange(value: string | undefined) {
+  const month = value && /^\d{4}-(0[1-9]|1[0-2])$/.test(value) ? value : todayTashkent().slice(0, 7);
+  const from = `${month}-01`;
+  const to = addDays(`${addDays(from, 32).slice(0, 8)}01`, -1);
+  return { month, from, to };
+}
+
+route('GET', '/delivery', 'owner', async (ctx) => {
+  const { month, from, to } = monthRange(ctx.query.month);
+  const [trips, draft, start, config] = await Promise.all([loadTrips({ from, to }), getDraft(), startPoint(), getTelegram()]);
+  const stops = trips.flatMap((t) => t.stops);
+  return {
+    month, trips, draft: draft.stops, start,
+    bot: { connected: Boolean(config?.chatId), on: Boolean(config?.hookSecret), botName: config?.botName ?? null },
+    totals: {
+      trips: trips.length, stops: stops.length, done: stops.filter((s) => s.done).length,
+      earned: stops.reduce((a, s) => a + s.fee, 0), paidStops: stops.filter((s) => s.fee > 0).length,
+      km: trips.reduce((a, t) => a + t.km, 0),
+    },
+  };
+});
+
+route('POST', '/delivery/bot', 'owner', async (ctx) => {
+  const on = ctx.body?.on === true;
+  const host = ctx.headers['x-forwarded-host'] || ctx.headers.host;
+  const config = await setBotHook(on, host, saveTelegram);
+  await audit(null, ctx.user, on ? 'delivery_bot_on' : 'delivery_bot_off', 'telegram', null);
+  return { on: Boolean(config.hookSecret) };
+});
+
+// Where runs start: a pasted link / "lat, lng", or null for the office from Davomat.
+route('PUT', '/delivery/start', 'owner', async (ctx) => {
+  const settings = await getDeliverySettings();
+  if (ctx.body?.start === null) {
+    await saveDeliverySettings({ ...settings, start: null });
+  } else {
+    const place = await readPlace(str(ctx.body?.place, 2000));
+    if (!place) throw new HttpError(400, 'Joy topilmadi. Xarita havolasini yoki “41.31, 69.28” koʻrinishida yozing');
+    await saveDeliverySettings({ ...settings, start: { ...place, label: str(ctx.body?.label, MAX_LABEL) || 'Boshlanish' } });
+  }
+  return { start: await startPoint() };
+});
+
+// A run typed on the page: each line a link or coordinates, with an optional name and fee.
+route('POST', '/delivery/trips', 'owner', async (ctx) => {
+  const rows: any[] = Array.isArray(ctx.body?.stops) ? ctx.body.stops.slice(0, MAX_STOPS + 1) : [];
+  if (!rows.length) throw new HttpError(400, 'Kamida bitta manzil kiriting');
+  if (rows.length > MAX_STOPS) throw new HttpError(400, `Bir reysda ${MAX_STOPS} tagacha manzil`);
+  const errors: Record<string, string> = {};
+  const places = await Promise.all(rows.map(async (r, i) => {
+    const place = await readPlace(str(r?.place, 2000));
+    if (!place) { errors[String(i)] = 'Joy topilmadi'; return null; }
+    const fee = Math.round(Number(r?.fee) || 0);
+    if (fee < 0 || fee > MAX_FEE) errors[String(i)] = 'Summa notoʻgʻri';
+    return { ...place, label: str(r?.label, MAX_LABEL), fee };
+  }));
+  if (Object.keys(errors).length) return { status: 400, body: { error: 'Baʼzi manzillar topilmadi', fields: errors } };
+  const day = typeof ctx.body?.day === 'string' && DATE_RE.test(ctx.body.day) ? ctx.body.day : todayTashkent();
+  const trip = await createTrip(places.filter((p) => p !== null), 'site', ctx.user!.full_name, day);
+  await audit(null, ctx.user, 'delivery_trip', 'delivery', String(trip.id), { stops: trip.stops.length });
+  return { status: 201, body: { trip } };
+});
+
+// The locations the bot got but no run was made from yet.
+route('POST', '/delivery/draft/plan', 'owner', async (ctx) => {
+  const draft = await getDraft();
+  if (!draft.stops.length) throw new HttpError(400, 'Botga hali manzil yuborilmagan');
+  const trip = await createTrip(draft.stops, 'bot', ctx.user!.full_name);
+  await clearDraft();
+  return { status: 201, body: { trip } };
+});
+
+route('DELETE', '/delivery/draft', 'owner', async () => {
+  await clearDraft();
+  return { ok: true };
+});
+
+route('PUT', '/delivery/stops/:id', 'owner', async (ctx) => {
+  const id = Number(ctx.params.id);
+  if (!Number.isInteger(id) || id <= 0) throw new HttpError(404, 'Manzil topilmadi');
+  const b = ctx.body ?? {};
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  if (b.label !== undefined) { params.push(str(b.label, MAX_LABEL)); sets.push(`label = $${params.length}`); }
+  if (b.fee !== undefined) {
+    const fee = Math.round(Number(b.fee));
+    if (!Number.isFinite(fee) || fee < 0 || fee > MAX_FEE) throw new HttpError(400, 'Summa notoʻgʻri');
+    params.push(fee); sets.push(`fee = $${params.length}`);
+  }
+  if (typeof b.done === 'boolean') { params.push(b.done); sets.push(`done = $${params.length}`); }
+  if (!sets.length) throw new HttpError(400, 'Oʻzgarish yoʻq');
+  params.push(id);
+  const rows = await query(`UPDATE delivery_stops SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING id::int, position::int, lat, lng, label, fee::float, done`, params);
+  if (!rows[0]) throw new HttpError(404, 'Manzil topilmadi');
+  return { stop: rows[0] };
+});
+
+route('DELETE', '/delivery/trips/:id', 'owner', async (ctx) => {
+  const id = Number(ctx.params.id);
+  const rows = Number.isInteger(id) ? await query(`DELETE FROM deliveries WHERE id = $1 RETURNING id`, [id]) : [];
+  if (!rows[0]) throw new HttpError(404, 'Reys topilmadi');
+  await audit(null, ctx.user, 'delivery_trip_delete', 'delivery', String(id));
+  return { ok: true };
+});
+
+// Sends a run to the owner's Telegram, to open the route on the phone in the car.
+route('POST', '/delivery/trips/:id/telegram', 'owner', async (ctx) => {
+  const [trip] = await loadTrips({ id: Number(ctx.params.id) || 0 });
+  if (!trip) throw new HttpError(404, 'Reys topilmadi');
+  const config = await getTelegram();
+  if (!config?.chatId) throw new HttpError(400, 'Telegram bot ulanmagan');
+  const msg = tripMessage(trip);
+  await tg(config.token, 'sendMessage', { chat_id: config.chatId, text: msg.text, parse_mode: 'HTML', disable_web_page_preview: true, reply_markup: msg.reply_markup });
   return { ok: true };
 });
 
