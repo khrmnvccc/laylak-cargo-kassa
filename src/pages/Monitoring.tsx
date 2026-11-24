@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  ArrowDownLeft, ArrowUpRight, Banknote, Building, CircleDot, CreditCard, Fuel, HandCoins, Landmark, Package, Plane, Receipt, Scale, Search,
+  ArrowDownLeft, ArrowUpRight, Banknote, Check, ChevronDown, PieChart, Building, CircleDot, CreditCard, Fuel, HandCoins, Landmark, Package, Plane, Receipt, Scale, Search,
   ShoppingBag, Truck, Users, X, Zap,
 } from 'lucide-react';
 import { useApi } from '../lib/live';
@@ -12,7 +12,7 @@ import { addDays, dateTime, endOfMonth, formatDate, methodLabel, money, monthLab
 import { href } from '../lib/router';
 import { MONITORING_PAGE_SIZE } from '../lib/prefetch';
 import { DateRangePicker, type Range } from '../components/DateRange';
-import { Badge, Button, Card, EmptyState, ErrorState, IconButton, Input, Modal, PageHeader, Segmented, Select, SkeletonRows, cx } from '../components/ui';
+import { Badge, Button, Card, EmptyState, ErrorState, IconButton, Input, Modal, Segmented, SkeletonRows, cx } from '../components/ui';
 
 type Kind = 'income' | 'expense' | 'adjust';
 interface Op {
@@ -67,6 +67,10 @@ function dayTitle(day: string) {
   return formatDate(day, day.slice(0, 4) !== today.slice(0, 4));
 }
 
+/** Rasxod in red, naqd kirim in green, karta kirim in blue. */
+const amountClass = (op: Op, method: string | null) =>
+  op.kind === 'expense' ? 'text-danger' : op.kind === 'adjust' ? 'text-ink' : method === 'cash' ? 'text-up' : 'text-[var(--card)]';
+
 const signedMoney = (kind: Kind, amount: number) =>
   kind === 'income' ? `+${money(amount)}` : kind === 'expense' ? `−${money(amount)}` : amount > 0 ? `+${money(amount)}` : `−${money(-amount)}`;
 
@@ -84,6 +88,7 @@ export default function Monitoring() {
   const [debounced, setDebounced] = useState('');
   const [limit, setLimit] = useState(STEP);
   const [open, setOpen] = useState<Op | null>(null);
+  const [showChart, setShowChart] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { const id = setTimeout(() => setDebounced(search.trim()), 300); return () => clearTimeout(id); }, [search]);
@@ -138,12 +143,19 @@ export default function Monitoring() {
 
   return (
     <>
-      <PageHeader title="Monitoring" subtitle="Barcha kirim va rasxodlar bir joyda: qayerdan kelgan, qayerga ketgan" />
+      {/* Title with the analysis button always at its right, like a bank app. */}
+      <div className="mb-5 flex items-start justify-between gap-3 sm:mb-6">
+        <div className="min-w-0">
+          <h1 className="text-[22px] font-semibold tracking-tight text-ink sm:text-2xl">Monitoring</h1>
+          <p className="mt-1 text-sm text-ink-3">Barcha kirim va rasxodlar bir joyda: qayerdan kelgan, qayerga ketgan</p>
+        </div>
+        <Button className="no-print shrink-0" icon={<PieChart className="size-4" />} onClick={() => setShowChart(true)}>Tahlil</Button>
+      </div>
 
       {/* Months, like a calendar strip; any other span through "Davr". */}
       <MonthTabs months={months} active={activeMonth} onPick={(m) => setRange(monthRange(m))} />
 
-      <Card className="mb-4" padded={false}>
+      <Card className="relative z-20 mb-4" padded={false}>
         <div className="flex flex-col gap-2.5 p-3 sm:p-4 lg:flex-row lg:items-center">
           <div className="relative flex-1 lg:max-w-md">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-3" />
@@ -152,18 +164,11 @@ export default function Monitoring() {
           </div>
           <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center lg:ml-auto">
             {allowed.length > 1 && (
-              <Select value={source} onChange={(e) => setSource(e.target.value as typeof source)} aria-label="Kassa" className="w-full sm:w-auto">
-                <option value="all">Ikkala kassa</option>
-                <option value="cash">1-kassa · Naqd</option>
-                <option value="card">2-kassa · Karta</option>
-              </Select>
+              <Choice label="Kassa" value={source} onChange={setSource}
+                options={[{ value: 'all', label: 'Ikkala kassa' }, { value: 'cash', label: '1-kassa · Naqd' }, { value: 'card', label: '2-kassa · Karta' }]} />
             )}
-            <Select value={kind} onChange={(e) => pickKind(e.target.value as typeof kind)} aria-label="Operatsiya turi" className={cx('w-full sm:w-auto', allowed.length < 2 && 'col-span-2')}>
-              <option value="all">Kirim va rasxod</option>
-              <option value="income">Faqat kirim</option>
-              <option value="expense">Faqat rasxod</option>
-              <option value="adjust">Qoldiq tuzatishlari</option>
-            </Select>
+            <Choice label="Operatsiya turi" value={kind} onChange={pickKind} className={cx(allowed.length < 2 && 'col-span-2')}
+              options={[{ value: 'all', label: 'Kirim va rasxod' }, { value: 'income', label: 'Faqat kirim' }, { value: 'expense', label: 'Faqat rasxod' }, { value: 'adjust', label: 'Qoldiq tuzatishlari' }]} />
             <div className="col-span-2 [&>div>button]:w-full sm:[&>div>button]:w-auto"><DateRangePicker value={range} onChange={setRange} /></div>
           </div>
         </div>
@@ -183,7 +188,7 @@ export default function Monitoring() {
             <SummaryCard label="Jami kirim" icon={<ArrowDownLeft className="size-4" />} tone="in" value={t?.income} count={t?.income_count}
               previous={p?.income} loading={first} active={kind === 'income'} onClick={() => pickKind(kind === 'income' ? 'all' : 'income')} />
             <SummaryCard label="Jami rasxod" icon={<ArrowUpRight className="size-4" />} tone="out" value={t?.expense} count={t?.expense_count}
-              previous={p?.expense} loading={first} active={kind === 'expense'} onClick={() => pickKind(kind === 'expense' ? 'all' : 'expense')} />
+              previous={p?.expense} loading={first} valueClass="text-danger" active={kind === 'expense'} onClick={() => pickKind(kind === 'expense' ? 'all' : 'expense')} />
             <Card className="col-span-2 flex items-center justify-between gap-3 sm:col-span-1 sm:block">
               <div className="flex items-center gap-2 text-[13px] font-medium text-ink-2"><Scale className="size-4 text-ink-3" />Farq (kirim − rasxod)</div>
               {first ? <div className="skeleton h-7 w-1/2 sm:mt-3" /> : (
@@ -195,21 +200,7 @@ export default function Monitoring() {
             </Card>
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
-            <Card className="xl:sticky xl:top-20 xl:order-last xl:self-start">
-              <div className="mb-4 flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <h3 className="text-[15px] font-semibold tracking-tight text-ink">Tahlil</h3>
-                  <p className="mt-0.5 text-[13px] text-ink-3"><span>{chartKind === 'expense' ? 'Pul nimaga ketgan' : 'Pul qaysi yoʻl bilan kelgan'}</span> · <span>{rangeLabel(range.from, range.to)}</span></p>
-                </div>
-                <Segmented value={chartKind} onChange={setChartKind} options={[{ value: 'expense', label: 'Rasxod' }, { value: 'income', label: 'Kirim' }]} />
-              </div>
-              {first ? <div className="skeleton mx-auto size-44 rounded-full" /> : (
-                <Breakdown groups={groups} label={groupLabel} total={chartKind === 'expense' ? t?.expense || 0 : t?.income || 0}
-                  title={chartKind === 'expense' ? 'Jami rasxod' : 'Jami kirim'} selected={cat} onPick={pickCategory} />
-              )}
-            </Card>
-
+          <div>
             <div ref={listRef} className="scroll-mt-20">
               <Card padded={false} className={cx('transition-opacity', loading && data && 'opacity-60')}>
                 <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3 sm:px-5">
@@ -231,7 +222,7 @@ export default function Monitoring() {
                             </div>
                             <div className="flex flex-col items-end text-xs num sm:flex-row sm:gap-3">
                               {!!d?.income && <span className="font-medium text-up">+{money(d.income)}</span>}
-                              {!!d?.expense && <span className="text-ink-2">−{money(d.expense)}</span>}
+                              {!!d?.expense && <span className="font-medium text-danger">−{money(d.expense)}</span>}
                             </div>
                           </div>
                           <ul className="divide-y divide-line">
@@ -255,8 +246,59 @@ export default function Monitoring() {
         </>
       )}
 
+      <Modal open={showChart} onClose={() => setShowChart(false)} size="md" title="Tahlil"
+        description={<><span>{chartKind === 'expense' ? 'Pul nimaga ketgan' : 'Pul qaysi yoʻl bilan kelgan'}</span> · <span>{rangeLabel(range.from, range.to)}</span></>}>
+        <Segmented className="mb-5 w-full" value={chartKind} onChange={setChartKind} options={[{ value: 'expense', label: 'Rasxod' }, { value: 'income', label: 'Kirim' }]} />
+        {first ? <div className="skeleton mx-auto size-44 rounded-full" /> : (
+          <Breakdown groups={groups} label={groupLabel} total={chartKind === 'expense' ? t?.expense || 0 : t?.income || 0}
+            title={chartKind === 'expense' ? 'Jami rasxod' : 'Jami kirim'} selected={cat} onPick={(key) => { setShowChart(false); pickCategory(key); }} />
+        )}
+      </Modal>
+
       {open && <OpDetails op={open} method={open.method ? shownMethod(open.method) : null} onClose={() => setOpen(null)} />}
     </>
+  );
+}
+
+/** A drop-down in the site's own look (the phone's built-in picker looked dark and out of place). */
+function Choice<T extends string>({ label, value, options, onChange, className }: {
+  label: string; value: T; options: Array<{ value: T; label: string }>; onChange: (v: T) => void; className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent | TouchEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('touchstart', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('touchstart', onDoc); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+  const current = options.find((o) => o.value === value) ?? options[0];
+  return (
+    <div ref={ref} className={cx('relative', className)}>
+      <button type="button" aria-label={label} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((o) => !o)}
+        className={cx('flex h-9 w-full items-center justify-between gap-2 rounded-lg border bg-surface px-3 text-sm font-medium text-ink transition-colors hover:bg-surface-2 sm:w-auto sm:min-w-[160px]',
+          open ? 'border-[var(--card)]' : 'border-line')}>
+        <span className="truncate">{current.label}</span>
+        <ChevronDown className={cx('size-4 shrink-0 text-ink-3 transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && (
+        <ul role="listbox" aria-label={label} className="absolute left-0 top-11 z-40 min-w-full overflow-hidden rounded-xl border border-line solid-strip p-1 shadow-pop anim-pop sm:min-w-[220px]">
+          {options.map((o) => (
+            <li key={o.value}>
+              <button type="button" role="option" aria-selected={o.value === value} onClick={() => { onChange(o.value); setOpen(false); }}
+                className={cx('flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition-colors',
+                  o.value === value ? 'bg-surface-3 font-medium text-ink' : 'text-ink-2 hover:bg-surface-2 hover:text-ink')}>
+                <span className="whitespace-nowrap">{o.label}</span>
+                {o.value === value && <Check className="size-4 shrink-0 text-[var(--card)]" />}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -280,18 +322,18 @@ function MonthTabs({ months, active, onPick }: { months: string[]; active?: stri
   );
 }
 
-function SummaryCard({ label, icon, tone, value, count, previous, loading, active, onClick }: {
-  label: string; icon: ReactNode; tone: 'in' | 'out'; value?: number; count?: number; previous?: number; loading: boolean; active: boolean; onClick: () => void;
+function SummaryCard({ label, icon, tone, value, count, previous, loading, active, onClick, valueClass = 'text-ink' }: {
+  label: string; icon: ReactNode; tone: 'in' | 'out'; value?: number; count?: number; previous?: number; loading: boolean; active: boolean; onClick: () => void; valueClass?: string;
 }) {
   return (
     <button type="button" onClick={onClick} aria-pressed={active}
       className={cx('anim-rise min-w-0 rounded-xl border bg-surface p-4 text-left shadow-soft transition-colors hover:bg-surface-2 sm:p-5', active ? 'border-[var(--card)]' : 'border-line')}>
       <div className="flex items-center gap-2 text-[13px] font-medium text-ink-2">
-        <span className={cx('flex size-6 shrink-0 items-center justify-center rounded-md', tone === 'in' ? 'bg-success-soft text-up' : 'bg-surface-3 text-ink-2')}>{icon}</span>
+        <span className={cx('flex size-6 shrink-0 items-center justify-center rounded-md', tone === 'in' ? 'bg-success-soft text-up' : 'bg-danger-soft text-danger')}>{icon}</span>
         <span className="truncate">{label}</span>
       </div>
       {loading ? <div className="skeleton mt-3 h-7 w-3/4" /> : (
-        <div className="mt-2 text-base font-semibold tracking-tight text-ink num min-[400px]:text-lg sm:text-2xl">{money(value || 0)}</div>
+        <div className={cx('mt-2 text-base font-semibold tracking-tight num min-[400px]:text-lg sm:text-2xl', valueClass)}>{money(value || 0)}</div>
       )}
       <div className="mt-1 truncate text-xs text-ink-3 num">
         {loading ? '\u00a0' : <><span>{`${count ?? 0} ta`}</span><span className="hidden sm:inline">{` · oldingi davr ${money(previous ?? 0)}`}</span></>}
@@ -385,7 +427,8 @@ function OpIcon({ op, method, large }: { op: Op; method: string | null; large?: 
   return (
     <span className={cx('flex shrink-0 items-center justify-center rounded-xl border border-line',
       large ? 'size-12' : 'size-10',
-      op.kind === 'income' ? 'bg-success-soft text-up' : 'bg-surface-2 text-ink-2')}>
+      op.kind === 'expense' ? 'bg-danger-soft text-danger' : op.kind === 'adjust' ? 'bg-surface-2 text-ink-2'
+        : method === 'cash' ? 'bg-success-soft text-up' : 'bg-[color-mix(in_srgb,var(--card)_12%,transparent)] text-[var(--card)]')}>
       <Icon className={large ? 'size-5' : 'size-[18px]'} strokeWidth={1.9} />
     </span>
   );
@@ -411,7 +454,7 @@ function OpRow({ op, method, onOpen }: { op: Op; method: string | null; onOpen: 
           <div className="truncate text-xs text-ink-3">{opSubtitle(op, method)}</div>
         </div>
         <div className="shrink-0 text-right">
-          <div className={cx('text-sm font-semibold num', op.kind === 'income' ? 'text-up' : 'text-ink')}>{signedMoney(op.kind, op.amount)}</div>
+          <div className={cx('text-sm font-semibold num', amountClass(op, method))}>{signedMoney(op.kind, op.amount)}</div>
           <div className="text-xs text-ink-3 num">{timeOf(op.at)}</div>
         </div>
       </button>
@@ -447,9 +490,9 @@ function OpDetails({ op, method, onClose }: { op: Op; method: string | null; onC
       <div className="mt-4 flex items-end justify-between gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3.5">
         <div>
           <div className="text-xs text-ink-3">Summa</div>
-          <div className={cx('mt-0.5 text-2xl font-semibold tracking-tight num', op.kind === 'income' ? 'text-up' : 'text-ink')}>{signedMoney(op.kind, op.amount)}</div>
+          <div className={cx('mt-0.5 text-2xl font-semibold tracking-tight num', amountClass(op, method))}>{signedMoney(op.kind, op.amount)}</div>
         </div>
-        <Badge tone={op.kind === 'income' ? 'success' : op.kind === 'expense' ? 'neutral' : 'warn'}>{KIND_LABEL[op.kind]}</Badge>
+        <Badge tone={op.kind === 'income' ? (method === 'cash' ? 'success' : 'card') : op.kind === 'expense' ? 'danger' : 'warn'}>{KIND_LABEL[op.kind]}</Badge>
       </div>
       <dl className="mt-4 divide-y divide-line">
         {rows.map(([k, v]) => (
