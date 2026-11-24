@@ -47,11 +47,20 @@ export interface PushMessage {
   collect?: { stopId: number; fee: number };
 }
 
-/** Sends to every device of the owner(s); returns how many got it. Dead subscriptions are removed. */
-export async function pushToOwner(message: PushMessage): Promise<number> {
+/** Who gets a notification: the owner(s), and/or these people (by user id). */
+export interface PushTarget { owner?: boolean; users?: string[] }
+
+/** Sends to every device of the owner(s); returns how many got it. */
+export const pushToOwner = (message: PushMessage) => pushTo({ owner: true }, message);
+
+/** Sends to every device of the people named; returns how many got it. Dead subscriptions are removed. */
+export async function pushTo(target: PushTarget, message: PushMessage): Promise<number> {
+  const users = target.users?.length ? target.users : [];
+  if (!target.owner && !users.length) return 0;
   const subs = await query<{ id: number; endpoint: string; keys: { p256dh: string; auth: string } }>(
     `SELECT s.id::int, s.endpoint, s.keys FROM push_subscriptions s JOIN app_users u ON u.id = s.user_id
-      WHERE u.role = 'owner' AND u.is_active`,
+      WHERE u.is_active AND (($1::boolean AND u.role = 'owner') OR u.id = ANY($2::uuid[]))`,
+    [!!target.owner, users],
   );
   if (!subs.length) return 0;
   const keys = await vapid();

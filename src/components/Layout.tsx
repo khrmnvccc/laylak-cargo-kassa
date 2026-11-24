@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import {
   BarChart3, Bell, Building2, Clock, Landmark, CalendarDays, LayoutDashboard, ListOrdered, LogOut, Menu, Moon, Package, PieChart, Plus, Settings, Sun, Truck, UserSearch, Users, Wallet, X,
 } from 'lucide-react';
+import { PushBell } from './PushCard';
 import { href, type Page } from '../lib/router';
 import { useLive } from '../lib/live';
 import { useTheme } from '../lib/theme';
@@ -242,6 +243,7 @@ export function Layout({ page, user, onLogout, children }: { page: Page; user: U
             <BranchSwitch className="hidden sm:inline-flex" />
             <AttendanceButton />
             <SyncIndicator />
+            <PushBell />
             <IconButton label={theme.isDark ? 'Yorugʻ rejim' : 'Qorongʻi rejim'} onClick={theme.toggle}>
               {theme.isDark ? <Sun className="size-[18px]" /> : <Moon className="size-[18px]" />}
             </IconButton>
