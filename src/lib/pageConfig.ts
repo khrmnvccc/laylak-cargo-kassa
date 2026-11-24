@@ -6,7 +6,7 @@ export type PageKey = (typeof PAGE_KEYS)[number];
 
 /** all: whoever has the right for it; boss: the owner and admins; owner: only the owner. */
 export type PageWho = 'all' | 'boss' | 'owner';
-export interface PageSetting { paused?: boolean; who?: PageWho; label?: string; on?: boolean }
+export interface PageSetting { paused?: boolean; who?: PageWho; label?: string }
 export type PageSettings = Partial<Record<PageKey, PageSetting>>;
 
 /** Until the owner changes anything: Buyurtmalar stays paused, as it was before this setting existed. */
@@ -14,9 +14,6 @@ export const DEFAULT_PAGE_SETTINGS: PageSettings = { orders: { paused: true } };
 
 /** Pages that can never be paused or hidden, so nobody loses their way back. */
 export const ALWAYS_OPEN: readonly PageKey[] = ['settings'];
-
-/** New sections that stay off (not in anyone's menu) until the owner switches them on here. */
-export const OPT_IN: readonly PageKey[] = ['delivery'];
 
 export const MAX_PAGE_LABEL = 30;
 
@@ -32,7 +29,6 @@ export function cleanPageSettings(raw: unknown): PageSettings {
     if ((v.who === 'boss' || v.who === 'owner') && !ALWAYS_OPEN.includes(key)) s.who = v.who;
     const label = typeof v.label === 'string' ? v.label.replace(/\s+/g, ' ').trim().slice(0, MAX_PAGE_LABEL) : '';
     if (label) s.label = label;
-    if (v.on === true && OPT_IN.includes(key)) s.on = true;
     if (Object.keys(s).length) out[key] = s;
   }
   return out;
