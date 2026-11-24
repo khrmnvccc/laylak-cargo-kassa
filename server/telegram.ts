@@ -1,6 +1,6 @@
 import { HttpError, query } from './db.js';
 import { pushTo } from './push.js';
-import { MAX_TEMPLATE_LENGTH, TEMPLATE_BY_KEY, renderTemplate, STAFF_TEMPLATES, type TemplateChats, type TemplateKey, type TemplateSettings } from '../src/lib/tgTemplates.js';
+import { MAX_TEMPLATE_LENGTH, pushTargets, TEMPLATE_BY_KEY, renderTemplate, STAFF_TEMPLATES, type TemplateChats, type TemplateKey, type TemplateSettings } from '../src/lib/tgTemplates.js';
 
 // The owner's Telegram bot. The token is typed in once on the Sozlamalar page and kept only in the
 // database (app_meta 'telegram'); it is never sent back to the browser or put in a backup.
@@ -247,9 +247,8 @@ export async function pushTemplate(key: TemplateKey, html: string) {
   try {
     const settings = await getTemplateSettings().catch((): TemplateSettings => ({ texts: {}, off: [] }));
     if (settings.off.includes(key)) return;
-    const where = settings.chats?.[key];
-    const users = STAFF_TEMPLATES.includes(key) ? where?.staff ?? [] : [];
-    await pushTo({ owner: where?.personal !== false, users }, { title: TEMPLATE_BY_KEY[key].title, body: plainText(html), url: PUSH_PAGE[key] });
+    const to = pushTargets(settings.chats?.[key], STAFF_TEMPLATES.includes(key));
+    await pushTo({ owner: to.owner, users: to.staff }, { title: TEMPLATE_BY_KEY[key].title, body: plainText(html), url: PUSH_PAGE[key] });
   } catch (error) {
     console.error('Push failed', error);
   }
@@ -338,6 +337,7 @@ export async function saveTemplate(key: TemplateKey, change: { text?: string | n
   const chats = { ...current.chats };
   if (change.chats) {
     const next: TemplateChats = { ...chats[key], ...change.chats };
+    if (change.chats.push) next.push = { ...chats[key]?.push, ...change.chats.push };
     if (next.staff && !next.staff.length) delete next.staff;
     chats[key] = next;
   }

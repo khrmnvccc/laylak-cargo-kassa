@@ -1644,6 +1644,15 @@ test('delivery: off until the owner switches it on; the bot takes locations and 
     assert.equal((await w.call('POST', '/push/subscribe', { subscription: {} })).status, 400);
     assert.equal((await w.call('POST', '/push/subscribe', { subscription: staffSub })).status, 200);
     assert.equal((await w.call('POST', '/push/unsubscribe', { endpoint: staffSub.endpoint })).status, 200);
+    // On Xabarlar the owner picks who gets each message as a site notification, apart from Telegram.
+    const pushPeople = (await owner.call('GET', '/push/people')).body.items;
+    assert.ok(pushPeople.some((p: any) => p.role === 'owner'));
+    const sardor = pushPeople.find((p: any) => p.full_name !== undefined && p.role !== 'owner');
+    assert.equal((await w.call('GET', '/push/people')).status, 403);
+    const picked = await owner.call('PUT', '/telegram/templates', { key: 'checkIn', chats: { push: { owner: false, staff: [sardor.id] } } });
+    assert.deepEqual(picked.body.chats.checkIn.push, { owner: false, staff: [sardor.id] });
+    const again = await owner.call('PUT', '/telegram/templates', { key: 'checkIn', chats: { push: { owner: true } } });
+    assert.deepEqual(again.body.chats.checkIn.push, { owner: true, staff: [sardor.id] }, 'one change keeps the other');
     assert.equal((await owner.call('POST', '/push/test')).status, 400, 'no device subscribed yet');
     // "Yetkazdim" on a free stop just marks it delivered.
     await press(`d:${view.trips[0].stops[0].id}`);

@@ -21,7 +21,10 @@ function usePushState(): [PushState | null, (s: PushState) => void] {
   useEffect(() => {
     listeners.add(setState);
     if (current === null) {
-      loading ??= pushState().catch((): PushState => 'unsupported');
+      loading ??= Promise.race([
+        pushState().catch((): PushState => 'unsupported'),
+        new Promise<PushState>((done) => setTimeout(() => done('off'), 5000)),
+      ]);
       void loading.then(publish);
     }
     return () => { listeners.delete(setState); };
@@ -57,6 +60,8 @@ function PushControls({ state, setState, compact }: { state: PushState | null; s
           const s = await enablePush();
           setState(s);
           if (s === 'on') toast({ tone: 'success', title: 'Bildirishnomalar yoqildi' });
+          // The browser can answer without showing its question (quiet mode on Android Chrome).
+          else if (s === 'off') toast({ tone: 'error', title: 'Brauzer ruxsat soʻramadi. Manzil qatoridagi 🔔 belgisini yoki brauzer sozlamalari → Bildirishnomalar boʻlimini oching.' });
         })}>Yoqish</Button>
     );
   }
@@ -93,14 +98,15 @@ export function PushBell() {
     return () => clearTimeout(t);
   }, [state]);
   useEffect(() => { if (state === 'on' && open) { markAsked(); setOpen(false); } }, [state, open]);
-  if (state === null || state === 'unsupported') return null;
+  // Shown even where the browser cannot do it, so the person learns why instead of looking for it.
+  if (state === null) return null;
   const close = () => { markAsked(); setOpen(false); };
   const off = state !== 'on';
   return (
     <>
       <IconButton label="Bildirishnomalar" className="relative" onClick={() => setOpen(true)}>
-        {state === 'denied' ? <BellOff className="size-[18px]" /> : <Bell className="size-[18px]" />}
-        {off && <span className={cx('absolute right-1.5 top-1.5 size-2 rounded-full ring-2 ring-surface', state === 'denied' ? 'bg-ink-3' : 'bg-danger')} />}
+        {state === 'denied' || state === 'unsupported' ? <BellOff className="size-[18px]" /> : <Bell className="size-[18px]" />}
+        {off && <span className={cx('absolute right-1.5 top-1.5 size-2 rounded-full ring-2 ring-surface', state === 'denied' || state === 'unsupported' ? 'bg-ink-3' : 'bg-danger')} />}
       </IconButton>
       <Modal open={open} onClose={close} size="sm" title={state === 'on' ? 'Bildirishnomalar yoqilgan' : 'Bildirishnomalarni yoqing'} description={WHAT}
         footer={<Button variant="ghost" onClick={close}>{state === 'on' ? 'Yopish' : 'Keyinroq'}</Button>}>
