@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
+import { createPortal } from 'react-dom';
 import { CalendarRange, ChevronDown } from 'lucide-react';
 import { addDays, endOfMonth, rangeLabel, startOfMonth, startOfWeek, todayTashkent } from '../lib/format';
 import { Button, Input, cx } from './ui';
@@ -27,18 +28,29 @@ export function DateRangePicker({ value, onChange, align = 'right' }: { value: R
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(value);
   const ref = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  // On a phone the panel is a sheet on top of the whole page, so cards further down never cover it.
+  const phone = typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches;
   const list = presets();
   const active = list.find((p) => p.range.from === value.from && p.range.to === value.to);
 
   useEffect(() => setDraft(value), [value.from, value.to]);
   useEffect(() => {
     if (!open) return;
-    const onDoc = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
+    const onDoc = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && !panelRef.current?.contains(e.target as Node) && setOpen(false);
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
     return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
   }, [open]);
+
+  const wrap = (panel: ReactElement) => (phone ? createPortal(
+    <>
+      <div className="fixed inset-0 z-50 bg-black/25 anim-fade" onClick={() => setOpen(false)} />
+      {panel}
+    </>,
+    document.body,
+  ) : panel);
 
   const today = todayTashkent();
   const valid = draft.from && draft.to && draft.from <= draft.to && draft.to <= today;
@@ -49,8 +61,8 @@ export function DateRangePicker({ value, onChange, align = 'right' }: { value: R
         <span className="max-w-[220px] truncate">{active ? active.label : rangeLabel(value.from, value.to)}</span>
         <ChevronDown className="size-3.5 text-ink-3" />
       </Button>
-      {open && (
-        <div className={cx('absolute top-11 z-40 w-[300px] rounded-xl border border-line bg-surface p-2 shadow-pop anim-pop sm:w-[440px]', align === 'right' ? 'right-0' : 'left-0', 'max-sm:fixed max-sm:inset-x-4 max-sm:top-24 max-sm:w-auto')}>
+      {open && wrap(
+        <div ref={panelRef} className={cx('absolute top-11 z-40 w-[300px] rounded-xl border border-line solid-strip p-2 shadow-pop anim-pop sm:w-[440px]', align === 'right' ? 'right-0' : 'left-0', 'max-sm:fixed max-sm:inset-x-4 max-sm:top-24 max-sm:z-50 max-sm:w-auto')}>
           <div className="grid gap-2 sm:grid-cols-[150px_1fr]">
             <div className="grid grid-cols-2 gap-0.5 sm:grid-cols-1">
               {list.map((p) => (
@@ -73,7 +85,7 @@ export function DateRangePicker({ value, onChange, align = 'right' }: { value: R
               <Button variant="primary" size="sm" className="w-full" disabled={!valid} onClick={() => { onChange(draft); setOpen(false); }}>Qoʻllash</Button>
             </div>
           </div>
-        </div>
+        </div>,
       )}
     </div>
   );
