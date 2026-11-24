@@ -1590,7 +1590,31 @@ test('delivery: off until the owner switches it on; the bot takes locations and 
     assert.equal(view.draft.length, 0);
     assert.equal(view.trips.length, 1);
     assert.deepEqual(view.trips[0].stops.map((s: any) => [s.lng, s.label, s.fee]), [[69.21, '', 0], [69.23, '', 0], [69.24, 'Aziz', 30000]]);
-    assert.equal(view.totals.earned, 30000);
+    // Money to take is not counted until "Oldim".
+    assert.deepEqual([view.totals.earned, view.totals.waiting], [0, 30000]);
+    assert.equal(reply.body.reply_markup.inline_keyboard.length, 4, 'route row + one "yetkazdim" button per stop');
+    const aziz = view.trips[0].stops[2];
+    const press = (data: string) => hook({ update_id: 2, callback_query: { id: 'cb', from: { id: 555 }, data, message: { message_id: 9, text: '🚚 Reys', chat: { id: 555 } } } }, secret);
+    // A stranger pressing a button changes nothing.
+    await hook({ callback_query: { id: 'x', from: { id: 999 }, data: `c:${aziz.id}`, message: { message_id: 9, chat: { id: 999 } } } }, secret);
+    assert.equal((await owner.call('GET', '/delivery')).body.totals.earned, 0);
+    // Live location: reaching Aziz's stop brings a "take 30 000" reminder with Oldim / Olmadim, once.
+    sent.length = 0;
+    await msg({ location: { latitude: 41.3, longitude: 69.20, live_period: 3600 } });
+    assert.equal((await owner.call('GET', '/delivery')).body.draft.length, 0, 'a live location is not a new stop');
+    const live = (lat: number, lng: number) => hook({ update_id: 3, edited_message: { chat: { id: 555, type: 'private' }, location: { latitude: lat, longitude: lng, live_period: 3600 } } }, secret);
+    await live(41.3, 69.2395);
+    await live(41.3, 69.2399);
+    const arrived = sent.filter((x) => x.method === 'sendMessage' && /Yetib keldingiz/.test(x.body.text));
+    assert.equal(arrived.length, 1);
+    assert.match(arrived[0].body.text, /Aziz[\s\S]*30 000 soʻm oling/);
+    assert.deepEqual(arrived[0].body.reply_markup.inline_keyboard[0].map((b: any) => b.callback_data), [`c:${aziz.id}`, `n:${aziz.id}`]);
+    await press(`c:${aziz.id}`);
+    const afterTake = (await owner.call('GET', '/delivery')).body;
+    assert.deepEqual([afterTake.totals.earned, afterTake.totals.waiting, afterTake.trips[0].stops[2].done], [30000, 0, true]);
+    // "Yetkazdim" on a free stop just marks it delivered.
+    await press(`d:${view.trips[0].stops[0].id}`);
+    assert.equal((await owner.call('GET', '/delivery')).body.trips[0].stops[0].done, true);
 
     // Linking another chat by code still works while the webhook is on (from what the hook kept).
     const before = (await owner.call('GET', '/telegram/me')).body.telegram;
@@ -1603,6 +1627,8 @@ test('delivery: off until the owner switches it on; the bot takes locations and 
     const summary = (await owner.call('GET', '/summary', undefined, { from: today, to: today })).body.totals;
     const stop = view.trips[0].stops[0];
     assert.equal((await owner.call('PUT', `/delivery/stops/${stop.id}`, { fee: 15000, done: true })).status, 200);
+    assert.equal((await owner.call('GET', '/delivery')).body.totals.earned, 30000, 'delivered without Oldim: not counted');
+    assert.equal((await owner.call('PUT', `/delivery/stops/${stop.id}`, { collected: true })).status, 200);
     assert.deepEqual((await owner.call('GET', '/summary', undefined, { from: today, to: today })).body.totals, summary);
     assert.equal((await owner.call('GET', '/delivery')).body.totals.earned, 45000);
 

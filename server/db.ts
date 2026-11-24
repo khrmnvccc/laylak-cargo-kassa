@@ -480,7 +480,15 @@ CREATE TABLE IF NOT EXISTS telegram_inbox (
 ALTER TABLE telegram_inbox ENABLE ROW LEVEL SECURITY;
 `;
 
-const SCHEMA_VERSION = 18;
+// v19: the fee of a stop is what is to be taken there; it counts only once the owner presses "Oldim".
+// arrived_at: when the bot told the owner (from his live location) that he reached the stop.
+const SCHEMA_V19_SQL = `
+ALTER TABLE delivery_stops ADD COLUMN IF NOT EXISTS collected BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE delivery_stops ADD COLUMN IF NOT EXISTS arrived_at TIMESTAMPTZ;
+UPDATE delivery_stops SET collected = TRUE WHERE fee > 0 AND done;
+`;
+
+const SCHEMA_VERSION = 19;
 
 export function ensureSchema(): Promise<void> {
   if (!globalForPool.__kassaSchema) {
@@ -526,6 +534,7 @@ async function migrate() {
       if (current < 16) await client.query(SCHEMA_V16_SQL);
       if (current < 17) await client.query(SCHEMA_V17_SQL);
       if (current < 18) await client.query(SCHEMA_V18_SQL);
+      if (current < 19) await client.query(SCHEMA_V19_SQL);
       await client.query(
         `INSERT INTO app_meta (key, value) VALUES ('schema_version', $1::jsonb)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,

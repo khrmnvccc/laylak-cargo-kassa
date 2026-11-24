@@ -25,7 +25,7 @@ import { ChatMoved, recentUpdates, keepUpdate, getTelegram, logSend, getTelegram
 import { receiptKey } from './receipts.js';
 import { COLUMNS as BROADCAST_COLUMNS, claim as claimBroadcast, deliver as deliverBroadcast, deliverDue, parseBroadcast, recipients as broadcastRecipients, sendOne as sendBroadcastTo } from './broadcast.js';
 import { background } from './background.js';
-import { clearDraft, createTrip, getDeliverySettings, getDraft, handleBotMessage, loadTrips, readPlace, saveDeliverySettings, setBotHook, startPoint, tripMessage } from './delivery.js';
+import { clearDraft, createTrip, getDeliverySettings, getDraft, handleBotButton, handleBotMessage, handleLiveLocation, loadTrips, readPlace, saveDeliverySettings, setBotHook, startPoint, tripMessage } from './delivery.js';
 import { MAX_FEE, MAX_LABEL, MAX_STOPS } from '../src/lib/delivery.js';
 import { gzipSync } from 'node:zlib';
 import { createHash, randomInt } from 'node:crypto';
@@ -2619,14 +2619,18 @@ route('POST', '/telegram/hook', 'public', async (ctx) => {
   const config = await getTelegram();
   const secret = ctx.headers['x-telegram-bot-api-secret-token'] || '';
   if (!config?.hookSecret || secret !== config.hookSecret) return { status: 403, body: { ok: false } };
-  const message = ctx.body?.message;
-  if (!message) return { ok: true };
-  await keepUpdate(ctx.body).catch((e) => console.error('Telegram inbox failed', e));
+  const message = ctx.body?.message ?? ctx.body?.callback_query?.message;
   try {
-    await handleBotMessage(config, message);
+    if (ctx.body?.callback_query) await handleBotButton(config, ctx.body.callback_query);
+    // A live location moving comes as an edit of the first message.
+    else if (ctx.body?.edited_message?.location) await handleLiveLocation(config, ctx.body.edited_message);
+    else if (ctx.body?.message) {
+      await keepUpdate(ctx.body).catch((e) => console.error('Telegram inbox failed', e));
+      await handleBotMessage(config, ctx.body.message);
+    }
   } catch (error) {
     console.error('Delivery bot failed', error);
-    if (message.chat?.id === config.chatId) {
+    if (message?.chat?.id === config.chatId) {
       const why = error instanceof HttpError ? error.message : 'Xatolik yuz berdi, qayta urinib koʻring';
       await tg(config.token, 'sendMessage', { chat_id: config.chatId, text: `⚠️ ${why}` }).catch(() => undefined);
     }
@@ -2651,7 +2655,8 @@ route('GET', '/delivery', 'owner', async (ctx) => {
     bot: { connected: Boolean(config?.chatId), on: Boolean(config?.hookSecret), botName: config?.botName ?? null },
     totals: {
       trips: trips.length, stops: stops.length, done: stops.filter((s) => s.done).length,
-      earned: stops.reduce((a, s) => a + s.fee, 0), paidStops: stops.filter((s) => s.fee > 0).length,
+      earned: stops.filter((s) => s.collected).reduce((a, s) => a + s.fee, 0), paidStops: stops.filter((s) => s.collected && s.fee > 0).length,
+      waiting: stops.filter((s) => !s.collected && s.fee > 0).reduce((a, s) => a + s.fee, 0),
       km: trips.reduce((a, t) => a + t.km, 0),
     },
   };
@@ -2725,9 +2730,11 @@ route('PUT', '/delivery/stops/:id', 'owner', async (ctx) => {
     params.push(fee); sets.push(`fee = $${params.length}`);
   }
   if (typeof b.done === 'boolean') { params.push(b.done); sets.push(`done = $${params.length}`); }
+  // Money taken there: counted only from now on; taking it also means it was delivered.
+  if (typeof b.collected === 'boolean') { params.push(b.collected); sets.push(`collected = $${params.length}`); if (b.collected) sets.push('done = TRUE'); }
   if (!sets.length) throw new HttpError(400, 'Oʻzgarish yoʻq');
   params.push(id);
-  const rows = await query(`UPDATE delivery_stops SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING id::int, position::int, lat, lng, label, fee::float, done`, params);
+  const rows = await query(`UPDATE delivery_stops SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING id::int, position::int, lat, lng, label, fee::float, done, collected`, params);
   if (!rows[0]) throw new HttpError(404, 'Manzil topilmadi');
   return { stop: rows[0] };
 });

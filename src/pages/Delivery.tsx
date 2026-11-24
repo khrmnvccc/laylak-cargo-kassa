@@ -7,7 +7,7 @@ import { MAX_STOPS, googlePlaceUrl, googleRouteUrl, roadKmLabel, yandexPlaceUrl,
 import { Toggle } from '../components/TelegramTemplates';
 import { Alert, Badge, Button, Card, CardHeader, EmptyState, ErrorState, Field, IconButton, Input, Modal, PageHeader, cx, useToast } from '../components/ui';
 
-interface Stop { id: number; position: number; lat: number; lng: number; label: string; fee: number; done: boolean }
+interface Stop { id: number; position: number; lat: number; lng: number; label: string; fee: number; done: boolean; collected: boolean }
 interface Trip { id: number; day: string; km: number; source: 'site' | 'bot'; start: Point | null; created_by_name: string | null; created_at: string; stops: Stop[] }
 interface DraftStop extends Point { label?: string; fee?: number }
 interface DeliveryData {
@@ -16,7 +16,7 @@ interface DeliveryData {
   draft: DraftStop[];
   start: (Point & { label?: string; from: 'set' | 'office' }) | null;
   bot: { connected: boolean; on: boolean; botName: string | null };
-  totals: { trips: number; stops: number; done: number; earned: number; paidStops: number; km: number };
+  totals: { trips: number; stops: number; done: number; earned: number; paidStops: number; waiting: number; km: number };
 }
 
 const digitsInput = (value: string) => { const d = value.replace(/\D/g, '').slice(0, 8); return d ? groupDigits(Number(d)) : ''; };
@@ -40,6 +40,7 @@ export default function Delivery() {
   const { data, error, loading, reload } = useApi<DeliveryData>('/delivery', { month });
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<Stop | null>(null);
+  const [collecting, setCollecting] = useState<Stop | null>(null);
   const [startOpen, setStartOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -81,7 +82,7 @@ export default function Delivery() {
               <Card className="col-span-2 sm:col-span-1">
                 <div className="flex items-center gap-2 text-[13px] font-medium text-ink-2"><Coins className="size-4 text-up" />Yetkazishdan pul</div>
                 {first ? <div className="skeleton mt-3 h-7 w-2/3" /> : <div className="mt-2 text-2xl font-semibold tracking-tight text-up num">{money(t?.earned)}</div>}
-                <div className="mt-1 text-xs text-ink-3">{t ? `${t.paidStops} ta manzildan · kassadan alohida` : ' '}</div>
+                <div className="mt-1 text-xs text-ink-3 num">{t ? (t.waiting ? `Yana ${money(t.waiting)} olinishi kerak` : `${t.paidStops} ta manzildan · kassadan alohida`) : ' '}</div>
               </Card>
               <Card>
                 <div className="flex items-center gap-2 text-[13px] font-medium text-ink-2"><Truck className="size-4 text-ink-3" />Reyslar</div>
@@ -123,7 +124,11 @@ export default function Delivery() {
               </Card>
             ) : data.trips.map((trip) => (
               <TripCard key={trip.id} trip={trip} busy={busy} onEdit={setEditing}
-                onToggle={(s) => run(`done-${s.id}`, () => api(`/delivery/stops/${s.id}`, { method: 'PUT', body: { done: !s.done } }))}
+                onToggle={(s) => {
+                  // Delivered where money is to be taken: ask "Oldim?" first; it counts only after that.
+                  if (!s.done && s.fee > 0 && !s.collected) setCollecting(s);
+                  else void run(`done-${s.id}`, () => api(`/delivery/stops/${s.id}`, { method: 'PUT', body: { done: !s.done } }));
+                }}
                 onTelegram={() => run(`tg-${trip.id}`, () => api(`/delivery/trips/${trip.id}/telegram`, { method: 'POST' }), 'Telegramga yuborildi')}
                 onDelete={() => { if (confirm('Bu reys oʻchirilsinmi?')) void run(`del-${trip.id}`, () => api(`/delivery/trips/${trip.id}`, { method: 'DELETE' }), 'Reys oʻchirildi'); }} />
             ))}
@@ -149,6 +154,7 @@ export default function Delivery() {
       )}
 
       <NewTripModal open={creating} onClose={() => setCreating(false)} onDone={() => { setCreating(false); reload(); }} />
+      <CollectModal stop={collecting} onClose={() => setCollecting(null)} onDone={() => { setCollecting(null); reload(); }} />
       <StopModal stop={editing} onClose={() => setEditing(null)} onDone={() => { setEditing(null); reload(); }} />
       <StartModal open={startOpen} canReset={data?.start?.from === 'set'} onClose={() => setStartOpen(false)} onDone={() => { setStartOpen(false); reload(); }} />
     </div>
@@ -159,7 +165,8 @@ function TripCard({ trip, busy, onEdit, onToggle, onTelegram, onDelete }: {
   trip: Trip; busy: string | null; onEdit: (s: Stop) => void; onToggle: (s: Stop) => void; onTelegram: () => void; onDelete: () => void;
 }) {
   const points = [...(trip.start ? [trip.start] : []), ...trip.stops];
-  const earned = trip.stops.reduce((a, s) => a + s.fee, 0);
+  const earned = trip.stops.filter((s) => s.collected).reduce((a, s) => a + s.fee, 0);
+  const waiting = trip.stops.filter((s) => !s.collected).reduce((a, s) => a + s.fee, 0);
   const done = trip.stops.filter((s) => s.done).length;
   return (
     <Card padded={false}>
@@ -172,8 +179,9 @@ function TripCard({ trip, busy, onEdit, onToggle, onTelegram, onDelete }: {
           </div>
           <div className="mt-0.5 text-[13px] text-ink-3 num">{trip.stops.length} ta manzil · {roadKmLabel(trip.km)} · {done}/{trip.stops.length} yetkazildi</div>
         </div>
-        <div className="text-right">
-          <div className={cx('text-[15px] font-semibold num', earned ? 'text-up' : 'text-ink-3')}>{earned ? `+${money(earned)}` : 'Bepul'}</div>
+        <div className="sm:text-right">
+          {(earned > 0 || !waiting) && <div className={cx('text-[15px] font-semibold num', earned ? 'text-up' : 'text-ink-3')}>{earned ? `+${money(earned)}` : 'Bepul'}</div>}
+          {!!waiting && <div className={cx('font-medium text-warn num', earned ? 'text-xs' : 'text-[15px]')}>{money(waiting)} olinadi</div>}
         </div>
       </div>
       <ol className="divide-y divide-line">
@@ -187,7 +195,9 @@ function TripCard({ trip, busy, onEdit, onToggle, onTelegram, onDelete }: {
             </button>
             <button type="button" onClick={() => onEdit(s)} className="min-w-0 flex-1 text-left">
               <div className={cx('truncate text-sm', s.done ? 'text-ink-3 line-through' : 'text-ink', !s.label && 'num')}>{placeName(s)}</div>
-              <div className={cx('text-xs num', s.fee ? 'text-up' : 'text-ink-3')}>{s.fee ? money(s.fee) : 'Pul olinmadi'}</div>
+              <div className={cx('text-xs num', !s.fee ? 'text-ink-3' : s.collected ? 'text-up' : s.done ? 'text-danger' : 'text-warn')}>
+                {!s.fee ? 'Pul olinmaydi' : s.collected ? `✓ ${money(s.fee)} olindi` : s.done ? `${money(s.fee)} olinmadi` : `${money(s.fee)} olinadi`}
+              </div>
             </button>
             <a href={yandexPlaceUrl(s)} target="_blank" rel="noopener noreferrer" title="Yandex xaritada"
               className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-3 hover:bg-surface-2 hover:text-ink"><Navigation className="size-4" /></a>
@@ -231,8 +241,9 @@ function BotCard({ data, onChanged }: { data?: DeliveryData | null; onChanged: (
       ) : (
         <ol className="list-decimal space-y-1.5 pl-5 text-[13px] text-ink-2">
           <li>Botga lokatsiya (📎 → Joylashuv) yoki Yandex / Google havolasini yuboring.</li>
-          <li>Keyin mijoz ismini yoki olingan pulni (masalan <b className="num">30000</b>) yozing.</li>
+          <li>Keyin mijoz ismini yoki olinadigan pulni (masalan <b className="num">30000</b>) yozing.</li>
           <li><b>/reys</b> deb yozing: tartiblangan roʻyxat va xarita tugmasi keladi.</li>
+          <li>Yetganda “yetkazdim”ni bosing: “oling” deydi, <b>Oldim</b> bossangiz pul hisobga qoʻshiladi. Jonli joylashuv yuborsangiz, yetganingizni oʻzi eslatadi.</li>
         </ol>
       )}
     </Card>
@@ -292,7 +303,7 @@ function NewTripModal({ open, onClose, onDone }: { open: boolean; onClose: () =>
             </div>
             <div className="mt-2 grid grid-cols-[minmax(0,1fr)_130px] gap-2 pl-8">
               <Input value={row.label} placeholder="Mijoz yoki izoh" maxLength={120} onChange={(e) => set(i, { label: e.target.value })} className="h-9" />
-              <Input value={row.fee} inputMode="numeric" placeholder="Pul, soʻm" onChange={(e) => set(i, { fee: digitsInput(e.target.value) })} className="h-9 text-right num" />
+              <Input value={row.fee} inputMode="numeric" placeholder="Olinadigan pul" onChange={(e) => set(i, { fee: digitsInput(e.target.value) })} className="h-9 text-right num" />
             </div>
             {errors[i] && <p className="mt-1.5 pl-8 text-xs text-danger">{errors[i]}</p>}
           </div>
@@ -331,12 +342,46 @@ function StopModal({ stop, onClose, onDone }: { stop: Stop | null; onClose: () =
       {stop && (
         <div className="space-y-3">
           <Field label="Mijoz yoki izoh"><Input value={label} maxLength={120} onChange={(e) => setLabel(e.target.value)} /></Field>
-          <Field label="Olingan pul" hint="Pul olmagan boʻlsangiz boʻsh qoldiring"><Input value={fee} inputMode="numeric" placeholder="0" onChange={(e) => setFee(digitsInput(e.target.value))} className="num" /></Field>
+          <Field label="Olinadigan pul" hint="Hisobga “Oldim” bosilgandan keyin qoʻshiladi"><Input value={fee} inputMode="numeric" placeholder="0" onChange={(e) => setFee(digitsInput(e.target.value))} className="num" /></Field>
           <div className="flex gap-3 text-sm">
             <a href={yandexPlaceUrl(stop)} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Yandex xarita</a>
             <a href={googlePlaceUrl(stop)} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Google Maps</a>
           </div>
           {error && <Alert>{error}</Alert>}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+/** Delivered where money is to be taken: "take X soʻm", and it counts only after "Oldim". */
+function CollectModal({ stop, onClose, onDone }: { stop: Stop | null; onClose: () => void; onDone: () => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState<'yes' | 'no' | null>(null);
+  async function answer(took: boolean) {
+    if (!stop) return;
+    setBusy(took ? 'yes' : 'no');
+    try {
+      await api(`/delivery/stops/${stop.id}`, { method: 'PUT', body: took ? { collected: true } : { done: true, collected: false } });
+      toast({ tone: 'success', title: took ? `${money(stop.fee)} hisobga qoʻshildi` : 'Yetkazildi, pul olinmadi' });
+      onDone();
+    } catch (e) {
+      toast({ tone: 'error', title: (e as Error).message });
+    } finally {
+      setBusy(null);
+    }
+  }
+  return (
+    <Modal open={!!stop} onClose={onClose} size="sm" title={stop ? `${stop.position}. ${placeName(stop)}` : ''}
+      footer={<>
+        <Button variant="ghost" loading={busy === 'no'} disabled={!!busy} onClick={() => answer(false)}>Olmadim</Button>
+        <Button variant="success" icon={<Coins className="size-4" />} loading={busy === 'yes'} disabled={!!busy} onClick={() => answer(true)}>Oldim</Button>
+      </>}>
+      {stop && (
+        <div className="py-2 text-center">
+          <div className="text-sm text-ink-2">Mijozdan oling</div>
+          <div className="mt-1 text-3xl font-semibold tracking-tight text-ink num">{money(stop.fee)}</div>
+          <p className="mt-2 text-xs text-ink-3">Pul “Oldim” bosilgandan keyin hisobga qoʻshiladi.</p>
         </div>
       )}
     </Modal>
