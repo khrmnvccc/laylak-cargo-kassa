@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Bell, BellOff, BellRing } from 'lucide-react';
 import { api } from '../lib/api';
 import { disablePush, enablePush, pushState, type PushState } from '../lib/push';
@@ -97,7 +97,12 @@ export function PushBell() {
     const t = setTimeout(() => setOpen(true), 1500);
     return () => clearTimeout(t);
   }, [state]);
-  useEffect(() => { if (state === 'on' && open) { markAsked(); setOpen(false); } }, [state, open]);
+  // Close by itself only right after switching on here, not when opened while already on.
+  const was = useRef(state);
+  useEffect(() => {
+    if (state === 'on' && was.current !== 'on' && was.current !== null) { markAsked(); setOpen(false); }
+    was.current = state;
+  }, [state]);
   // Shown even where the browser cannot do it, so the person learns why instead of looking for it.
   if (state === null) return null;
   const close = () => { markAsked(); setOpen(false); };
