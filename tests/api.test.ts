@@ -1504,3 +1504,20 @@ test('owner makes the orders picture optional; a payment without one is then sav
   await owner.call('PUT', '/entry', { entry: { photoRequired: true } });
   assert.equal((await w.call('POST', '/payments', { clientCode: 'NP1', amount: 5000, method: 'cash' })).status, 400);
 });
+
+test('mixed payment: part cash, part card, saved as two payments', async () => {
+  const admin = new Client();
+  admin.branch = 1;
+  assert.equal((await admin.call('POST', '/auth/login', { username: 'admin', password: 'password123' })).status, 200);
+  const before = (await admin.call('GET', '/summary', undefined, { from: today, to: today })).body.totals;
+  const bad = await admin.call('POST', '/payments', { photos: PHOTOS, clientCode: 'MIX-1', amount: 100000, method: 'card', cashPart: 100000 });
+  assert.equal(bad.status, 400);
+  assert.ok(bad.body.fields.cashPart);
+  assert.equal((await admin.call('POST', '/payments', { photos: PHOTOS, clientCode: 'MIX-1', amount: 100000, method: 'cash', cashPart: 30000 })).status, 400);
+  const res = await admin.call('POST', '/payments', { photos: PHOTOS, clientCode: 'MIX-1', amount: 100000, method: 'card', cashPart: 30000, trips: 2 });
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  assert.deepEqual(res.body.payments.map((p: any) => [p.method, p.amount, p.trips]), [['cash', 30000, 2], ['card', 70000, 0]]);
+  const after = (await admin.call('GET', '/summary', undefined, { from: today, to: today })).body.totals;
+  assert.equal(after.cash - before.cash, 30000);
+  assert.equal(after.card - before.card, 70000);
+});
